@@ -149,11 +149,12 @@ class Service:
         resource=self.resource(conversation_id)
         data=self.journal.context(context_id,self.principal,resource,self.guard.version)
         sources=tuple(Provenance(resource,m["reference"],m["data_class"]) for m in data["messages"])
-        return self.runtime.propose(self._action(conversation_id,"disclosure.send",{"context_id":context_id,"runner":runner},
+        return self.runtime.propose(self._action(conversation_id,"disclosure.send",{"context_id":context_id,"context_digest":digest(data),"runner":runner},
                                    sources=sources,destination=self.destination))
 
     def _disclose(self,action,check,epoch):
         check();data=self.journal.context(action.payload["context_id"],self.principal,action.resource,self.guard.version)
+        if digest(data)!=action.payload["context_digest"]:raise AXRError("context_intent_digest_changed")
         if action.payload.get("runner"):
             from .runner import invoke
             data=invoke(self,action,check)
