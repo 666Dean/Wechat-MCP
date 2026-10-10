@@ -110,6 +110,8 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(config["active_contacts"], [])
 
     def test_update_normalizes_and_persists(self):
+        self.bridge.close()
+        self.bridge = Bridge(self.path, self.adapter, allow_contact_management=True)
         result = self.bridge.set_contacts([" 新备注 ", "新备注", "第二位"])
         self.assertEqual(result["active_contacts"], ["新备注", "第二位"])
         saved = json.loads(self.path.read_text(encoding="utf-8"))
@@ -118,6 +120,8 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(self.bridge.eligible("新备注", "你好"))
 
     def test_clear_retires_pending_but_keeps_codex_mentions(self):
+        self.bridge.close()
+        self.bridge = Bridge(self.path, self.adapter, allow_contact_management=True)
         mid = self.event()
         self.add("Codex，你好")
         self.bridge.poll()
@@ -128,11 +132,32 @@ class BridgeTests(unittest.TestCase):
         self.assertFalse(self.bridge.eligible("测试联系人", "你好"))
 
     def test_invalid_update_preserves_configuration(self):
+        self.bridge.close()
+        self.bridge = Bridge(self.path, self.adapter, allow_contact_management=True)
         before = self.path.read_text(encoding="utf-8")
         for value in ["一个名字", [""], ["\n"], [123], ["a\nb"]]:
             with self.assertRaises(ValueError):
                 self.bridge.set_contacts(value)
         self.assertEqual(self.path.read_text(encoding="utf-8"), before)
+
+    def test_contact_management_denied_without_side_effects(self):
+        mid = self.event()
+        before = self.path.read_bytes()
+        with self.assertRaises(PermissionError):
+            self.bridge.set_contacts([])
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(self.bridge.db.execute("SELECT status FROM messages WHERE id=?", (mid,)).fetchone()[0], "pending")
+        self.assertEqual(self.adapter.sent, [])
+        self.assertFalse(self.bridge.status()["permissions"]["mcp_contact_management"])
+
+    def test_live_config_cannot_grant_management_capability(self):
+        self.update_config(allow_contact_management=True)
+        self.bridge.get_contacts()
+        before = self.path.read_bytes()
+        with self.assertRaises(PermissionError):
+            self.bridge.set_contacts(["未经启动授权的备注"])
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertFalse(self.bridge.status()["permissions"]["mcp_contact_management"])
 
     def test_external_contact_update_applies_to_next_poll(self):
         self.bridge.poll()

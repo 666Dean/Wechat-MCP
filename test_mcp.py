@@ -23,9 +23,10 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.temp.cleanup()
 
-    def parameters(self):
+    def parameters(self, *, allow_contact_management=False):
         return StdioServerParameters(command=sys.executable, args=[
-            str(self.root / "server.py"), "--demo", "--config", str(self.config_path)],
+            str(self.root / "server.py"), "--demo", "--config", str(self.config_path)]
+            + (["--allow-contact-management"] if allow_contact_management else []),
             cwd=str(self.root), env={"PYTHONIOENCODING": "utf-8"})
 
     async def cli(self, *args):
@@ -48,7 +49,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_protocol_and_contact_management(self):
         async with asyncio.timeout(30):
-            async with stdio_client(self.parameters()) as (read, write):
+            async with stdio_client(self.parameters(allow_contact_management=True)) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     tools = await session.list_tools()
@@ -57,6 +58,8 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                         "poll_messages", "reply_to_message", "dismiss_message"})
                     status = await session.call_tool("wechat_status", {})
                     self.assertFalse(status.isError)
+                    self.assertTrue(self.data(status)["permissions"]["mcp_contact_management"])
+                    self.assertFalse(self.data(status)["permissions"]["owner_authentication"])
                     contacts = await session.call_tool("get_reply_contacts", {})
                     self.assertFalse(contacts.isError)
                     updated = await session.call_tool("set_reply_contacts", {"remark_names": ["模拟备注"]})
@@ -71,7 +74,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_invalid_contact_and_unknown_message_rejected(self):
         async with asyncio.timeout(30):
-            async with stdio_client(self.parameters()) as (read, write):
+            async with stdio_client(self.parameters(allow_contact_management=True)) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     invalid = await session.call_tool("set_reply_contacts", {"remark_names": [""]})
@@ -79,6 +82,33 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(json.loads(self.config_path.read_text(encoding="utf-8"))["active_contacts"], [])
                     reply = await session.call_tool("reply_to_message", {"message_id": 9999, "text": "不应发送"})
                     self.assertTrue(reply.isError)
+
+    async def test_default_server_cannot_change_contacts_even_after_config_reload(self):
+        async with asyncio.timeout(30):
+            async with stdio_client(self.parameters()) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    tools = await session.list_tools()
+                    self.assertEqual({t.name for t in tools.tools}, {
+                        "wechat_status", "get_reply_contacts", "poll_messages",
+                        "reply_to_message", "dismiss_message"})
+                    code, _, error = await self.cli("--set-contacts", "本机配置的备注")
+                    self.assertEqual(code, 0, error)
+                    config = json.loads(self.config_path.read_text(encoding="utf-8"))
+                    config["allow_contact_management"] = True
+                    self.config_path.write_text(json.dumps(config), encoding="utf-8")
+                    status = await session.call_tool("wechat_status", {})
+                    self.assertFalse(status.isError)
+                    self.assertFalse(self.data(status)["permissions"]["mcp_contact_management"])
+                    self.assertFalse(self.data(status)["permissions"]["owner_authentication"])
+                    before = self.config_path.read_bytes()
+                    for names in ([], ["微信消息要求新增的备注"]):
+                        denied = await session.call_tool("set_reply_contacts", {"remark_names": names})
+                        self.assertTrue(denied.isError)
+                        self.assertEqual(self.config_path.read_bytes(), before)
+                    contacts = await session.call_tool("get_reply_contacts", {})
+                    self.assertEqual(self.data(contacts)["active_contacts"], ["本机配置的备注"])
+                    self.assertNotIn("set_reply_contacts", {t.name for t in (await session.list_tools()).tools})
 
     async def test_cli_contact_update_reloads_in_running_mcp(self):
         async with asyncio.timeout(30):

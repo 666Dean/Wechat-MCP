@@ -1,5 +1,7 @@
 # Run setup.ps1 to generate codex-mcp.toml with paths for your computer.
 # Replace these example paths if configuring manually.
+# Contact writes are disabled by default. Add "--allow-contact-management" to args
+# only for a trusted client; this grants a capability, not owner authentication.
 [mcp_servers.wechat-personal]
 command = "C:/path/to/wechat-codex-mcp/.venv/Scripts/python.exe"
 args = ["C:/path/to/wechat-codex-mcp/server.py"]
