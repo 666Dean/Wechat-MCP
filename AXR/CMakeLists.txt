@@ -32,7 +32,7 @@ target_link_libraries(axr PUBLIC OpenSSL::Crypto SQLite3::SQLite3 nlohmann_json:
 if(WIN32)
   target_link_libraries(axr PRIVATE userenv advapi32)
   add_executable(axr-owner-auth native/windows/Owner.cpp)
-  target_link_libraries(axr-owner-auth PRIVATE axr windowsapp)
+  target_link_libraries(axr-owner-auth PRIVATE axr windowsapp user32)
   add_executable(axr-sandbox extracted/WindowsSandbox.cpp)
   target_link_libraries(axr-sandbox PRIVATE axr userenv advapi32)
 endif()

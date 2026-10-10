@@ -82,7 +82,7 @@ Mac layout 复用 MIT 开源 wechat-mcp 的标识与标题规则，保留完整�
   指定会话正文、发送、账号稳定映射与后台行为 **未通过实机验收**。
 * 后续 GUI 实测遇到 Mac 锁定；需要主人解锁及目录读取权限后继续。私有账号、联系人、正文、
   密钥、截图、实际数据库路径不进入仓库或 CI。
-* Windows：C++ UIA/Hello/AppContainer + 自动化构建路径；本轮按主人要求 **不做微信实机测试**。
+* Windows：C++ UIA/Hello（HWND desktop interop，Windows 11 Build 22000+）/AppContainer + 自动化构建路径；本轮按主人要求 **不做微信实机测试**。
   Win 平台行为、Hello 与 AppContainer 尚无实机资格证明。
 * 本地所有者 OS 弹窗、人类批准全过程、任意外部模型 runner、长期稳定监听尚未端到端验证。
 * 未提供成熟安装包签名、经过验收的跨平台原生配置 GUI、硬件反回滚、自动合法获取 WCDB 密钥，
