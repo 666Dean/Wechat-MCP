@@ -25,6 +25,12 @@ jobs:
           brew install openssl@3 sqlcipher
           echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
           echo "AXR_SQLCIPHER_LIBRARY=$(brew --prefix sqlcipher)/lib/libsqlcipher.dylib" >> "$GITHUB_ENV"
+      - name: Cache Windows dependency builds
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/vcpkg/archives
+          key: axr-vcpkg-windows-20261011
       - name: Native dependencies (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

@@ -163,9 +163,10 @@ class Service:
     def prepare(self,conversation_id,text,context_ids=(),*,workflow="manual"):
         if not isinstance(text,str) or not text.strip() or len(text.encode("utf8"))>8000:raise AXRError("invalid_reply_text")
         prefix=self.config.get("attribution_prefix","【自动回复 · AI 助理】")
-        if len(prefix)>120 or not prefix.strip():raise AXRError("owner_attribution_invalid")
-        if not text.startswith(prefix):text=prefix+" "+text
-        action=self._action(conversation_id,"reply.prepare",{"text":text},
+        display=self.config.get("display_attribution",True)
+        if len(prefix)>120 or (display and not prefix.strip()):raise AXRError("owner_attribution_invalid")
+        if display and not text.startswith(prefix):text=prefix+" "+text
+        action=self._action(conversation_id,"reply.prepare",{"text":text,"attribution":{"display":display,"origin":"agent","principal":self.principal}},
                             sources=self._sources(self.resource(conversation_id),context_ids),workflow=workflow)
         receipt=self.runtime.propose(action)
         if receipt["state"]=="Ready":receipt=self.execute(receipt["id"])

@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 import time
+import threading
 from pathlib import Path
 from axr.aet import AXRError, canonical, digest
 
@@ -49,6 +50,7 @@ class CipherConnection:
             raise
 
     def _declare(self):
+        self.life_lock=threading.RLock()
         definitions = {
             "sqlite3_open_v2": ([C.c_char_p,C.POINTER(C.c_void_p),C.c_int,C.c_char_p],C.c_int),
             "sqlite3_busy_timeout": ([C.c_void_p,C.c_int],C.c_int),
@@ -120,10 +122,15 @@ class CipherConnection:
             self.lib.sqlite3_progress_handler(self.handle,0,progress_type(),None)
             self.lib.sqlite3_finalize(stmt)
 
+    def interrupt(self):
+        with self.life_lock:
+            if self.handle and self.handle.value:self.lib.sqlite3_interrupt(self.handle)
+
     def close(self):
-        if self.handle and self.handle.value:
-            self.lib.sqlite3_close_v2(self.handle)
-            self.handle=C.c_void_p()
+        with self.life_lock:
+            if self.handle and self.handle.value:
+                self.lib.sqlite3_close_v2(self.handle)
+                self.handle=C.c_void_p()
 
 
 def decode_text(value, compression):
@@ -266,8 +273,7 @@ class DatabaseAdapter:
 
     def cancel(self):
         for connection in list(self.connections.values()):
-            if hasattr(connection,"lib") and connection.handle:
-                connection.lib.sqlite3_interrupt(connection.handle)
+            if hasattr(connection,"interrupt"):connection.interrupt()
 
     def close(self):
         for connection in self.connections.values():
