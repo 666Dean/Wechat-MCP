@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.24)
+project(WeChatAXRIntegration LANGUAGES CXX)
+add_subdirectory(AXR)
+if(WIN32)
+  add_executable(wechat-uia adapters/windows/WeChatUIA.cpp)
+  target_compile_features(wechat-uia PRIVATE cxx_std_20)
+  target_link_libraries(wechat-uia PRIVATE Stellaria::AXR ole32 oleaut32 uiautomationcore user32)
+endif()

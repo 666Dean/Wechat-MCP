@@ -1,0 +1,19 @@
+{
+  "principal": "agent:local-wechat",
+  "purpose": "wechat-assistant",
+  "account_id": "OWNER_VERIFIED_ACCOUNT_ID",
+  "agent_destination": "model:OWNER_APPROVED_PROVIDER_OR_LOCAL_WORKER",
+  "mode": "ui",
+  "conversations": [
+    {"conversation_id": "OWNER_VERIFIED_CONVERSATION_ID", "display_name": "OWNER_TEST_CONTACT", "data_class": "personal"}
+  ],
+  "ui": {"native_helper": "/ABSOLUTE/PATH/TO/axr-helper"},
+  "attribution_prefix": "【自动回复 · AI 助理】",
+  "listener": {
+    "listen": false, "wake_agent": false, "auto_execute": false,
+    "workflow": "manual", "keywords": ["AI 助理"], "senders": [],
+    "event_ttl": 900, "aggregate_seconds": 3, "poll_seconds": 5, "daily_calls": 10
+  },
+  "runner": {"enabled": false},
+  "workspace": null
+}

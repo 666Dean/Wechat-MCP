@@ -7,6 +7,36 @@
 
 后续每次完成更新，都在这里说明新增、修复、测试及仍未解决的限制；发布版本时归档。
 
+### 2026-10-11 — Stellaria AXR Gen1 开发与安全边界
+
+#### 新增
+
+- 根目录 AXR/ 应用无关 SDK：C++20 Guard、AET intent seal、OpenSSL AES-GCM/HMAC、持久链、进程 API、Python 薄绑定；Swift 通用 AX helper；Win C++ Hello 与 AppContainer。
+- 从主人 GitHub 的 BasicX-Hub/BasicX/Connector 实际抽取固定提交的预算、append-only triggers、耐久日志、进程管理与沙箱原语；REUSE.json 记录源文件 SHA-256/符号。没有导出计算 DAG、SOF/SPX、渲染、模型 Provider 或 DCC 源码。
+- SDK AGPL v3 only，项目其他源码保留 MIT，README/LICENSE/LICENSES/NOTICE 明确边界与第三方义务。
+- 独立 owner CLI / 本地 Tk policy/审批/telemetry 面板 + Keychain/Windows Credential Manager；代理不能发放 capability；principal/account/conversation/purpose/workflow/TTL/quota 全部绑定，外部发送与披露逐动作确认。
+- AXR MCP、AET 执行与取消、加密 context/result TTL、会话来源传播、dry-run/模拟、metadata-only 审计和计数；legacy 兼容名称在 AXR 模式走 AET。
+- 原生 SQLCipher 只读 WCDB DB+WAL、明确会话/分库、过滤与 keyset 游标、Name2Id 稳定发送者解析、bounded zstd。复用 MIT chatlog-keeper 的选定解析规则与 wechat-mcp 的 AX 标识/标题工具，保留完整许可。
+- Swift AX / C++ STA UIA 有界读取及发前身份检查；稳定账号/会话 witness 不足时拒绝发送，没有坐标/全局 Return 兜底。
+- 常驻监听实际线程，listen/wake/auto_execute 默认独立关闭，历史 baseline、聚合/TTL/去重、调用/成本预算；owner-pinned 本地 runner 同样进入精确披露 AET，仅生成草稿。
+- 受限 workspace 文本原子写入/加密版本备份；Mac deny-default worker sandbox，Win AppContainer/JobObject；跨平台 CMake、独立 SDK 安装导出、Python 原生构建与 CI。
+
+#### 修复与验证
+
+- MCP 迁移至官方 Python SDK 2.3.0 / MCPServer，更新 snake_case 测试 API；保留旧模式行为。
+- 修复事务插入列数、Swift throwing predicate、worker runtime ancestor stat 权限等开发期问题；发送不明/旧 epoch/崩溃恢复均拒绝重复执行。
+- 本机 128 项 unittest 通过（1 项原有平台跳过）：原有 91 项 + 37 项安全、合成数据库、原生沙箱与实际 stdio AET 测试。
+- 真实 SQLCipher 库对合成加密 DB/WAL 验证 committed WAL 可见、原始密钥拒错、只读拒写；这不等同本机微信正文验证。
+- C++ Core/Swift 编译与 CTest、SDK 安装、独立 CMake consumer 通过；Mac 实际 sandbox 拒绝范围外文件与 loopback 连接。
+- Win CI 随 PR 运行；本轮按主人要求不做 Windows 微信实机测试。
+
+#### 未关闭的验收
+
+- Mac 微信 4.1.15 没有暴露聊天 AX 树；增强 AX 失败、调试 capability 被系统拒绝（未读内存），数据目录被 macOS 权限拒绝；后续 GUI 测试又遇到锁屏。
+- 尚未取得/验证本机微信数据库密钥，指定会话读写与稳定身份映射、后台/锁屏/人工并发、OS 所有者审批、Windows 平台行为及长期 listener/runner 端到端均未通过。
+- 没有成熟安装签名/经过验收的原生配置 GUI/硬件防回滚/自动密钥初始化；Gen1 不提供 blanket 自动发送。完整架构发布验收仍开放，提交为开发 PR。
+- 本轮不发布账号标识、联系人、聊天内容、密钥、实际数据库路径、实机截图、私有仓库整树或第三方二进制。
+
 ### 2026-10-10 — 开源数据库读取路线评估
 
 - 新增 docs/OPEN_SOURCE_READERS.md：固定提交核对 chatlog-keeper、wxq、wechat-cli-local 的许可证、页解密、WAL 和分页实现；首选评估 chatlog-keeper 的密钥模式判别与校验逻辑。

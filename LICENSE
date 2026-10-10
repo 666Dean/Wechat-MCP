@@ -1,3 +1,7 @@
+Scope: This MIT license applies to the repository source outside AXR/.
+Stellaria AXR SDK under AXR/ is licensed separately under AGPL-3.0-only;
+see AXR/LICENSE and LICENSES.md. Third-party notices are preserved.
+
 MIT License
 
 Copyright (c) 2026 wechat-codex-mcp contributors

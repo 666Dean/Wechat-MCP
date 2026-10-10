@@ -20,3 +20,17 @@ codex-mcp.toml
 config.database.json
 *.dll
 dist/
+
+# Native products, local owner state and private source cache
+*.so
+*.pyd
+*.dylib
+*.exe
+*.a
+*.o
+*.obj
+*.egg-info/
+build/
+config.axr.json
+*.sealed.json
+*.sealed

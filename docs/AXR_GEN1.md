@@ -1,0 +1,93 @@
+# AXR Gen1 集成与验收
+
+本轮将应用无关 SDK 放在根目录 `AXR/`，微信业务由本项目提供。
+原有 legacy 模式继续保留其权限与存储边界，**没有因新增 AXR 自动变安全**。
+使用 `server.py --axr-state STATE` 才进入 AET 路径；该模式禁止混用 legacy 管理开关。
+
+## 本地安装和授权
+
+1. Python 3.12，安装原生构建依赖与 `requirements.txt`；Windows 的 wxauto4 只用于 legacy。
+2. 开发构建 `python scripts/build_axr.py --openssl /path/to/openssl3`，生成 Swift / C++ helper
+   和 C++20 绑定。pip 安装 AXR 本身也会构建绑定，但不会构建微信 UIA；UIA 要构建根 CMake。
+3. 把 `examples/axr.policy.example.json` 或 `axr.database.example.json` 复制到 Git 外的私有目录，
+   只绑定主人确认的账号、会话和路径，填写精确 `agent_destination`，三个监听开关默认关闭。
+4. 在主人本地终端执行：
+
+```sh
+axr-owner --state STATE --helper HELPER init --policy PRIVATE_POLICY
+axr-owner --state STATE --helper HELPER grant --principal PRINCIPAL --platform wechat --account ACCOUNT --conversation CONVERSATION --purpose wechat-assistant --operation messages.read --operation messages.search --operation reply.prepare --ttl 3600 --uses 100
+python server.py --axr-state STATE --doctor
+python server.py --axr-state STATE --listener
+```
+
+WCDB 密钥：`axr-owner ... secret wcdb.test-account`，本地隐藏输入 32 字节 hex。
+可读数据库导出亦须授权来源；程序不自动导出全部聊天，不关闭 SIP，不注入客户端。
+目前没有通过本机微信密钥自动取得验收，不能宣称已完成“无需密钥配置”。
+
+本地配置面板：在主人终端运行 `python -m axr_integration.owner_panel --state STATE --helper HELPER`，提供 policy JSON、三个开关、精确审批/拒绝和实际 telemetry。Python 需有 Tk；所有写入仍需系统认证，按钮本身不授予权限。界面尚未实机验证。
+
+所有者 `configure` 会使旧能力失效，并要求重启 broker，防止热改账号/数据源产生身份混用。
+监听授权的 workflow 必须与 grant 一致。`approve JOB --principal PRINCIPAL` 必须针对当前
+密封意图完成系统认证；MCP 返回 AwaitingApproval 只代表待办，绝不是审批。
+
+## 工具与数据流
+
+| 功能 | 接口及约束 |
+|---|---|
+| 状态/会话元数据 | `wechat_status` / `wechat_find_conversations`，只列明确绑定范围 |
+| 检索/聚焦 | `wechat_read_context`，时间、sender、关键词、cursor、limit；返回 context handle，不外传正文 |
+| 内容披露 | `wechat_disclose_context` 提议精确 AET，主人另授模型目的地披露能力后 `axr_execute` 返回正文 |
+| 回复草稿 | `wechat_prepare_reply`，默认 `【自动回复 · AI 助理】`，来源从加密上下文派生，不能用空列表清洗来源 |
+| 发送 | `wechat_propose_send` → 本地批准 → `axr_execute`；稳定账号及会话证据缺失即拒绝，WCDB 不直接发送 |
+| 事务管理 | `axr_job_status` / `axr_cancel` / `axr_execute(dry_run=true)`；Unknown 永不自动重发 |
+| 工作区 | `axr_workspace_write` 提议受限文本写入，需 workspace authority |
+| 回放 | `axr_policy_simulate`，本地过滤规则，模型调用为 0，回放不入队/发消息 |
+| 监听与 runner | `--listener` 运行真实轮询线程；listen / wake_agent / auto_execute 独立默认关闭 |
+| Runner 继续 | `axr_run_approved_batch` 对已批准的披露运行 owner-pinned 本地沙箱 worker，预算先预留，再生成草稿 |
+| 兼容名称 | AXR 模式的 `poll_messages` / `reply_to_message` 全部经过 AET；旧整数 message_id 语义属于 legacy |
+
+MCP 本身不保证唤醒模型。监听先建立历史基线、去重、过滤方向/时效/发送者/关键词，再聚合。
+UI 缺少稳定账号/会话 witness 时拒绝正文读取；来源无可验证时间/方向时，不进入主动唤醒。SQLCipher 支持明确的加密 profile 和 WCDB
+表型；未知 schema/压缩/群发送者拒绝，不能把读取失败当空消息。
+
+Runner contract：owner-pinned command 从 stdin 读取 `{version, context, instruction}`，stdout
+仅返回 `{text}` JSON。Mac 运行时根目录白名单，默认无文件写/网络；模型联网需要额外设计
+经过授权的 provider broker，目前没有隐式放开网络。Win 须将独立 runtime 放入专用 staged root，
+配置 `windows_launcher`、`windows_runtime_root`；原生 AppContainer 拒绝 root 外执行及 reparse paths。
+不得把整个用户目录、策略目录、Keychain/credential store 放入 runtime roots。
+`auto_execute` 允许已批准事务继续执行，绝不创造发送 authority；Gen1 runner 当前只输出草稿，
+需要单独发送提议和精确批准，不提供 blanket 自动发送。
+
+## 模式与真实范围
+
+| 项目 | WCDB | Accessibility / UIA |
+|---|---|---|
+| 后台读取 | 原生只读 pager，已提交 WAL 可见；依赖目录权限、正确密钥/profile | 依赖微信版本实际暴露的节点；不承诺锁屏/最小化 |
+| 历史范围 | 明确绑定的会话表与 shards，分页游标绑定范围/filters/TTL | 当前可见选定会话；无全历史/时间/sender 承诺 |
+| 凭据 | Keychain / Windows Credential Manager，本地录入 | OS Accessibility / UI Automation 权限 |
+| 发送 | 不提供 | 仅 owner-qualified 稳定 ID witness + input/header/account 检查 + AXPress/InvokePattern |
+| 结果证据 | 读取成功与范围元数据 | 新客户端 bubble + 空 draft；不等同收件人已收到 |
+
+Mac layout 复用 MIT 开源 wechat-mcp 的标识与标题规则，保留完整许可证；没有复用全局 Return
+事件发送或仅调用即成功的确认逻辑。SDK 内不包含微信 bundle、数据库 schema 或联系人。
+
+## 本轮证据与未关闭验收
+
+* 原项目 91 个回归测试：通过，1 个原有平台跳过；已迁移 MCP 2.3.0 snake_case API。
+* 新增 37 个安全/事务/worker/集成测试：通过，包含真实 SQLCipher 加密合成库、WAL、拒写/错钥。
+* C++20 Core / Swift helper：本机编译及 CTest 通过；SDK 独立安装、外部 CMake consumer 构建通过。
+* Mac 沙箱：允许指定 worker/只读 runtime，拒绝白名单外文件；监听中的 loopback socket 在沙箱外可连接、沙箱内拒绝。
+* Mac 微信 4.1.15：进程与 Accessibility 权限检测成功，但聊天树未暴露；增强 AX 失败，
+  debug capability 被系统拒绝（没有读取进程内存），数据库目录被系统权限拒绝。
+  指定会话正文、发送、账号稳定映射与后台行为 **未通过实机验收**。
+* 后续 GUI 实测遇到 Mac 锁定；需要主人解锁及目录读取权限后继续。私有账号、联系人、正文、
+  密钥、截图、实际数据库路径不进入仓库或 CI。
+* Windows：C++ UIA/Hello/AppContainer + 自动化构建路径；本轮按主人要求 **不做微信实机测试**。
+  Win 平台行为、Hello 与 AppContainer 尚无实机资格证明。
+* 本地所有者 OS 弹窗、人类批准全过程、任意外部模型 runner、长期稳定监听尚未端到端验证。
+* 未提供成熟安装包签名、经过验收的跨平台原生配置 GUI、硬件反回滚、自动合法获取 WCDB 密钥，
+  也未把全部复杂微信版本 schema 或媒体解析声明为支持。
+
+这些限制意味着这是可评审的 Gen1 开发 PR，不能标为完整方案端到端交付。
+完整架构的发布门槛仍包括真实账号绑定、指定会话读写、锁屏/重启/切换/并发人工输入、
+撤权与审批抢占、成本统计和 Windows 平台验收。

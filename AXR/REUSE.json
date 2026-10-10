@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "authorization": "Project owner explicitly authorized extracting Stellaria-authored generic infrastructure and releasing AXR under AGPL-3.0-only.",
+  "extraction": "Adapted implementations, not whole-project imports. Qt, account and application couplings removed.",
+  "excluded": [
+    "SOF execution",
+    "SPX compiler and backends",
+    "rendering",
+    "model/provider code",
+    "BasicX scheduling and global DAG",
+    "private endpoints/accounts/keys",
+    "Connector DCC and scene formats"
+  ],
+  "sources": [
+    {
+      "repository": "Stellaria-Studio/Stellaria-Connector",
+      "commit": "714217d7ea9df39ac115b3d015fcf8f4dbe3cc6a",
+      "source": "sdk/src/connector/WorkerTransport.cpp",
+      "sha256": "e0edbc4a828bfd18ac1219485e04ed2dec849f1aa9a7c96cc27bdf643972b01c",
+      "symbols": [
+        "QuoteWindowsArgument",
+        "WorkerSupervisor::Start",
+        "WorkerSupervisor::Poll",
+        "WorkerSupervisor::Stop"
+      ],
+      "adapted_into": [
+        "AXR/extracted/ConnectorProcess.cpp",
+        "AXR/extracted/WindowsSandbox.cpp"
+      ]
+    },
+    {
+      "repository": "Stellaria-Studio/Stellaria-BasicX",
+      "commit": "c9e65bb4399aa61e280d30b9050bb1db57556ea0",
+      "source": "basicx/src/Service/BasicXDurableJournal.h",
+      "sha256": "ca4e901f965c7afa998c4af47f5a2cea662ee8344b1321c480aa212390d5a605",
+      "symbols": [
+        "Commit",
+        "Load",
+        "Write",
+        "Sync"
+      ],
+      "adapted_into": [
+        "AXR/extracted/DurableRecord.cpp",
+        "AXR/axr/journal.py"
+      ]
+    },
+    {
+      "repository": "Stellaria-Studio/Stellaria-BasicX",
+      "commit": "c9e65bb4399aa61e280d30b9050bb1db57556ea0",
+      "source": "basicx/src/Service/BasicXWindowsSandbox.h",
+      "sha256": "fac8cd79655c3358d88fff995a0aec6862f943e8dc756f2bfb0c0c3c72425588",
+      "symbols": [
+        "Initialize",
+        "Grant",
+        "SECURITY_CAPABILITIES"
+      ],
+      "adapted_into": [
+        "AXR/extracted/WindowsSandbox.cpp"
+      ]
+    },
+    {
+      "repository": "Stellaria-Studio/Stellaria-BasicX-Hub",
+      "commit": "8388eab5610d22678bed72d96f375d39d0f856a5",
+      "source": "hub_security.py",
+      "sha256": "1bb8483a1e588f93e3a8f8087a0c1ac088fe3f0d5ff05aa7bd23845c51b0f3a2",
+      "symbols": [
+        "allow",
+        "init_schema append-only audit triggers"
+      ],
+      "adapted_into": [
+        "AXR/axr/admission.py",
+        "AXR/axr/journal.py"
+      ]
+    }
+  ]
+}

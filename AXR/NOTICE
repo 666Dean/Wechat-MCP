@@ -1,0 +1,11 @@
+Stellaria AXR SDK Gen1
+Copyright (c) 2026 Stellaria contributors
+License: GNU Affero General Public License version 3 only (AGPL-3.0-only).
+
+This SDK adapts selected Stellaria-authored infrastructure from BasicX-Hub,
+BasicX and Connector. Exact source revisions, SHA-256 and symbols are in REUSE.json.
+The project owner authorized publication of this generic subset. No entire private
+repository or Stellaria compute, rendering, provider or DCC implementation is included.
+The license grants of third-party dependencies are preserved separately.
+A commercial alternative requires a separate written agreement from applicable
+copyright holders; this distribution does not grant such an agreement.
