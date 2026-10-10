@@ -23,7 +23,11 @@ RULES = """你是 Codex，微信号主人的 AI 助理。称呼主人时使用�
 MCP 默认不提供联系人写入工具；只有本机启动参数显式开启后才可使用，开启不代表所有者身份认证。
 没有依据就说明不确定；声称已转告主人或已办理事务前必须有真实执行依据。
 发送回复必须调用 reply_to_message；不要用其他工具绕过联系人和发送限制。
+已保存预览通过 list_reply_queue 查看，poll_messages 不再反复返回；只有明确需要修改时重写草稿。
+离线队列不证明当前微信账号、连接或发送目标，草稿不等于已发送。
 MCP 不会主动调用模型，只有运行中的 AI 客户端轮询工具后才会回复。"""
+
+QUEUE_NOTE = "仅本机已保存内容；未核对当前微信连接或目标身份。预览不是已发送。"
 
 
 class WxAdapter:
@@ -160,8 +164,34 @@ class Bridge:
         self.db.commit()
 
     def pending_for(self, peer):
-        rows = self.db.execute("SELECT id,peer,text,created FROM messages WHERE status='pending' AND peer=? ORDER BY id LIMIT 50", (peer,)).fetchall()
+        rows = self.db.execute("SELECT id,peer,text,created FROM messages WHERE status='pending' AND reply IS NULL AND peer=? ORDER BY id LIMIT 50", (peer,)).fetchall()
         return [dict(row) for row in rows]
+
+    def list_queue(self, after_id=0, limit=20):
+        """Read authorized, unexpired local work without opening either adapter.
+
+        Keyset pagination survives dismissals and expiry between pages. It is a
+        live view, not a snapshot: start at zero to revisit edited older drafts.
+        """
+        if type(after_id) is not int or not 0 <= after_id <= 2 ** 63 - 1:
+            raise ValueError("after_id 必须是 SQLite 范围内的非负整数")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit 必须是 1 到 100 的整数")
+        self.refresh_config()
+        rows = self.db.execute("""SELECT id,peer,text,created,source,account_id,conversation_id,reply
+            FROM messages WHERE status='pending' AND id>? ORDER BY id LIMIT ?""",
+            (after_id, limit + 1)).fetchall()
+        has_more = len(rows) > limit
+        items = []
+        for row in rows[:limit]:
+            item = dict(row)
+            item["preview"] = item.pop("reply")
+            item["stage"] = "needs_reply" if item["preview"] is None else "preview_ready"
+            item["expires_at"] = item["created"] + MESSAGE_TTL_SECONDS
+            items.append(item)
+        return {"items": items, "has_more": has_more,
+                "next_after_id": items[-1]["id"] if has_more else None,
+                "untrusted_content": True, "live_identity_verified": False, "note": QUEUE_NOTE}
 
     def ui(self, method, *args):
         def call():
@@ -207,7 +237,7 @@ class Bridge:
 
     def database_pending(self):
         rows = self.db.execute("""SELECT id,peer,text,created,account_id,conversation_id,source
-            FROM messages WHERE status='pending' AND source='wcdb' AND account_id=?
+            FROM messages WHERE status='pending' AND reply IS NULL AND source='wcdb' AND account_id=?
             ORDER BY id LIMIT 50""", (self.reader_config["account_id"],)).fetchall()
         return [dict(row) for row in rows]
 
@@ -344,8 +374,10 @@ class Bridge:
                     "account_id": row["account_id"], "conversation_id": row["conversation_id"],
                     "note": "数据库读取与发送分离；此来源强制预览，草稿已保存，未向微信发送"}
         if not self.config["send_enabled"]:
+            self.db.execute("UPDATE messages SET reply=? WHERE id=?", (final, message_id))
+            self.db.commit()
             return {"status": "preview", "peer": row["peer"], "text": final,
-                    "note": "尚未开启真实发送，未向微信发送消息"}
+                    "note": "草稿已保存；尚未开启真实发送，未向微信发送消息"}
         last = self.db.execute("SELECT sent_at FROM replies WHERE peer=?", (row["peer"],)).fetchone()
         if last and time.time() - last[0] < self.config["min_reply_interval_seconds"]:
             raise ValueError("回复频率过高，请稍后再试")

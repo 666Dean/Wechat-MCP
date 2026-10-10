@@ -148,6 +148,80 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(), before)
         self.assertEqual(self.bridge.db.execute("SELECT status FROM messages WHERE id=?", (mid,)).fetchone()[0], "pending")
         self.assertEqual(self.adapter.sent, [])
+
+    def test_preview_is_saved_without_repeated_generation_after_restart(self):
+        mid = self.event()
+        preview = self.bridge.reply(mid, "第一稿")
+        self.assertEqual(self.bridge.poll()["events"], [])
+        self.bridge.close()
+        self.bridge = Bridge(self.path, self.adapter)
+        item = self.bridge.list_queue()["items"][0]
+        self.assertEqual((item["id"], item["stage"], item["preview"]),
+                         (mid, "preview_ready", preview["text"]))
+        self.assertEqual(self.bridge.poll()["events"], [])
+        revised = self.bridge.reply(mid, "修改稿")
+        self.assertEqual(self.bridge.list_queue()["items"][0]["preview"], revised["text"])
+        self.update_config(send_enabled=True)
+        self.assertEqual(self.adapter.sent, [])  # Merely enabling sends does not send saved drafts.
+        self.bridge.reply(mid, "人工核对后的模拟发送")
+        self.assertEqual(len(self.adapter.sent), 1)
+        self.assertEqual(self.bridge.list_queue()["items"], [])
+
+    def test_queue_does_not_open_ui_or_require_current_chat(self):
+        mid = self.event()
+        self.bridge.reply(mid, "离线草稿")
+        self.adapter.current["peer"] = "另一个聊天"
+        self.bridge.ui = lambda *args: self.fail("queue must not call the UI")
+        result = self.bridge.list_queue()
+        self.assertFalse(result["live_identity_verified"])
+        self.assertTrue(result["untrusted_content"])
+        self.assertEqual([item["id"] for item in result["items"]], [mid])
+        self.bridge.dismiss(mid)
+        self.assertEqual(self.bridge.list_queue()["items"], [])
+
+    def test_queue_keyset_pagination_survives_dismissal_and_new_rows(self):
+        self.bridge.poll()
+        for i in range(7):
+            self.add(f"合成消息 {i}")
+        events = self.bridge.poll()["events"]
+        self.bridge.reply(events[0]["id"], "草稿")
+        first = self.bridge.list_queue(limit=3)
+        self.assertTrue(first["has_more"])
+        self.assertEqual(first["items"][0]["stage"], "preview_ready")
+        self.assertEqual(first["items"][1]["stage"], "needs_reply")
+        self.bridge.dismiss(events[0]["id"])
+        self.add("分页期间新增")
+        self.bridge.poll()
+        second = self.bridge.list_queue(after_id=first["next_after_id"], limit=3)
+        third = self.bridge.list_queue(after_id=second["next_after_id"], limit=3)
+        self.assertFalse(third["has_more"])
+        self.assertIsNone(third["next_after_id"])
+        ids = [item["id"] for page in (first, second, third) for item in page["items"]]
+        self.assertEqual(ids, sorted(set(ids)))
+        self.assertEqual(len(ids), 8)
+        self.assertEqual(third["items"][-1]["text"], "分页期间新增")
+
+    def test_queue_omits_revoked_expired_dismissed_and_unknown_drafts(self):
+        self.bridge.poll()
+        for i in range(5):
+            self.add("Codex 保留" if i == 4 else "普通消息")
+        events = self.bridge.poll()["events"]
+        for event in events:
+            self.bridge.reply(event["id"], "合成草稿")
+        self.bridge.db.execute("UPDATE messages SET created=? WHERE id=?", (time.time() - 901, events[0]["id"]))
+        self.bridge.db.execute("UPDATE messages SET status='unknown' WHERE id=?", (events[1]["id"],))
+        self.bridge.db.commit()
+        self.bridge.dismiss(events[2]["id"])
+        ConfigStore(self.path).set_contacts([])
+        self.assertEqual([item["id"] for item in self.bridge.list_queue()["items"]], [events[4]["id"]])
+
+    def test_invalid_queue_pagination_does_not_mutate_state(self):
+        mid = self.event()
+        before = self.bridge.db.execute("SELECT * FROM messages WHERE id=?", (mid,)).fetchone()
+        for after_id, limit in [(-1, 20), (True, 20), (2 ** 63, 20), (0, 0), (0, 101), (0, False), ("0", 20)]:
+            with self.subTest(after_id=after_id, limit=limit), self.assertRaises(ValueError):
+                self.bridge.list_queue(after_id, limit)
+        self.assertEqual(tuple(before), tuple(self.bridge.db.execute("SELECT * FROM messages WHERE id=?", (mid,)).fetchone()))
         self.assertFalse(self.bridge.status()["permissions"]["mcp_contact_management"])
 
     def test_live_config_cannot_grant_management_capability(self):

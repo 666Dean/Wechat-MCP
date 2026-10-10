@@ -20,6 +20,13 @@ def digest(value):
                                      separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
+def private_conversation_candidate(cid, account):
+    # This only excludes known non-private ID shapes, not proof of friendship.
+    return (isinstance(cid, str) and bool(cid.strip()) and not any(ord(c) < 32 for c in cid)
+            and cid != account and "@" not in cid and cid not in ("filehelper", "fmessage", "weixin")
+            and not cid.startswith("gh_"))
+
+
 def validate_database_config(config):
     required = {"account_id", "session_db", "dll_path", "key_file", "conversations",
                 "page_size", "max_pages"}
@@ -48,7 +55,7 @@ def validate_database_config(config):
         if any(not isinstance(v, str) or not v.strip() or any(ord(c) < 32 for c in v)
                for v in (cid, name)):
             raise ValueError("会话 ID 和显示名必须是非空且无控制字符的字符串")
-        if cid == config["account_id"] or "@" in cid or cid in ("filehelper", "fmessage", "weixin") or cid.startswith("gh_"):
+        if not private_conversation_candidate(cid, config["account_id"]):
             raise ValueError("仅允许使用者明确指定的私人好友会话")
         if cid in ids or name in names:
             raise ValueError("会话 ID 或显示名重复，拒绝歧义绑定")
@@ -277,14 +284,47 @@ class WcdbReader:
             if pointer.value:
                 self.native.wcdb_free_string(pointer)
 
-    def sessions(self):
+    def _session_metadata(self):
         rows = self._json("get_sessions")
         # Validate IDs before passing them back to the DLL.
         validate_sessions(rows, {}, [])
         ids = [r["username"] for r in rows]
         names = self._json("get_display_names", json.dumps(ids).encode("utf-8"), expected=dict) if ids else {}
+        validate_sessions(rows, names, [])
+        return rows, names
+
+    def sessions(self):
+        rows, names = self._session_metadata()
         validate_sessions(rows, names, self.config["conversations"])
         return rows, names
+
+    def session_catalog(self):
+        """Owner CLI discovery; never return native session previews or message rows.
+
+        Skip configured name matching here so a renamed binding can be diagnosed.
+        Normal status/poll/preview continue to require exact binding validation.
+        """
+        rows, names = self._session_metadata()
+        counts = Counter(names.get(row["username"]) for row in rows)
+        configured = {b["conversation_id"]: b["display_name"] for b in self.config["conversations"]}
+        sessions = []
+        for row in sorted(rows, key=lambda r: r["username"]):
+            cid = row["username"]
+            name = names.get(cid, "")
+            reason = None
+            if not private_conversation_candidate(cid, self.account_id):
+                reason = "excluded_conversation_id"
+            elif not name.strip() or any(ord(c) < 32 for c in name):
+                reason = "missing_or_invalid_display_name"
+            elif counts[name] != 1:
+                reason = "duplicate_display_name"
+            sessions.append({"conversation_id": cid, "display_name": name,
+                             "can_bind": reason is None, "reason": reason,
+                             "configured": cid in configured,
+                             "binding_matches": cid in configured and configured[cid] == name})
+        return {"account_id": self.account_id, "sessions": sessions,
+                "session_count": len(sessions), "untrusted_content": True,
+                "note": "仅输出会话 ID 和显示名；原生会话摘要被丢弃，不调用消息查询或修改绑定。can_bind 只检查已知排除项，私人好友身份需本人核对。"}
 
     def messages(self, conversation, limit, offset):
         if conversation not in {b["conversation_id"] for b in self.config["conversations"]}:
