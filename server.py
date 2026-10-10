@@ -18,11 +18,18 @@ def main():
                         help="仅在本机终端交互录入数据库密钥并使用 Windows DPAPI 保存；不经 MCP 传递")
     parser.add_argument("--list-database-sessions", action="store_true",
                         help="在本机列出数据库会话 ID 与显示名；不调用消息查询、不输出会话摘要、不修改配置")
+    parser.add_argument("--probe-database-messages", metavar="CONVERSATION_ID",
+                        help="只读验证一个已绑定会话的一页消息；仅输出统计，不输出正文、不建立基线")
+    parser.add_argument("--probe-limit", type=int, default=20, help="验证页大小（1 到 50，默认 20）")
     contacts = parser.add_mutually_exclusive_group()
     contacts.add_argument("--set-contacts", nargs="*", metavar="REMARK")
     contacts.add_argument("--list-contacts", action="store_true")
     args = parser.parse_args()
-    if args.list_database_sessions:
+    if args.list_database_sessions or args.probe_database_messages is not None:
+        if args.list_database_sessions and args.probe_database_messages is not None:
+            parser.error("会话查询与消息验证不能混用")
+        if not 1 <= args.probe_limit <= 50:
+            parser.error("probe-limit 必须是 1 到 50")
         if args.demo or args.doctor or args.store_database_key or args.set_contacts is not None or args.list_contacts:
             parser.error("会话查询不能与其他操作混用")
         from database_reader import WcdbReader
@@ -34,7 +41,8 @@ def main():
             with contextlib.redirect_stdout(sys.stderr):
                 try:
                     reader = WcdbReader(config["database_reader"])
-                    result = reader.session_catalog()
+                    result = (reader.probe_messages(args.probe_database_messages, args.probe_limit)
+                              if args.probe_database_messages is not None else reader.session_catalog())
                 finally:
                     if reader is not None:
                         reader.close()

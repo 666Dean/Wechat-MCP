@@ -243,10 +243,12 @@ class Bridge:
 
     def database_poll(self):
         from database_reader import reconcile, validate_sessions
+        # Both stability scans use the same eligibility boundary.
+        cutoff = int(time.time() - MESSAGE_TTL_SECONDS)
         def read(reader):
             rows, names = reader.sessions()
             validate_sessions(rows, names, self.reader_config["conversations"])
-            batches = [(binding, reconcile(reader, binding["conversation_id"], self.reader_config))
+            batches = [(binding, reconcile(reader, binding["conversation_id"], self.reader_config, cutoff=cutoff))
                        for binding in self.reader_config["conversations"]]
             # Recheck labels after reading; never attach text to a newly renamed peer.
             rows, names = reader.sessions()
@@ -277,6 +279,7 @@ class Bridge:
                 self.db.execute("INSERT OR REPLACE INTO reader_conversations VALUES(?,?,?)",
                                 (account, conversation, time.time()))
         return {"events": self.database_pending(), "new_baselines": baseline_count,
+                "scan_mode": self.reader_config.get("scan_mode", "full"),
                 "coverage": "configured_database_conversations_only", "untrusted_content": True,
                 "note": "首次会话仅建立持久基线；数据库来源的回复强制预览"}
 
@@ -300,6 +303,7 @@ class Bridge:
                 return validate_sessions(rows, names, self.reader_config["conversations"])
             count = self.database_call(inspect)
             return {"backend": "wcdb", "connected": True,
+                    "scan_mode": self.reader_config.get("scan_mode", "full"),
                     "coverage": "configured_database_conversations_only", "session_count": count,
                     "bound_conversation_count": len(self.reader_config["conversations"]),
                     "account_binding": "owner_configured_path_not_native_attestation",

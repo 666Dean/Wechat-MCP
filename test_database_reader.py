@@ -351,6 +351,82 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(self.bridge.poll()["events"], [])
         self.assertEqual(self.bridge.db.execute("SELECT count(*) FROM reader_seen").fetchone()[0], 2)
 
+    def recent_mode(self, max_pages=3):
+        self.bridge.close()
+        self.config["database_reader"].update(scan_mode="recent", max_pages=max_pages)
+        self.update()
+        self.reader.closed = False
+        self.bridge = Bridge(self.path, reader=self.reader)
+
+    def test_recent_large_history_bounded_baseline_restart_and_new_event(self):
+        self.recent_mode()
+        now = int(time.time())
+        self.reader.rows = [message(i, create_time=now - 1000 - (10000 - i))
+                            for i in range(10000, 0, -1)]
+        self.assertEqual(self.bridge.poll()["events"], [])
+        self.assertEqual(len(self.reader.reads), 2)  # One old page per stability scan.
+        self.assertEqual(self.bridge.db.execute("SELECT count(*) FROM reader_seen").fetchone()[0], 4)
+        self.restart()
+        self.reader.reads.clear()
+        self.reader.rows.insert(0, message(10001, create_time=now))
+        event = self.bridge.poll()["events"][0]
+        self.assertEqual(len(self.reader.reads), 4)
+        self.assertEqual(self.bridge.reply(event["id"], "合成窗口预览")["status"], "preview")
+        self.restart()
+        self.assertEqual(self.bridge.poll()["events"], [])
+        self.assertEqual(self.bridge.db.execute("SELECT count(*) FROM messages").fetchone()[0], 1)
+
+    def test_recent_scan_rejects_page_and_cross_page_order_inversions(self):
+        self.recent_mode(max_pages=10)
+        now = int(time.time())
+        for times in ([now, now - 1, now + 1],
+                      [now, now - 1, now - 2, now - 3, now - 2]):
+            self.reader.rows = [message(i + 1, create_time=t) for i, t in enumerate(times)]
+            with self.subTest(times=times), self.assertRaisesRegex(ReaderError, "顺序|从新到旧"):
+                self.bridge.poll()
+            self.assertEqual(self.bridge.db.execute("SELECT count(*) FROM reader_conversations").fetchone()[0], 0)
+
+    def test_recent_limit_and_unstable_window_leave_state_unchanged(self):
+        self.recent_mode(max_pages=1)
+        self.reader.rows = [message(i) for i in range(10, 0, -1)]
+        with self.assertRaisesRegex(ReaderError, "max_pages"):
+            self.bridge.poll()
+        self.assertEqual(self.bridge.db.execute("SELECT count(*) FROM reader_seen").fetchone()[0], 0)
+        self.reader.rows = []
+        def mutate(reader, offset):
+            if offset == 0:
+                reader.rows[:] = [message(len(reader.reads) + 100)]
+        self.reader.hook = mutate
+        with self.assertRaisesRegex(ReaderError, "持续变化"):
+            self.bridge.poll()
+        self.assertEqual(self.bridge.db.execute("SELECT count(*) FROM reader_seen").fetchone()[0], 0)
+
+    def test_recent_queue_failure_rolls_back_window_baseline_and_seen(self):
+        self.recent_mode()
+        self.bridge.poll()
+        self.reader.rows = [message(1)]
+        checkpoint = self.bridge.db.execute("SELECT reconciled_at FROM reader_conversations").fetchone()[0]
+        self.bridge.db.execute("CREATE TRIGGER reject_recent BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END")
+        self.bridge.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.bridge.poll()
+        self.assertEqual(self.bridge.db.execute("SELECT count(*) FROM reader_seen").fetchone()[0], 0)
+        self.assertEqual(self.bridge.db.execute("SELECT reconciled_at FROM reader_conversations").fetchone()[0], checkpoint)
+        self.bridge.db.execute("DROP TRIGGER reject_recent")
+        self.bridge.db.commit()
+        self.assertEqual(len(self.bridge.poll()["events"]), 1)
+
+    def test_recent_fixed_cutoff_required_and_full_config_backwards_compatible(self):
+        legacy = dict(self.config["database_reader"])
+        legacy.pop("scan_mode", None)
+        validate_database_config(legacy)
+        self.assertEqual(reconcile(self.reader, "wxid_friend", legacy), [])
+        for cutoff in (None, True, 0, -1):
+            with self.subTest(cutoff=cutoff), self.assertRaises(ReaderError):
+                reconcile(self.reader, "wxid_friend", {**legacy, "scan_mode": "recent"}, cutoff=cutoff)
+        with self.assertRaises(ValueError):
+            validate_database_config({**legacy, "scan_mode": "auto"})
+
     def test_queue_insert_failure_rolls_back_seen_and_baseline(self):
         self.bridge.poll()
         self.reader.rows = [message(1)]
@@ -453,6 +529,40 @@ class DatabaseTests(unittest.TestCase):
             reader.close()
         self.assertEqual(native.closed, [native.large_handle])
         self.assertEqual(native.shutdowns, 1)
+
+    def test_probe_reads_only_bound_page_without_text_or_state(self):
+        native = FakeNative()
+        reader = self.native_reader(native)
+        fixture = [message(2, message_content="不可输出的测试正文"), message(1)]
+        try:
+            with patch.object(reader, "sessions", return_value=([{"username": "wxid_friend"}], native.names)) as sessions, \
+                    patch.object(reader, "messages", return_value=fixture) as query:
+                result = reader.probe_messages("wxid_friend", 2)
+                self.assertEqual(result["sample_count"], 2)
+                self.assertEqual(result["readable_incoming_text_count"], 2)
+                self.assertTrue(result["observed_newest_first"])
+                self.assertNotIn("不可输出", str(result))
+                self.assertNotIn("wxid_friend", str(result))
+                self.assertFalse(result["state_changed"])
+                self.assertEqual(sessions.call_count, 2)
+                query.assert_called_once_with("wxid_friend", 2, 0)
+        finally:
+            reader.close()
+
+    def test_probe_rejects_unbound_limits_and_invalid_identity(self):
+        native = FakeNative()
+        reader = self.native_reader(native)
+        try:
+            with patch.object(reader, "messages") as query:
+                for cid, limit in [("unbound", 1), ("wxid_friend", True), ("wxid_friend", 51)]:
+                    with self.subTest(cid=cid, limit=limit), self.assertRaises(ReaderError):
+                        reader.probe_messages(cid, limit)
+                query.assert_not_called()
+            with patch.object(reader, "messages", return_value=[message(1, source_db=None, server_id=0)]):
+                with self.assertRaisesRegex(ReaderError, "分库标识"):
+                    reader.probe_messages("wxid_friend")
+        finally:
+            reader.close()
 
     def test_ffi_errors_free_pointer_and_never_become_empty_messages(self):
         for payload, code in [(b"{invalid secret-like payload", 0), (b"\xff", 0),
