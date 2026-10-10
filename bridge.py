@@ -1,6 +1,7 @@
 """Personal WeChat MCP bridge. UI calls are serialized on one COM thread."""
 import contextlib
 import importlib
+import copy
 import re
 import sqlite3
 import time
@@ -81,7 +82,7 @@ class MockAdapter:
 
 
 class Bridge:
-    def __init__(self, config_path, adapter=None, *, allow_contact_management=False):
+    def __init__(self, config_path, adapter=None, *, reader=None, allow_contact_management=False):
         # A startup capability, never derived from incoming messages or live config.
         self._allow_contact_management = allow_contact_management is True
         self.path = Path(config_path).resolve()
@@ -89,6 +90,10 @@ class Bridge:
         self.config = self.settings.load()
         self.state_path = (self.path.parent / self.config["state_file"]).resolve()
         self.backend = self.config["backend"]
+        self.reader_config = copy.deepcopy(self.config.get("database_reader"))
+        self.reader = reader
+        if self.backend == "wcdb" and adapter is not None:
+            raise ValueError("数据库读取与 UI/演示适配器不能混用")
         self.adapter = adapter
         self.pool = None
         self.db = None
@@ -106,7 +111,28 @@ class Bridge:
             eligible INTEGER, created REAL, status TEXT DEFAULT 'pending',
             reply TEXT, UNIQUE(peer, native_id));
           CREATE TABLE IF NOT EXISTS replies (peer TEXT PRIMARY KEY, sent_at REAL);
+          CREATE TABLE IF NOT EXISTS reader_binding (
+            id INTEGER PRIMARY KEY CHECK(id=1), account_id TEXT NOT NULL, binding TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS reader_conversations (
+            account_id TEXT NOT NULL, conversation_id TEXT NOT NULL, reconciled_at REAL NOT NULL,
+            PRIMARY KEY(account_id, conversation_id));
+          CREATE TABLE IF NOT EXISTS reader_seen (
+            account_id TEXT NOT NULL, conversation_id TEXT NOT NULL, source TEXT NOT NULL,
+            message_key TEXT NOT NULL, PRIMARY KEY(account_id, conversation_id, source, message_key));
             """)
+            # Additive migration preserves pending, sent and unknown rows from 0.3.x.
+            columns = {r[1] for r in self.db.execute("PRAGMA table_info(messages)")}
+            for column, default in (("source", "ui"), ("account_id", ""), ("conversation_id", "")):
+                if column not in columns:
+                    self.db.execute(f"ALTER TABLE messages ADD COLUMN {column} TEXT NOT NULL DEFAULT '{default}'")
+            if self.backend == "wcdb":
+                from database_reader import account_binding
+                binding = account_binding(self.reader_config)
+                saved = self.db.execute("SELECT account_id,binding FROM reader_binding WHERE id=1").fetchone()
+                expected = (self.reader_config["account_id"], binding)
+                if saved is not None and tuple(saved) != expected:
+                    raise ValueError("状态数据库已绑定其他账号或入口；请使用独立 state_file")
+                self.db.execute("INSERT OR IGNORE INTO reader_binding VALUES(1,?,?)", expected)
             self.db.execute("UPDATE messages SET status='unknown' WHERE status='sending'")
             self.db.commit()
             self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="wechat-ui")
@@ -117,17 +143,19 @@ class Bridge:
 
     def refresh_config(self):
         updated = self.settings.load()
-        if updated["backend"] != self.backend or (self.path.parent / updated["state_file"]).resolve() != self.state_path:
-            raise ValueError("backend 或 state_file 已更改，请重启 MCP 服务后使用")
+        if (updated["backend"] != self.backend or
+                (self.path.parent / updated["state_file"]).resolve() != self.state_path or
+                updated.get("database_reader") != self.reader_config):
+            raise ValueError("backend、state_file 或数据库读取绑定已更改，请重启 MCP 服务后使用")
         self.config = updated
         self.prune_pending()
 
     def prune_pending(self):
         self.db.execute("UPDATE messages SET status='expired' WHERE status='pending' AND created<=?",
                         (time.time() - MESSAGE_TTL_SECONDS,))
-        rows = self.db.execute("SELECT id,peer,text FROM messages WHERE status='pending'").fetchall()
+        rows = self.db.execute("SELECT * FROM messages WHERE status='pending'").fetchall()
         for row in rows:
-            if not self.eligible(row["peer"], row["text"]):
+            if not self.authorized(row):
                 self.db.execute("UPDATE messages SET status='dismissed' WHERE id=?", (row["id"],))
         self.db.commit()
 
@@ -150,6 +178,78 @@ class Bridge:
         return peer in self.config["active_contacts"] or bool(
             re.search(self.config["mention_pattern"], text))
 
+    def authorized(self, row):
+        if row["source"] == "wcdb":
+            if self.backend != "wcdb" or row["account_id"] != self.reader_config["account_id"]:
+                return False
+            if not any(b["conversation_id"] == row["conversation_id"] and b["display_name"] == row["peer"]
+                       for b in self.reader_config["conversations"]):
+                return False
+        elif self.backend == "wcdb":
+            return False
+        return self.eligible(row["peer"], row["text"])
+
+    def database_call(self, operation):
+        def call():
+            from database_reader import WcdbReader, ReaderError, account_binding
+            with contextlib.redirect_stdout(__import__("sys").stderr):
+                if self.reader is None:
+                    self.reader = WcdbReader(self.reader_config)
+                if (self.reader.account_id != self.reader_config["account_id"] or
+                        self.reader.binding != account_binding(self.reader_config)):
+                    raise ReaderError("读取账号或数据库入口发生变化，已停止")
+                result = operation(self.reader)
+                if (self.reader.account_id != self.reader_config["account_id"] or
+                        self.reader.binding != account_binding(self.reader_config)):
+                    raise ReaderError("读取期间账号发生变化，未推进基线")
+                return result
+        return self.pool.submit(call).result()
+
+    def database_pending(self):
+        rows = self.db.execute("""SELECT id,peer,text,created,account_id,conversation_id,source
+            FROM messages WHERE status='pending' AND source='wcdb' AND account_id=?
+            ORDER BY id LIMIT 50""", (self.reader_config["account_id"],)).fetchall()
+        return [dict(row) for row in rows]
+
+    def database_poll(self):
+        from database_reader import reconcile, validate_sessions
+        def read(reader):
+            rows, names = reader.sessions()
+            validate_sessions(rows, names, self.reader_config["conversations"])
+            batches = [(binding, reconcile(reader, binding["conversation_id"], self.reader_config))
+                       for binding in self.reader_config["conversations"]]
+            # Recheck labels after reading; never attach text to a newly renamed peer.
+            rows, names = reader.sessions()
+            validate_sessions(rows, names, self.reader_config["conversations"])
+            return batches
+        batches = self.database_call(read)
+        account = self.reader_config["account_id"]
+        baseline_count = 0
+        # Seen identities, initial baselines and queue insertion commit together.
+        # A crash or query error must never acknowledge an event without its queue row.
+        with self.db:
+            for binding, messages in batches:
+                conversation, peer = binding["conversation_id"], binding["display_name"]
+                baseline = self.db.execute("SELECT 1 FROM reader_conversations WHERE account_id=? AND conversation_id=?",
+                                           (account, conversation)).fetchone() is None
+                baseline_count += int(baseline)
+                for message in messages:
+                    fresh = self.db.execute("INSERT OR IGNORE INTO reader_seen VALUES(?,?,?,?)",
+                        (account, conversation, message["source"], message["key"])).rowcount
+                    if (fresh and not baseline and message["text"] is not None and
+                            self.eligible(peer, message["text"]) and
+                            0 <= time.time() - message["created"] < MESSAGE_TTL_SECONDS):
+                        self.db.execute("""INSERT OR IGNORE INTO messages
+                            (peer,native_id,text,eligible,created,source,account_id,conversation_id)
+                            VALUES(?,?,?,?,?,'wcdb',?,?)""",
+                            (peer, "wcdb:" + message["key"], message["text"], 1,
+                             message["created"], account, conversation))
+                self.db.execute("INSERT OR REPLACE INTO reader_conversations VALUES(?,?,?)",
+                                (account, conversation, time.time()))
+        return {"events": self.database_pending(), "new_baselines": baseline_count,
+                "coverage": "configured_database_conversations_only", "untrusted_content": True,
+                "note": "首次会话仅建立持久基线；数据库来源的回复强制预览"}
+
     def get_contacts(self):
         self.refresh_config()
         return contact_result(self.config)
@@ -163,6 +263,20 @@ class Bridge:
 
     def status(self):
         self.refresh_config()
+        if self.backend == "wcdb":
+            from database_reader import validate_sessions
+            def inspect(reader):
+                rows, names = reader.sessions()
+                return validate_sessions(rows, names, self.reader_config["conversations"])
+            count = self.database_call(inspect)
+            return {"backend": "wcdb", "connected": True,
+                    "coverage": "configured_database_conversations_only", "session_count": count,
+                    "bound_conversation_count": len(self.reader_config["conversations"]),
+                    "account_binding": "owner_configured_path_not_native_attestation",
+                    "send_enabled": False, "configured_send_enabled": self.config["send_enabled"],
+                    "key_configured": Path(self.reader_config["key_file"]).is_file(),
+                    "permissions": {"transport": "stdio", "owner_authentication": False,
+                                    "mcp_contact_management": self._allow_contact_management}, "rules": RULES}
         return {"backend": self.config["backend"],
                 "permissions": {"transport": "stdio", "owner_authentication": False,
                                 "mcp_contact_management": self._allow_contact_management},
@@ -172,6 +286,8 @@ class Bridge:
 
     def poll(self):
         self.refresh_config()
+        if self.backend == "wcdb":
+            return self.database_poll()
         snap = self.ui("snapshot")
         peer = snap["peer"]
         if not peer or snap["chat_type"] != "friend":
@@ -204,7 +320,7 @@ class Bridge:
     def reply(self, message_id, text):
         self.refresh_config()
         row = self.db.execute("SELECT * FROM messages WHERE id=?", (message_id,)).fetchone()
-        if row is None or not row["eligible"] or not self.eligible(row["peer"], row["text"]):
+        if row is None or not row["eligible"] or not self.authorized(row):
             raise ValueError("不存在可回复的授权消息")
         if row["status"] != "pending":
             raise ValueError("该消息已经处理；未知发送结果也不得自动重试")
@@ -216,6 +332,17 @@ class Bridge:
         prefix = self.config["reply_prefix"]
         intro = "" if self.db.execute("SELECT 1 FROM replies WHERE peer=?", (row["peer"],)).fetchone() else self.config["introduction"] + "\n"
         final = prefix + "\n" + intro + text
+        if row["source"] == "wcdb":
+            from database_reader import validate_sessions
+            def check(reader):
+                rows, names = reader.sessions()
+                validate_sessions(rows, names, self.reader_config["conversations"])
+            self.database_call(check)
+            self.db.execute("UPDATE messages SET reply=? WHERE id=?", (final, message_id))
+            self.db.commit()
+            return {"status": "preview", "peer": row["peer"], "text": final,
+                    "account_id": row["account_id"], "conversation_id": row["conversation_id"],
+                    "note": "数据库读取与发送分离；此来源强制预览，草稿已保存，未向微信发送"}
         if not self.config["send_enabled"]:
             return {"status": "preview", "peer": row["peer"], "text": final,
                     "note": "尚未开启真实发送，未向微信发送消息"}
@@ -245,8 +372,13 @@ class Bridge:
     def close(self):
         try:
             if self.pool is not None:
-                self.pool.shutdown(wait=True)
-                self.pool = None
+                try:
+                    if self.reader is not None:
+                        self.pool.submit(self.reader.close).result()
+                        self.reader = None
+                finally:
+                    self.pool.shutdown(wait=True)
+                    self.pool = None
         finally:
             try:
                 if self.db is not None:

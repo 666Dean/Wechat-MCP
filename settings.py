@@ -91,6 +91,11 @@ def validate_config(config):
     interval = config.get("min_reply_interval_seconds")
     if type(interval) not in (int, float) or not math.isfinite(interval) or interval < 0:
         raise ValueError("min_reply_interval_seconds 必须是非负有限数字")
+    if config["backend"] == "wcdb":
+        from database_reader import validate_database_config
+        validate_database_config(config.get("database_reader"))
+    elif config.get("database_reader") is not None:
+        raise ValueError("database_reader 仅可与 backend=wcdb 一起使用")
     return config
 
 
@@ -106,7 +111,10 @@ class ConfigStore:
         self.lock_path = self.path.with_name(self.path.name + ".lock")
 
     def _read(self):
-        return validate_config(json.loads(self.path.read_text(encoding="utf-8-sig")))
+        from database_reader import validate_runtime_paths
+        config = validate_config(json.loads(self.path.read_text(encoding="utf-8-sig")))
+        validate_runtime_paths(config, self.path)
+        return config
 
     def _write(self, config):
         temporary = None

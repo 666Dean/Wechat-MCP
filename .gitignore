@@ -14,4 +14,8 @@ codex-mcp.toml
 .env.*
 !.env.example
 .contacts-*.tmp
+.credential-*.tmp
+*.dpapi
+config.database.json
+*.dll
 dist/
