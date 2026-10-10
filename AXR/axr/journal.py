@@ -36,12 +36,18 @@ class Journal:
             expires REAL,policy_version INTEGER);
           CREATE TABLE IF NOT EXISTS disclosed_scopes(principal TEXT,resource TEXT,data_class TEXT,
             payload BLOB,PRIMARY KEY(principal,resource,data_class));
+          CREATE TABLE IF NOT EXISTS execution_claims(principal TEXT,execution_id TEXT,
+            PRIMARY KEY(principal,execution_id));
         """)
 
     def propose(self, action, ttl=300):
         jid = str(uuid.uuid4())
         self.db.execute("BEGIN IMMEDIATE")
         try:
+            try:
+                self.db.execute("INSERT INTO execution_claims VALUES(?,?)", (action.principal,action.execution_id))
+            except sqlite3.IntegrityError as exc:
+                raise AXRError("execution_id_already_proposed") from exc
             self.db.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (
                 jid, action.principal, action.resource.key, action.seal, "Proposed",
                 self.vault.seal(asdict(action), jid), self.clock(), self.clock()+ttl,

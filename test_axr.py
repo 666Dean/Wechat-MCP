@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+import uuid
 from dataclasses import replace,asdict
 from pathlib import Path
 try:
@@ -139,6 +140,22 @@ class Foundation(unittest.TestCase):
         calls=[];self.grant();runtime=self.runtime(lambda a,c,e:(calls.append(1) or {'epoch':e,'verified':True}))
         job=runtime.propose(self.action);self.assertEqual(runtime.execute(job['id'],'agent')['state'],'Completed')
         runtime.execute(job['id'],'agent');self.assertEqual(len(calls),1)
+    def test_cancelled_exact_approval_cannot_authorize_identical_new_proposal(self):
+        send=replace(self.action,operation='messages.send',payload={'text':'synthetic'},destination='chat')
+        self.grant(send,destinations=['chat'],intent=send.seal,max_uses=1)
+        runtime=Runtime(self.guard,self.journal,self.root/'leases',{})
+        original=runtime.propose(send);self.assertEqual(original['state'],'Ready')
+        runtime.cancel(original['id'],'agent')
+        fresh=replace(send,execution_id=uuid.uuid4().hex)
+        self.assertNotEqual(send.seal,fresh.seal)
+        self.assertEqual(runtime.propose(fresh)['state'],'AwaitingApproval')
+    def test_same_execution_id_rejected_after_cancel_ttl_and_restart(self):
+        runtime=self.runtime(lambda a,c,e:{'epoch':e,'verified':True})
+        job=runtime.propose(self.action,ttl=1);runtime.cancel(job['id'],'agent')
+        self.now[0]+=2;self.journal.purge();self.journal.close()
+        self.journal=Journal(self.root/'journal.db',Vault(b'j'*32),clock=lambda:self.now[0])
+        with self.assertRaisesRegex(AXRError,'execution_id_already_proposed'):
+            self.journal.propose(self.action)
     def test_stale_epoch_and_unconfirmed_side_effect(self):
         send=replace(self.action,operation='messages.send',payload={'text':'fixture'},destination='chat')
         self.grant(send,destinations=['chat'],intent=send.seal,max_uses=1)
@@ -167,7 +184,7 @@ class Foundation(unittest.TestCase):
     def test_pending_approval_expiry_purges_body_without_erasing_active_commit(self):
         pending=self.journal.propose(self.action,ttl=5)
         self.journal.transition(pending,'agent','PolicyChecked');self.journal.transition(pending,'agent','AwaitingApproval')
-        active=self.journal.propose(self.action,ttl=5)
+        active=self.journal.propose(replace(self.action,execution_id=uuid.uuid4().hex),ttl=5)
         for state in ['PolicyChecked','Ready','Prepared','Executing']:self.journal.transition(active,'agent',state)
         self.now[0]+=6;self.journal.purge()
         self.assertEqual(self.journal.get(pending,'agent')['state'],'Expired')

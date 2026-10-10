@@ -18,6 +18,7 @@ SDK 真实抽取 BasicX-Hub、BasicX、Connector 的通用基础设施，固定 
 抽取符号及保留的内部边界见 [复用清单](AXR/REUSE.json)。本轮新增独立所有者认证入口、
 加密 AET/context、访问与披露分离、WCDB 原生只读 pager、Swift AX / C++ UIA、监听准入、
 本地 runner 及预算机制。SDK AGPL v3，其他沿用原项目 MIT；商业许可须另行书面协议。
+精确审批绑定每个任务的唯一 execution_id；取消、正文 TTL 或重启后不能迁移审批或重放原任务。
 
 跨平台构建、使用、授权流程与实际验收状态见 [Gen1 集成说明](docs/AXR_GEN1.md)。
 Mac 微信聊天 AX 树/密钥/数据库目录受阻，真实收发尚未通过；Windows 本轮不做微信实机测试。

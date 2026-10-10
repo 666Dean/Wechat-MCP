@@ -94,7 +94,8 @@ class Supervisor:
             self.state = "Starting"
             argv = sandbox.wrap(command) if sandbox else command
             env = {k:v for k,v in os.environ.items() if k in {
-                "PATH", "HOME", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "LANG", "LC_ALL"}}
+                "PATH", "HOME", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "LANG", "LC_ALL",
+                "USERPROFILE", "LOCALAPPDATA", "APPDATA", "HOMEDRIVE", "HOMEPATH"}}
             process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, env=env, start_new_session=os.name != "nt")
             job = None
@@ -142,6 +143,19 @@ class Supervisor:
                 raise AXRError("worker_failed_or_incomplete_reply")
             if process.returncode != 0:
                 self.state = "Crashed"
+                # Only native launcher metadata is reportable, never arbitrary
+                # failed worker output (which may contain private content).
+                if native_sandbox:
+                    try:
+                        failure=json.loads(response)
+                        stage=failure.get("stage","")
+                        if failure.get("error")=="strict_sandbox_failed" and stage in {
+                            "sandbox_profile_failed","sandbox_process_start_failed","sandbox_job_failed",
+                            "sandbox_attributes_failed","sandbox_acl_read_failed","sandbox_acl_grant_failed",
+                            "sandbox_reparse_path_denied","sandbox_runtime_too_large","sandbox_timeout","child_exit"}:
+                            code=failure.get("system_error",failure.get("exit_code"))
+                            if type(code) is int:raise AXRError(stage+"_code_"+str(code))
+                    except (ValueError,AttributeError):pass
                 raise AXRError("worker_exit_code_"+str(process.returncode))
             try:
                 result = json.loads(response)

@@ -30,6 +30,7 @@ Windows 推荐 vcpkg 的 `openssl sqlite3 nlohmann-json`，通过 CMake toolchai
 using namespace Stellaria::AXR;
 // OS secret store supplies the 32-byte key. No agent-facing capability issuer.
 Guard guard(ownerControlledDatabase, osKey);
+// sealedAction includes a unique execution_id for this proposal.
 auto reference = guard.Check(sealedAction, Now());
 auto reservation = guard.Consume(sealedAction, Now());
 guard.Revalidate(sealedAction, reference, reservation[1], Now());
