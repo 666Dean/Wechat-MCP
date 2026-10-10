@@ -8,7 +8,7 @@ Windows、Python 3.12 x64：
 
 ```powershell
 .\setup.ps1
-.\.venv\Scripts\python.exe -m unittest -v test_bridge.py test_mcp.py
+.\.venv\Scripts\python.exe -m unittest discover -v
 ```
 
 所有自动测试只使用模拟适配器，不能发送真实微信消息。报告兼容性时写明具体微信版本、

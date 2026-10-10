@@ -13,4 +13,4 @@ while ($true) {
 }
 & $PythonExe "$PSScriptRoot\server.py" --set-contacts @TaskRemarkNames
 if ($LASTEXITCODE -ne 0) { throw 'Contact update failed.' }
-Write-Host '如果 MCP 服务已在运行，请通过 set_reply_contacts 更改以立即生效；本脚本的更改需重启服务。'
+Write-Host '名单已保存。正在运行的服务会在下一次工具调用时自动加载，无需重启。'

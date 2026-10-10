@@ -9,6 +9,7 @@ codex-mcp.toml
 *.sqlite3-*
 *.db
 *.log
+*.lock
 .env
 .env.*
 !.env.example

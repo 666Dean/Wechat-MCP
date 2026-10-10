@@ -1,8 +1,10 @@
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from bridge import Bridge, MockAdapter
+from settings import ConfigStore
 
 
 class BridgeTests(unittest.TestCase):
@@ -21,6 +23,11 @@ class BridgeTests(unittest.TestCase):
     def tearDown(self):
         self.bridge.close()
         self.tmp.cleanup()
+
+    def update_config(self, **values):
+        config = json.loads(self.path.read_text(encoding="utf-8"))
+        config.update(values)
+        self.path.write_text(json.dumps(config), encoding="utf-8")
 
     def add(self, text, source="friend", msg_type="text"):
         rows = self.adapter.current["messages"]
@@ -68,7 +75,7 @@ class BridgeTests(unittest.TestCase):
 
     def test_send_idempotency(self):
         mid = self.event()
-        self.bridge.config["send_enabled"] = True
+        self.update_config(send_enabled=True)
         self.assertEqual(self.bridge.reply(mid, "你好")["status"], "sent")
         with self.assertRaises(ValueError):
             self.bridge.reply(mid, "你好")
@@ -76,7 +83,7 @@ class BridgeTests(unittest.TestCase):
 
     def test_unknown_send_never_retried(self):
         mid = self.event()
-        self.bridge.config["send_enabled"] = True
+        self.update_config(send_enabled=True)
         def fail(peer, text):
             raise RuntimeError("模拟发送后连接丢失")
         self.adapter.send = fail
@@ -94,7 +101,7 @@ class BridgeTests(unittest.TestCase):
 
     def test_revoked_contact_cannot_send_pending(self):
         mid = self.event()
-        self.bridge.config["active_contacts"] = []
+        ConfigStore(self.path).set_contacts([])
         with self.assertRaises(ValueError):
             self.bridge.reply(mid, "你好")
 
@@ -126,6 +133,82 @@ class BridgeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.bridge.set_contacts(value)
         self.assertEqual(self.path.read_text(encoding="utf-8"), before)
+
+    def test_external_contact_update_applies_to_next_poll(self):
+        self.bridge.poll()
+        ConfigStore(self.path).set_contacts([])
+        self.add("普通消息")
+        self.assertEqual(self.bridge.poll()["events"], [])
+        ConfigStore(self.path).set_contacts(["测试联系人"])
+        self.add("恢复后的新消息")
+        self.assertEqual([e["text"] for e in self.bridge.poll()["events"]], ["恢复后的新消息"])
+
+    def test_pending_queue_follows_current_chat_and_survives_rebaseline(self):
+        mid = self.event()
+        original = self.adapter.current
+        self.adapter.current = {"peer": "另一个好友", "chat_type": "friend", "messages": []}
+        self.assertEqual(self.bridge.poll()["events"], [])
+        self.add("Codex，你好")
+        other = self.bridge.poll()["events"]
+        self.assertEqual([e["peer"] for e in other], ["另一个好友"])
+        self.adapter.current = original
+        self.adapter.current["messages"][0]["native_id"] = "changed-ui-id"
+        self.assertEqual([e["id"] for e in self.bridge.poll()["events"]], [mid])
+
+    def test_expired_queue_does_not_hide_fresh_message(self):
+        self.bridge.poll()
+        for i in range(55):
+            self.add(f"旧待回复 {i}")
+        self.bridge.poll()
+        self.bridge.db.execute("UPDATE messages SET created=?", (time.time() - 901,))
+        self.bridge.db.commit()
+        self.add("新的待回复")
+        self.assertEqual([e["text"] for e in self.bridge.poll()["events"]], ["新的待回复"])
+        self.assertEqual(self.bridge.db.execute("SELECT count(*) FROM messages WHERE status='expired'").fetchone()[0], 55)
+        with self.assertRaises(ValueError):
+            self.bridge.reply(1, "过期消息不能发")
+        self.assertEqual(self.adapter.sent, [])
+
+    def test_restart_recovers_pending_without_ingesting_history(self):
+        mid = self.event()
+        self.bridge.close()
+        self.add("重启期间的历史消息")
+        self.bridge = Bridge(self.path, self.adapter)
+        self.assertEqual([e["id"] for e in self.bridge.poll()["events"]], [mid])
+
+    def test_restart_marks_interrupted_send_unknown(self):
+        mid = self.event()
+        self.bridge.db.execute("UPDATE messages SET status='sending' WHERE id=?", (mid,))
+        self.bridge.db.commit()
+        self.bridge.close()
+        self.bridge = Bridge(self.path, self.adapter)
+        self.assertEqual(self.bridge.db.execute("SELECT status FROM messages WHERE id=?", (mid,)).fetchone()[0], "unknown")
+        with self.assertRaises(ValueError):
+            self.bridge.reply(mid, "不要重复发送")
+        self.assertEqual(self.adapter.sent, [])
+
+    def test_invalid_config_blocks_sending_until_repaired(self):
+        mid = self.event()
+        self.update_config(send_enabled=True)
+        self.bridge.get_contacts()
+        valid = self.path.read_text(encoding="utf-8")
+        for content in ["{broken", valid.replace('"send_enabled": true', '"send_enabled": "false"')]:
+            self.path.write_text(content, encoding="utf-8")
+            with self.assertRaises(ValueError):
+                self.bridge.reply(mid, "不能使用缓存的发送权限")
+            self.assertEqual(self.adapter.sent, [])
+        self.path.write_text(valid, encoding="utf-8")
+        self.update_config(send_enabled=False)
+        self.assertEqual(self.bridge.reply(mid, "配置恢复后预览")["status"], "preview")
+
+    def test_backend_or_database_change_requires_restart(self):
+        for key, value in [("backend", "another_backend"), ("state_file", "another.sqlite3")]:
+            original = self.path.read_text(encoding="utf-8")
+            self.update_config(**{key: value})
+            with self.assertRaisesRegex(ValueError, "重启"):
+                self.bridge.poll()
+            self.path.write_text(original, encoding="utf-8")
+        self.assertFalse((self.path.parent / "another.sqlite3").exists())
 
 
 if __name__ == "__main__":
