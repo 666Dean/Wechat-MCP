@@ -25,7 +25,7 @@
 
 - MCP 迁移至官方 Python SDK 2.3.0 / MCPServer，更新 snake_case 测试 API；保留旧模式行为。
 - 修复事务插入列数、Swift throwing predicate、worker runtime ancestor stat 权限等开发期问题；发送不明/旧 epoch/崩溃恢复均拒绝重复执行。
-- 本机 137 项 unittest 通过（2 项平台跳过）：原有 91 项 + 46 项安全、合成数据库、原生沙箱与实际 stdio AET 测试。
+- 本机 139 项 unittest 通过（2 项平台跳过）：原有 91 项 + 48 项安全、合成数据库、原生沙箱与实际 stdio AET 测试。
 - 真实 SQLCipher 库对合成加密 DB/WAL 验证 committed WAL 可见、原始密钥拒错、只读拒写；这不等同本机微信正文验证。
 - C++ Core/Swift 编译与 CTest、SDK 安装、独立 CMake consumer 通过；Mac 实际 sandbox 拒绝范围外文件与 loopback 连接。
 - Win CI 加入 AppContainer 真实进程合成 witness：staged 文件读取、私有文件拒绝与 loopback 拒绝；这是 CI 验证，不是微信实机测试。
@@ -40,6 +40,8 @@
 - 验证入口强化：显式指定的 SQLCipher 库不存在时测试失败，不能通过平台跳过掩盖 CI 配置错误。
 - Windows SDK 已完成 MSVC 编译；CI 暴露 install 阶段对系统 DLL 路径分隔符匹配错误，现按 CMake CMP0207 归一化并兼容两种分隔符，避免递归打包 Windows 系统依赖。
 - Windows wheel/install、UIA/Hello/AppContainer 编译及 CTest 均已运行通过；真实 CI 回归暴露 pywin32 JobObject 不接受 None name，改为每次随机唯一名称，并使用 PyHANDLE.Close 正确释放、对配置失败清理句柄与进程。
+- 隐私修正：已经披露的来源保留加密的 coarse scope/class 元数据，正文 TTL 或 broker 重启不会清洗后续输出的 provenance；不保留聊天正文历史。新增到期/重启及空 context_ids 草稿测试。
+- Windows native AppContainer 的 staged 文件读取在 CI 直接 probe 已运行成功；supervised bootstrap 失败指向外层 post-spawn JobObject 嵌套，移除重复 JobObject，仍由原生启动器在恢复线程前强制配置 JobObject，并由 parent 退出关闭 handle 终止子进程。
 - Windows worker/JobObject 超时及输出上限回归已通过；AppContainer bootstrap 仍在诊断。CI 使用与 wheel 一致的 Release helper/probe，避免依赖不可分发的 Debug CRT；沙箱保持拒绝降级，新增纯元数据 stage/exit 诊断。
 - PR 后续修正：监听分页同样进入 AET/账号租约/额度与提交前复核；本地基线 context 在处理后删除，仅 admitted batch 留待精确披露审阅。保留末页高水位便于增量读取，非文本媒体正文不取出 SQLite。
 - 新建纯 legacy venv 安装 requirements.txt 后 93 项发现结果通过（3 项跳过，含 2 个可选 AXR 测试模块），证明 opt-in 路径无原生编译依赖。

@@ -63,6 +63,7 @@ TTL、次数；`--class personal` 可明确允许本地个人数据草稿，敏�
   → Prepared → Executing → Verifying → Completed。中断/不明提交 → Unknown，禁止重试。
   Prepared 恢复 → FailedSafe；不承诺外部服务 exactly-once 或收件人已收到。
 * 访问与披露独立。来源保留账号、会话、引用、分类和 `untrusted-external`。
+  已披露来源的加密 scope/class 元数据跨正文 TTL/重启保留，防止把 TTL 当作来源清洗；不留聊天历史。
   P3 默认逐动作确认；敏感/凭据/财务分类要求精确意图。没有金融或凭据操作 handler。
 * Job、context、result 的正文使用原生 AES-256-GCM，带绑定及 TTL；审计保存元数据，
   BasicX 日志链加 HMAC，Hub append-only triggers，SQLite WAL + FULL durability。

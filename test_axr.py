@@ -155,6 +155,15 @@ class Foundation(unittest.TestCase):
             with self.assertRaises(AXRError):self.journal.context(cid,p,r,v)
         self.now[0]+=11
         with self.assertRaises(AXRError):self.journal.context(cid,'agent',self.resource,1)
+    def test_disclosed_scope_taint_outlives_body_ttl_and_broker_restart(self):
+        self.journal.taint_disclosure('agent',self.resource,'sensitive')
+        self.journal.taint_disclosure('agent',self.resource,'sensitive')
+        self.journal.remember('agent',self.resource,{'messages':['synthetic']},1,ttl=2)
+        self.now[0]+=3;self.journal.purge();self.journal.close()
+        self.journal=Journal(self.root/'journal.db',Vault(b'j'*32),clock=lambda:self.now[0])
+        taint=self.journal.disclosure_taint('agent');self.assertEqual(len(taint),1)
+        self.assertEqual(taint[0].resource,self.resource);self.assertEqual(taint[0].data_class,'sensitive')
+        self.assertEqual(self.journal.disclosure_taint('other'),[])
     def test_pending_approval_expiry_purges_body_without_erasing_active_commit(self):
         pending=self.journal.propose(self.action,ttl=5)
         self.journal.transition(pending,'agent','PolicyChecked');self.journal.transition(pending,'agent','AwaitingApproval')
@@ -254,6 +263,13 @@ class ServiceTests(unittest.TestCase):
         action=s.journal.action(s.journal.get(job['id'],'agent'));self.assertEqual(len(action.sources),1)
         self.assertEqual(action.sources[0].data_class,'personal');self.assertTrue(action.payload['text'].startswith('【自动回复 · AI 助理】'))
         self.assertEqual(job['state'],'AwaitingApproval')
+    def test_expired_body_context_cannot_clean_disclosed_source_scope(self):
+        s=self.service;result=s.read('friend');job=s.disclose('friend',result['result']['context_id'])
+        approve(s.store,job['id'],'agent');s.execute(job['id'])
+        s.journal.db.execute('UPDATE contexts SET expires=0');s.journal.purge()
+        draft=s.prepare('friend','later summary',[]);send=s.propose_send('friend',draft['result']['draft_id'])
+        action=s.journal.action(s.journal.get(send['id'],'agent'))
+        self.assertTrue(any(p.reference.startswith('disclosed-scope:') and p.data_class=='personal' for p in action.sources))
     def test_unauthorized_scope_and_forged_context(self):
         with self.assertRaises(AXRError):self.service.read('other')
         with self.assertRaises(AXRError):self.service.prepare('friend','text',['forged'])
@@ -310,13 +326,13 @@ class Workers(unittest.TestCase):
             supervisor=Supervisor(timeout=20)
             try:
                 first=supervisor.invoke([str(worker)],{'op':'read','path':str(allowed)},sandbox=sandbox)
-            except AXRError:
+            except AXRError as failure:
                 # Retry only the synthetic, read-only bootstrap probe to expose
                 # native stage/exit metadata; no live data or external commit.
                 import subprocess
                 probe=subprocess.run(sandbox.wrap([str(worker)]),input=canonical({'op':'read','path':str(allowed)})+b'\n',
                                      stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=20)
-                self.fail('sandbox bootstrap failed: '+str(probe.returncode)+' '+probe.stdout[:1024].decode('utf8','replace'))
+                self.fail('supervised sandbox bootstrap '+str(failure)+'; native probe: '+str(probe.returncode)+' '+probe.stdout[:1024].decode('utf8','replace'))
             self.assertTrue(first['result']['allowed'])
             self.assertFalse(supervisor.invoke([str(worker)],{'op':'read','path':str(private)},sandbox=sandbox)['result']['allowed'])
             with socket.socket() as listener:

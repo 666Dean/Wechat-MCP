@@ -98,7 +98,12 @@ class Supervisor:
             process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, env=env, start_new_session=os.name != "nt")
             job = None
-            if os.name == "nt":
+            # Native AppContainer launcher already creates a suspended child,
+            # assigns its mandatory JobObject, then resumes it. Killing that
+            # launcher closes its job handle and kills descendants. Do not add
+            # a second post-spawn job around this native security boundary.
+            native_sandbox=isinstance(sandbox,Sandbox) and bool(sandbox.windows_launcher)
+            if os.name == "nt" and not native_sandbox:
                 from .platform.windows_job import bind_job
                 job = bind_job(process)
             with self._lock:
@@ -132,9 +137,12 @@ class Supervisor:
                     job.Close()
             if errors:
                 raise AXRError(errors[0])
-            if reader.is_alive() or process.returncode != 0:
+            if reader.is_alive():
                 self.state = "Crashed"
                 raise AXRError("worker_failed_or_incomplete_reply")
+            if process.returncode != 0:
+                self.state = "Crashed"
+                raise AXRError("worker_exit_code_"+str(process.returncode))
             try:
                 result = json.loads(response)
             except Exception as exc:
