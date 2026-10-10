@@ -308,7 +308,16 @@ class Workers(unittest.TestCase):
             private=private_directory(root/'private')/'denied.txt';private.write_text('synthetic')
             sandbox=Sandbox(windows_launcher=launcher,windows_root=str(staged))
             supervisor=Supervisor(timeout=20)
-            self.assertTrue(supervisor.invoke([str(worker)],{'op':'read','path':str(allowed)},sandbox=sandbox)['result']['allowed'])
+            try:
+                first=supervisor.invoke([str(worker)],{'op':'read','path':str(allowed)},sandbox=sandbox)
+            except AXRError:
+                # Retry only the synthetic, read-only bootstrap probe to expose
+                # native stage/exit metadata; no live data or external commit.
+                import subprocess
+                probe=subprocess.run(sandbox.wrap([str(worker)]),input=canonical({'op':'read','path':str(allowed)})+b'\n',
+                                     stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=20)
+                self.fail('sandbox bootstrap failed: '+str(probe.returncode)+' '+probe.stdout[:1024].decode('utf8','replace'))
+            self.assertTrue(first['result']['allowed'])
             self.assertFalse(supervisor.invoke([str(worker)],{'op':'read','path':str(private)},sandbox=sandbox)['result']['allowed'])
             with socket.socket() as listener:
                 listener.bind(('127.0.0.1',0));listener.listen(2)
