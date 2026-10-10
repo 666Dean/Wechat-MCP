@@ -256,7 +256,11 @@ class WcdbReader:
             finally:
                 C.memset(key_buffer, 0, C.sizeof(key_buffer))
         except BaseException:
-            self.close()
+            # Preserve the original open/init failure if native cleanup also fails.
+            try:
+                self.close()
+            except ReaderError:
+                pass
             raise
 
     def _identity(self):
@@ -378,16 +382,32 @@ class WcdbReader:
                 "note": "只验证绑定会话的一页；不输出正文或消息身份、不建立基线。单页排序不证明全历史排序或实时增量可用。"}
 
     def close(self):
+        failures = []
         try:
             if self.handle.value and self.native is not None:
-                self.native.wcdb_close_account(self.handle)
-                self.handle.value = 0
+                try:
+                    self._check(self.native.wcdb_close_account(self.handle), "close_account")
+                except Exception:
+                    failures.append("close_account")
+                finally:
+                    # Never retry a possibly partially destroyed native handle.
+                    self.handle.value = 0
         finally:
             try:
                 if self.initialized:
-                    self.native.wcdb_shutdown()
-                    self.initialized = False
+                    try:
+                        self._check(self.native.wcdb_shutdown(), "shutdown")
+                    except Exception:
+                        failures.append("shutdown")
+                    finally:
+                        self.initialized = False
             finally:
                 if self.dll_directory is not None:
-                    self.dll_directory.close()
-                    self.dll_directory = None
+                    try:
+                        self.dll_directory.close()
+                    except Exception:
+                        failures.append("dll_directory")
+                    finally:
+                        self.dll_directory = None
+        if failures:
+            raise ReaderError("WCDB 清理失败（" + ", ".join(failures) + "）；请退出进程，不要复用原生连接")

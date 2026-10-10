@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 .test-work/
+.local-private/
 .pytest_cache/
 config.json
 codex-mcp.toml

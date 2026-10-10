@@ -8,7 +8,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from bridge import Bridge, MockAdapter
 from database_reader import (ReaderError, WcdbReader, account_binding,
@@ -596,6 +596,45 @@ class DatabaseTests(unittest.TestCase):
         with self.assertRaises(ReaderError):
             self.native_reader(native)
         self.assertEqual(native.closed, [native.large_handle])
+        self.assertEqual(native.shutdowns, 1)
+
+    def test_cleanup_exception_still_shuts_down_and_never_retries_handle(self):
+        native = FakeNative()
+        reader = self.native_reader(native)
+        directory = Mock()
+        reader.dll_directory = directory
+        native.wcdb_close_account = Mock(side_effect=OSError("private native details"))
+        with self.assertRaises(ReaderError) as caught:
+            reader.close()
+        self.assertNotIn("private", str(caught.exception))
+        self.assertEqual(native.shutdowns, 1)
+        self.assertEqual(reader.handle.value, 0)
+        self.assertFalse(reader.initialized)
+        directory.close.assert_called_once()
+        reader.close()
+        native.wcdb_close_account.assert_called_once()
+
+    def test_cleanup_error_codes_and_shutdown_exception_release_resources(self):
+        native = FakeNative()
+        reader = self.native_reader(native)
+        directory = Mock()
+        reader.dll_directory = directory
+        native.wcdb_close_account = Mock(return_value=-100)
+        native.wcdb_shutdown = Mock(side_effect=OSError("private native details"))
+        with self.assertRaisesRegex(ReaderError, "close_account, shutdown"):
+            reader.close()
+        self.assertEqual(reader.handle.value, 0)
+        self.assertFalse(reader.initialized)
+        self.assertIsNone(reader.dll_directory)
+        directory.close.assert_called_once()
+        reader.close()
+
+    def test_open_failure_is_not_masked_by_cleanup_exception(self):
+        native = FakeNative()
+        native.open_code = -2
+        native.wcdb_close_account = Mock(side_effect=OSError("private native details"))
+        with self.assertRaisesRegex(ReaderError, "open_account.*-2"):
+            self.native_reader(native)
         self.assertEqual(native.shutdowns, 1)
 
     def test_native_entry_replacement_stops_reads(self):

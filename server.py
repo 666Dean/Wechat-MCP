@@ -37,17 +37,25 @@ def main():
         if config["backend"] != "wcdb":
             parser.error("会话查询需要 backend=wcdb 的本机配置")
         reader = None
-        try:
-            with contextlib.redirect_stdout(sys.stderr):
-                try:
-                    reader = WcdbReader(config["database_reader"])
-                    result = (reader.probe_messages(args.probe_database_messages, args.probe_limit)
-                              if args.probe_database_messages is not None else reader.session_catalog())
-                finally:
-                    if reader is not None:
+        error = cleanup_error = None
+        with contextlib.redirect_stdout(sys.stderr):
+            try:
+                reader = WcdbReader(config["database_reader"])
+                result = (reader.probe_messages(args.probe_database_messages, args.probe_limit)
+                          if args.probe_database_messages is not None else reader.session_catalog())
+            except Exception as exc:
+                error = str(exc)
+            finally:
+                if reader is not None:
+                    try:
                         reader.close()
-        except Exception as exc:
-            print(json.dumps({"connected": False, "error": str(exc)}, ensure_ascii=False))
+                    except Exception:
+                        cleanup_error = "原生连接清理失败；请退出进程，不要复用连接"
+        if error is not None or cleanup_error is not None:
+            failure = {"connected": False, "error": error or cleanup_error}
+            if cleanup_error is not None:
+                failure["cleanup_error"] = cleanup_error
+            print(json.dumps(failure, ensure_ascii=False))
             sys.exit(1)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
