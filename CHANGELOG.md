@@ -44,7 +44,8 @@
 - Windows native AppContainer 的 staged 文件读取在 CI 直接 probe 已运行成功；移除重复 JobObject 后 supervised bootstrap 仍失败，正在核查启动环境。仍由原生启动器在恢复线程前强制配置 JobObject，并由 parent 退出关闭 handle 终止子进程。
 - 审批修正：每个 Action 的唯一 execution_id 纳入原生 intent seal；Journal 原子登记持久 execution claim，取消/正文 TTL/重启后也不能重提同一 ID。旧审批无法迁移到内容相同的新任务；新增取消后的审批复用与持久重放测试。开发期旧意图缺字段时拒绝执行，须重新提案与审批。
 - Windows Supervisor 保留系统用户 profile 路径环境供 AppContainer 初始化，不传密钥或服务配置；原生失败仅输出白名单 stage 与整数错误码，继续拒绝沙箱降级。
-- Windows worker/JobObject 超时及输出上限回归已通过；AppContainer bootstrap 仍在诊断。CI 使用与 wheel 一致的 Release helper/probe，避免依赖不可分发的 Debug CRT；沙箱保持拒绝降级，新增纯元数据 stage/exit 诊断。
+- Windows worker/JobObject 超时及输出上限回归已通过；CI 使用与 wheel 一致的 Release helper/probe，避免依赖不可分发的 Debug CRT；沙箱保持拒绝降级，新增纯元数据 stage/exit 诊断。
+- Windows CI 已验证 profile 环境修复后的 AppContainer 受管启动、staged 文件读取与私有文件拒绝。loopback 探针的阻塞 connect 在 WFP 丢包时超时，改为非阻塞 select + SO_ERROR，最多 1.5 秒；仍要求同一端口的沙箱外控制连接成功，不能用 worker 超时当作网络隔离通过。
 - PR 后续修正：监听分页同样进入 AET/账号租约/额度与提交前复核；本地基线 context 在处理后删除，仅 admitted batch 留待精确披露审阅。保留末页高水位便于增量读取，非文本媒体正文不取出 SQLite。
 - 新建纯 legacy venv 安装 requirements.txt 后 93 项发现结果通过（3 项跳过，含 2 个可选 AXR 测试模块），证明 opt-in 路径无原生编译依赖。
 - PR 后续修正：数据库 interrupt/close 生命周期加锁；所有者可显式关闭展示前缀，但密封意图中的 agent 来源仍保留。Win dependency binary cache 加入 CI。

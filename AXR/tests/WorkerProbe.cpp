@@ -21,10 +21,26 @@ int main(){using namespace Stellaria::AXR;Json output;try{
 #endif
         auto handle=socket(AF_INET,SOCK_STREAM,0);sockaddr_in address{};address.sin_family=AF_INET;
         address.sin_addr.s_addr=htonl(INADDR_LOOPBACK);address.sin_port=htons(request.at("port").get<unsigned short>());
-        bool allowed=connect(handle,reinterpret_cast<sockaddr*>(&address),sizeof(address))==0;
 #ifdef _WIN32
+        // AppContainer/WFP may silently drop loopback TCP instead of returning
+        // access denied. A blocking connect can wait past the supervisor limit.
+        // Bound the witness itself; the unsandboxed control must still connect.
+        bool allowed=false;u_long nonblocking=1;
+        if(handle!=INVALID_SOCKET&&ioctlsocket(handle,FIONBIO,&nonblocking)==0){
+            int result=connect(handle,reinterpret_cast<sockaddr*>(&address),sizeof(address));
+            if(result==0)allowed=true;
+            else if(WSAGetLastError()==WSAEWOULDBLOCK){
+                fd_set writable,errors;FD_ZERO(&writable);FD_ZERO(&errors);
+                FD_SET(handle,&writable);FD_SET(handle,&errors);timeval timeout{1,500000};
+                if(select(0,nullptr,&writable,&errors,&timeout)>0&&FD_ISSET(handle,&writable)&&!FD_ISSET(handle,&errors)){
+                    int error=0,length=sizeof(error);
+                    allowed=getsockopt(handle,SOL_SOCKET,SO_ERROR,reinterpret_cast<char*>(&error),&length)==0&&error==0;
+                }
+            }
+        }
         if(handle!=INVALID_SOCKET)closesocket(handle);WSACleanup();
 #else
+        bool allowed=connect(handle,reinterpret_cast<sockaddr*>(&address),sizeof(address))==0;
         if(handle>=0)close(handle);
 #endif
         output={{"allowed",allowed}};
