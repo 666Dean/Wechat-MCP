@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 project(StellariaAXR VERSION 1.0.0 LANGUAGES CXX)
+if(POLICY CMP0207)
+  cmake_policy(SET CMP0207 NEW)
+endif()
 include(CTest)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -51,7 +54,7 @@ if(AXR_PYTHON)
       RUNTIME_DEPENDENCIES
         DIRECTORIES "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin" "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
         PRE_EXCLUDE_REGEXES "api-ms-" "ext-ms-" "[Pp]ython[0-9]+.*[.]dll"
-        POST_EXCLUDE_REGEXES ".*[Ww]indows/.*"
+        POST_EXCLUDE_REGEXES ".*[Ww]indows[/\\\\].*"
       LIBRARY DESTINATION axr RUNTIME DESTINATION axr)
     foreach(dependency openssl sqlite3)
       if(EXISTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${dependency}/copyright")
@@ -104,10 +107,19 @@ elseif(WIN32)
     RUNTIME_DEPENDENCIES
       DIRECTORIES "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin" "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
       PRE_EXCLUDE_REGEXES "api-ms-" "ext-ms-"
-      POST_EXCLUDE_REGEXES ".*[Ww]indows/.*"
+      POST_EXCLUDE_REGEXES ".*[Ww]indows[/\\\\].*"
     RUNTIME DESTINATION ${AXR_HELPER_DEST})
 endif()
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 install(FILES LICENSE NOTICE REUSE.json THIRD_PARTY_NOTICES.md DESTINATION ${CMAKE_INSTALL_DATADIR}/StellariaAXR)
 install(DIRECTORY licenses/ DESTINATION ${CMAKE_INSTALL_DATADIR}/StellariaAXR/licenses)
+if(WIN32)
+  # Standalone helper distributions include the resolved DLL licenses as well.
+  foreach(dependency openssl sqlite3)
+    if(EXISTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${dependency}/copyright")
+      install(FILES "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${dependency}/copyright"
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/StellariaAXR/licenses RENAME "${dependency}.txt")
+    endif()
+  endforeach()
+endif()

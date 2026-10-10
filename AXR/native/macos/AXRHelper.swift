@@ -32,6 +32,11 @@ func path(_ root: AXUIElement, _ parts: [Int]) throws -> AXUIElement {
     return node
 }
 struct Failure: Error { let code: String; init(_ code: String) { self.code = code } }
+func inputValue(_ node: AXUIElement) throws -> String {
+    // Empty AXValue is valid. A title/description is not evidence of a draft.
+    guard let text=attr(node,kAXValueAttribute) as? String else { throw Failure("draft_value_unavailable") }
+    return text
+}
 func output(_ object: [String:Any]) {
     if let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
        let text = String(data: data, encoding: .utf8) { print(text) }
@@ -124,7 +129,7 @@ func main() throws -> [String:Any] {
         guard let text = req["text"] as? String, !text.isEmpty, text.count <= 16000,
               let sendPath = req["send_path"] as? [Int],
               let messagesPath = req["messages_path"] as? [Int] else { throw Failure("send_parameters_required") }
-        guard value(target).isEmpty else { throw Failure("existing_draft_denied") }
+        guard try inputValue(target).isEmpty else { throw Failure("existing_draft_denied") }
         func matches(_ node: AXUIElement, _ depth: Int) -> Int {
             if depth>12 { return 0 }
             return (value(node)==text ? 1 : 0) + children(node).prefix(500).reduce(0) { $0+matches($1,depth+1) }
@@ -132,7 +137,7 @@ func main() throws -> [String:Any] {
         let before = matches(try path(root,messagesPath),0)
         try verify()
         guard AXUIElementSetAttributeValue(target,kAXValueAttribute as CFString,text as CFString) == .success,
-              value(target) == text else { throw Failure("draft_prepare_failed") }
+              try inputValue(target) == text else { throw Failure("draft_prepare_failed") }
         try verify()
         let send = try path(root,sendPath)
         guard AXUIElementPerformAction(send,kAXPressAction as CFString) == .success else {
@@ -142,7 +147,7 @@ func main() throws -> [String:Any] {
         while Date()<deadline {
             try verify()
             let messages = try path(root,messagesPath)
-            if value(target).isEmpty && matches(messages,0)>before {
+            if try inputValue(target).isEmpty && matches(messages,0)>before {
                 return ["verified":true,"witness":"new_client_bubble_and_empty_draft","delivery_confirmed":false]
             }
             RunLoop.current.run(until:Date().addingTimeInterval(0.05))
@@ -151,10 +156,13 @@ func main() throws -> [String:Any] {
     }
     if op == "read" {
         var records: [[String:Any]] = []
+        var remaining=64000
         func walk(_ n: AXUIElement, _ p: [Int], _ depth: Int) {
             guard records.count < 500, depth <= 12 else { return }
-            records.append(["path":p, "role":string(n,kAXRoleAttribute), "value":String(value(n).prefix(16000)),
-                "identifier":string(n,kAXIdentifierAttribute), "description":string(n,kAXDescriptionAttribute)])
+            let raw=value(n),text=String(raw.prefix(min(4000,remaining)))
+            remaining-=text.count
+            records.append(["path":p, "role":String(string(n,kAXRoleAttribute).prefix(512)), "value":text,
+                "identifier":String(string(n,kAXIdentifierAttribute).prefix(512)), "truncated":text != raw])
             for (i,ch) in children(n).enumerated() { walk(ch,p+[i],depth+1) }
         }
         walk(target,targetPath,0)
@@ -164,7 +172,7 @@ func main() throws -> [String:Any] {
     }
     if op == "set_value" {
         guard let text = req["text"] as? String, text.count <= 16000 else { throw Failure("text_required") }
-        guard value(target).isEmpty else { throw Failure("existing_draft_denied") }
+        guard try inputValue(target).isEmpty else { throw Failure("existing_draft_denied") }
         try verify()
         guard AXUIElementSetAttributeValue(target,kAXValueAttribute as CFString,text as CFString) == .success else {
             throw Failure("value_not_settable")

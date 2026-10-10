@@ -7,7 +7,8 @@ Native Windows/macOS APIs are provided by the operating system.
 
 The pinned nlohmann/json fallback header is downloaded at build time from
 v3.12.0, verified by SHA-256, and retains its copyright and MIT header.
-Its full license is in licenses/nlohmann-json-MIT.txt. Other dependencies are
+Its full license is in licenses/nlohmann-json-MIT.txt; the compiled pybind11 header
+code's full BSD notice is in licenses/pybind11-BSD-3-Clause.txt. Other dependencies are
 resolved by the user's build environment; their original license obligations
 apply if redistributed. No third-party binary is copied into Git.
 

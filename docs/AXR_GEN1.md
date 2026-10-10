@@ -78,7 +78,7 @@ Mac layout 复用 MIT 开源 wechat-mcp 的标识与标题规则，保留完整�
 ## 本轮证据与未关闭验收
 
 * 原项目 91 个回归测试：通过，1 个原有平台跳过；已迁移 MCP 2.3.0 snake_case API。
-* 新增 45 个安全/事务/worker/集成测试：本机 44 项执行通过，Windows AppContainer 项留给 CI，包含真实 SQLCipher 加密合成库、WAL、拒写/错钥，
+* 新增 46 个安全/事务/worker/集成测试：本机 45 项执行通过，Windows AppContainer 项留给 CI，包含真实 SQLCipher 加密合成库、WAL、拒写/错钥，
   原生 helper 提交前撤权/过期/摘要及来源额度检查，以及监听正文/模型输入预算。
 * C++20 Core / Swift helper：本机编译及 CTest 通过；SDK 独立安装、外部 CMake consumer 构建通过。
 * Mac 沙箱：允许指定 worker/只读 runtime，拒绝白名单外文件；监听中的 loopback socket 在沙箱外可连接、沙箱内拒绝。
