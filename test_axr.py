@@ -155,6 +155,19 @@ class Foundation(unittest.TestCase):
             with self.assertRaises(AXRError):self.journal.context(cid,p,r,v)
         self.now[0]+=11
         with self.assertRaises(AXRError):self.journal.context(cid,'agent',self.resource,1)
+    def test_pending_approval_expiry_purges_body_without_erasing_active_commit(self):
+        pending=self.journal.propose(self.action,ttl=5)
+        self.journal.transition(pending,'agent','PolicyChecked');self.journal.transition(pending,'agent','AwaitingApproval')
+        active=self.journal.propose(self.action,ttl=5)
+        for state in ['PolicyChecked','Ready','Prepared','Executing']:self.journal.transition(active,'agent',state)
+        self.now[0]+=6;self.journal.purge()
+        self.assertEqual(self.journal.get(pending,'agent')['state'],'Expired')
+        self.assertIsNone(self.journal.get(pending,'agent')['payload'])
+        self.assertEqual(self.journal.get(active,'agent')['state'],'Executing')
+        self.assertIsNotNone(self.journal.get(active,'agent')['payload'])
+        self.journal.recover();self.journal.purge()
+        self.assertEqual(self.journal.get(active,'agent')['state'],'Unknown')
+        self.assertIsNone(self.journal.get(active,'agent')['payload']);self.assertTrue(self.journal.verify_audit())
     def test_budget_ceiling_persists_and_window_reset(self):
         budget=Budget(self.journal);budget.reserve('calls',2,amount=2)
         with self.assertRaises(AXRError):Budget(self.journal).reserve('calls',2)
@@ -388,7 +401,8 @@ class DatabasePages(unittest.TestCase):
 class CipherTests(unittest.TestCase):
     def test_real_sqlcipher_committed_wal_readonly_and_wrong_key(self):
         library=os.environ.get('AXR_SQLCIPHER_LIBRARY')
-        if not library or not Path(library).is_file():self.skipTest('SQLCipher integration library not provided')
+        if not library:self.skipTest('SQLCipher integration library not provided')
+        self.assertTrue(Path(library).is_file(),'explicit SQLCipher integration library is missing')
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'encrypted.db';writer=object.__new__(CipherConnection)
             writer.lib=C.CDLL(library);writer.handle=C.c_void_p();writer._declare()

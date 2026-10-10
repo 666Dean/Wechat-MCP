@@ -69,7 +69,8 @@ class UIAdapter:
             if sender is not None or since or until<2**63-1:
                 raise AXRError("ui_sender_or_time_filter_unavailable")
             messages.append({"reference":ref,"text":text,"created":None,"sender":None,
-                "outgoing":None,"observed_at":time.time(),"identity_assurance":"display_name_only"})
+                "outgoing":None,"observed_at":time.time(),"text_truncated":bool(node.get("truncated")),
+                "identity_assurance":"owner_verified_platform_witness"})
         return {"messages":messages[:limit],"cursor":None,"has_more":len(messages)>limit,
                 "coverage":"current_visible_chat","complete_history":False,
                 "background":not result.get("foreground",True),"preview_only":True}

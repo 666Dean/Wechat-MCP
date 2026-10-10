@@ -138,6 +138,13 @@ class Journal:
         return dict(self.db.execute("SELECT name,value FROM telemetry"))
 
     def purge(self):
+        # Pending approval must not retain encrypted bodies indefinitely after TTL.
+        # Active commits are resolved by the executor/recovery, never erased here.
+        stale=self.db.execute("SELECT id,principal,state FROM jobs WHERE expires<=? AND state IN ('Proposed','PolicyChecked','AwaitingApproval','Ready')",
+                              (self.clock(),)).fetchall()
+        for row in stale:
+            state="Expired" if row["state"] in {"AwaitingApproval","Ready"} else "Cancelled"
+            self.transition(row["id"],row["principal"],state)
         self.db.execute("DELETE FROM contexts WHERE expires<=?", (self.clock(),))
         self.db.execute("DELETE FROM results WHERE expires<=?", (self.clock(),))
         self.db.execute("UPDATE jobs SET payload=NULL WHERE expires<=? AND state IN ('Completed','Unknown','Denied','Expired','Cancelled','FailedSafe')", (self.clock(),))

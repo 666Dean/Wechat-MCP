@@ -8,6 +8,7 @@
 #include <iostream>
 #include <chrono>
 #include <thread>
+#include <algorithm>
 #include "axr/Core.hpp"
 #include "axr/Commit.h"
 using Microsoft::WRL::ComPtr;
@@ -38,12 +39,17 @@ static Json Main(const Json& req){
     ComPtr<IUIAutomationElement> root;automation->ElementFromHandle(window,&root);
     ComPtr<IUIAutomationTreeWalker> walker;automation->get_ControlViewWalker(&walker);
     if(!root||!walker)throw std::runtime_error("uia_tree_unavailable");
-    Json nodes=Json::array();Json labels=req.value("allow_labels",Json::array());
+    Json nodes=Json::array();Json labels=req.value("allow_labels",Json::array());std::size_t remaining=64000;
     std::function<void(ComPtr<IUIAutomationElement>,Json,unsigned,bool)> walk;
     walk=[&](ComPtr<IUIAutomationElement> node,Json path,unsigned depth,bool read){
         if(depth>16||nodes.size()>=500)return;auto children=Children(walker.Get(),node.Get());
         Json item{{"path",path},{"role",Role(node.Get())},{"identifier",Id(node.Get())},{"children",children.size()}};
-        auto name=Name(node.Get());if(read)item["value"]=name.substr(0,16000);else if(std::find(labels.begin(),labels.end(),name)!=labels.end())item["authorized_label"]=name;
+        auto name=Name(node.Get());if(read){
+            auto length=std::min<std::size_t>({name.size(),4000,remaining});
+            // Avoid splitting a UTF-8 continuation when enforcing the byte budget.
+            while(length<name.size()&&length>0&&(static_cast<unsigned char>(name[length])&0xC0)==0x80)--length;
+            item["value"]=name.substr(0,length);item["truncated"]=length<name.size();remaining-=length;
+        }else if(std::find(labels.begin(),labels.end(),name)!=labels.end())item["authorized_label"]=name;
         nodes.push_back(item);for(std::size_t i=0;i<children.size();++i){auto childPath=path;childPath.push_back(i);walk(children[i],childPath,depth+1,read);}
     };
     if(op=="structure"){walk(root,Json::array(),0,false);return {{"nodes",nodes},{"pid",pid},{"text_redacted",true}};}
