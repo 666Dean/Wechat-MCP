@@ -15,6 +15,7 @@
     "key_file": "C:/path/to/private/database-key.dpapi",
     "page_size": 200,
     "max_pages": 100,
+    "scan_mode": "full",
     "conversations": []
   }
 }

@@ -30,8 +30,10 @@ def private_conversation_candidate(cid, account):
 def validate_database_config(config):
     required = {"account_id", "session_db", "dll_path", "key_file", "conversations",
                 "page_size", "max_pages"}
-    if not isinstance(config, dict) or set(config) != required:
+    if not isinstance(config, dict) or not required <= set(config) or set(config) - required - {"scan_mode"}:
         raise ValueError("database_reader 字段必须与数据库配置模板一致；禁止在配置中放置密钥")
+    if config.get("scan_mode", "full") not in ("full", "recent"):
+        raise ValueError("scan_mode 必须是 full 或 recent")
     for key in ("account_id", "session_db", "dll_path", "key_file"):
         if not isinstance(config[key], str) or not config[key].strip() or "\x00" in config[key]:
             raise ValueError(f"database_reader.{key} 必须是非空字符串")
@@ -157,28 +159,52 @@ def normalize_message(row, account, conversation):
             "text": text if readable else None}
 
 
-def reconcile(reader, conversation, config):
-    """Two identical bounded full scans, with overlap on offset pagination.
+def reconcile(reader, conversation, config, *, cutoff=None):
+    """Two identical bounded scans, with overlap on offset pagination.
 
     The ABI lacks snapshot/keyset queries. Never silently advance after truncation
-    or unstable scans. This trades throughput for explicit, retryable failure.
+    or unstable scans. Opt-in recent mode stops after a complete expired page,
+    assuming owner-verified newest-first order; full remains the default.
     """
+    recent = config.get("scan_mode", "full") == "recent"
+    if recent and (type(cutoff) is not int or cutoff <= 0):
+        raise ReaderError("近期窗口需要固定的有效截止时间")
     previous = None
     size = config["page_size"]
     step = max(1, size * 4 // 5)
     for _ in range(3):
         found = {}
         offset = 0
+        last_created = None
+        previous_page_keys = set()
         for _ in range(config["max_pages"]):
             rows = reader.messages(conversation, size, offset)
             if not isinstance(rows, list) or len(rows) > size:
                 raise ReaderError("消息分页返回格式无效")
+            page = []
             for row in rows:
                 message = normalize_message(row, reader.account_id, conversation)
+                page.append(message)
                 old = found.get(message["key"])
                 if old is not None and old != message:
                     raise ReaderError("重叠分页中的消息身份冲突")
                 found[message["key"]] = message
+            if recent:
+                # Native ordering is not an ABI guarantee. This mode is opt-in
+                # after local verification; reject any observed order inversion.
+                times = [m["created"] for m in page]
+                if any(a < b for a, b in zip(times, times[1:])):
+                    raise ReaderError("近期窗口要求消息按 create_time 从新到旧返回；请使用 full")
+                # Overlap can legitimately include newer rows already visited.
+                new = [m for m in page if m["key"] not in previous_page_keys] if offset else page
+                if new and last_created is not None and new[0]["created"] > last_created:
+                    raise ReaderError("近期窗口跨页顺序无效；未推进基线，请使用 full")
+                if page:
+                    last_created = page[-1]["created"]
+                previous_page_keys = {m["key"] for m in page}
+                # Require an entire old page, not just an old trailing row.
+                if page and all(m["created"] <= cutoff for m in page):
+                    break
             if len(rows) < size:
                 break
             offset += step
@@ -330,6 +356,26 @@ class WcdbReader:
         if conversation not in {b["conversation_id"] for b in self.config["conversations"]}:
             raise ReaderError("该会话未获本机读取授权")
         return self._json("get_messages", conversation.encode("utf-8"), limit, offset)
+
+    def probe_messages(self, conversation, limit=20):
+        """Bounded owner CLI probe: no text output, state, baseline or sending."""
+        if type(limit) is not int or not 1 <= limit <= 50:
+            raise ReaderError("验证 limit 必须是 1 到 50 的整数")
+        if conversation not in {b["conversation_id"] for b in self.config["conversations"]}:
+            raise ReaderError("验证会话必须在本机 conversations 中明确绑定")
+        self.sessions()
+        rows = self.messages(conversation, limit, 0)
+        if len(rows) > limit:
+            raise ReaderError("验证消息分页超出限额")
+        messages = [normalize_message(row, self.account_id, conversation) for row in rows]
+        self.sessions()
+        times = [m["created"] for m in messages]
+        return {"connected": True, "sample_count": len(messages),
+                "readable_incoming_text_count": sum(m["text"] is not None for m in messages),
+                "observed_newest_first": all(a >= b for a, b in zip(times, times[1:])) if len(times) > 1 else None,
+                "has_shard_identity_count": sum(m["source"].startswith("shard:") for m in messages),
+                "send_enabled": False, "state_changed": False,
+                "note": "只验证绑定会话的一页；不输出正文或消息身份、不建立基线。单页排序不证明全历史排序或实时增量可用。"}
 
     def close(self):
         try:

@@ -66,6 +66,47 @@ class SessionCliTests(unittest.TestCase):
         self.assertFalse(json.loads(output.getvalue())["connected"])
         self.assertFalse((self.path.parent / self.config["state_file"]).exists())
 
+    def test_probe_cli_is_bounded_closes_reader_and_creates_no_state(self):
+        reader = Mock()
+        reader.probe_messages.return_value = {"connected": True, "sample_count": 2, "state_changed": False}
+        output = io.StringIO()
+        before = self.path.read_bytes()
+        with patch.object(sys, "argv", ["server.py", "--config", str(self.path),
+                          "--probe-database-messages", "wxid_friend", "--probe-limit", "2"]), \
+                patch("database_reader.WcdbReader", return_value=reader), patch("sys.stdout", output):
+            server.main()
+        self.assertEqual(json.loads(output.getvalue()), reader.probe_messages.return_value)
+        reader.probe_messages.assert_called_once_with("wxid_friend", 2)
+        reader.close.assert_called_once()
+        reader.session_catalog.assert_not_called()
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertFalse((self.path.parent / self.config["state_file"]).exists())
+
+    def test_probe_failure_closes_reader_and_has_nonzero_exit(self):
+        reader = Mock()
+        reader.probe_messages.side_effect = ReaderError("合成验证失败")
+        output = io.StringIO()
+        with patch.object(sys, "argv", ["server.py", "--config", str(self.path),
+                          "--probe-database-messages", "wxid_friend"]), \
+                patch("database_reader.WcdbReader", return_value=reader), patch("sys.stdout", output):
+            with self.assertRaises(SystemExit) as caught:
+                server.main()
+        self.assertEqual(caught.exception.code, 1)
+        self.assertFalse(json.loads(output.getvalue())["connected"])
+        reader.close.assert_called_once()
+
+    def test_probe_cli_rejects_mixed_operations_and_excess_limit_before_open(self):
+        for extra in (["--list-database-sessions"], ["--doctor"], ["--demo"],
+                      ["--probe-limit", "51"], ["--store-database-key"]):
+            with self.subTest(extra=extra), \
+                    patch.object(sys, "argv", ["server.py", "--config", str(self.path),
+                          "--probe-database-messages", "wxid_friend", *extra]), \
+                    patch("database_reader.WcdbReader") as reader, patch("sys.stderr", io.StringIO()):
+                with self.assertRaises(SystemExit) as caught:
+                    server.main()
+                self.assertEqual(caught.exception.code, 2)
+                reader.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
