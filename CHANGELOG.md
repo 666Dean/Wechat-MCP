@@ -30,6 +30,7 @@
 - C++ Core/Swift 编译与 CTest、SDK 安装、独立 CMake consumer 通过；Mac 实际 sandbox 拒绝范围外文件与 loopback 连接。
 - Win CI 随 PR 运行；本轮按主人要求不做 Windows 微信实机测试。
 
+- PR 后续修正：原生 Windows path/argv 按 UTF-8 转换，避免中文用户名/目录错误；SQLCipher 查询增加 5 秒 VM 进度上限，关闭服务时取消 runner；模型尝试与成功结果分开计数。
 - PR 后续修正：按 Microsoft 桌面应用文档使用 HWND / IUserConsentVerifierInterop，替换依赖 UWP CoreWindow 的 Windows Hello 调用；保持设备无可用验证方式时拒绝。
 
 #### 未关闭的验收

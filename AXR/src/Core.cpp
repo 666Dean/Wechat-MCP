@@ -154,7 +154,8 @@ struct Guard::Impl {
 };
 Guard::Guard(const std::filesystem::path& path,std::string key):impl_(std::make_unique<Impl>()) {
     if(key.size()!=32)Fail("invalid_guard_key");impl_->key=std::move(key);
-    if(sqlite3_open_v2(path.string().c_str(),&impl_->db,SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK)Fail("trusted_store_unavailable");
+    auto utf8=path.u8string();
+    if(sqlite3_open_v2(reinterpret_cast<const char*>(utf8.c_str()),&impl_->db,SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK)Fail("trusted_store_unavailable");
     sqlite3_busy_timeout(impl_->db,5000);
     Exec(impl_->db,"PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;CREATE TABLE IF NOT EXISTS policy(version INTEGER NOT NULL);INSERT INTO policy SELECT 1 WHERE NOT EXISTS(SELECT 1 FROM policy);CREATE TABLE IF NOT EXISTS grants(id TEXT PRIMARY KEY,body TEXT NOT NULL,signature TEXT NOT NULL,used INTEGER NOT NULL DEFAULT 0,revoked INTEGER NOT NULL DEFAULT 0);");
 }

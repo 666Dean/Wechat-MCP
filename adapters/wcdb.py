@@ -9,6 +9,7 @@ import ctypes as C
 import hashlib
 import json
 import re
+import time
 from pathlib import Path
 from axr.aet import AXRError, canonical, digest
 
@@ -50,6 +51,8 @@ class CipherConnection:
     def _declare(self):
         definitions = {
             "sqlite3_open_v2": ([C.c_char_p,C.POINTER(C.c_void_p),C.c_int,C.c_char_p],C.c_int),
+            "sqlite3_busy_timeout": ([C.c_void_p,C.c_int],C.c_int),
+            "sqlite3_interrupt": ([C.c_void_p],None),
             "sqlite3_close_v2": ([C.c_void_p],C.c_int),
             "sqlite3_prepare_v2": ([C.c_void_p,C.c_char_p,C.c_int,C.POINTER(C.c_void_p),C.c_void_p],C.c_int),
             "sqlite3_step": ([C.c_void_p],C.c_int),
@@ -70,6 +73,13 @@ class CipherConnection:
         stmt=C.c_void_p()
         if self.lib.sqlite3_prepare_v2(self.handle,sql.encode(),-1,C.byref(stmt),None)!=0:
             raise AXRError("database_key_profile_schema_or_query_failed")
+        # Enforce a wall/VM-step ceiling even when the owner's table lacks an index.
+        progress_type=C.CFUNCTYPE(C.c_int,C.c_void_p)
+        self.lib.sqlite3_progress_handler.argtypes=[C.c_void_p,C.c_int,progress_type,C.c_void_p]
+        self.lib.sqlite3_progress_handler.restype=None
+        deadline=time.monotonic()+5
+        progress=progress_type(lambda _:int(time.monotonic()>deadline))
+        self.lib.sqlite3_progress_handler(self.handle,1000,progress,None)
         storage=[]
         try:
             for i,value in enumerate(parameters,1):
@@ -107,6 +117,7 @@ class CipherConnection:
                     row[name]=value
                 rows.append(row)
         finally:
+            self.lib.sqlite3_progress_handler(self.handle,0,progress_type(),None)
             self.lib.sqlite3_finalize(stmt)
 
     def close(self):
@@ -246,6 +257,11 @@ class DatabaseAdapter:
         return {"messages":[m for m in scanned if m.pop("matches")],"cursor":cursor,
                 "has_more":len(incoming)>limit,"scanned":len(scanned),
                 "coverage":self.status()["coverage"],"complete_history":False}
+
+    def cancel(self):
+        for connection in list(self.connections.values()):
+            if hasattr(connection,"lib") and connection.handle:
+                connection.lib.sqlite3_interrupt(connection.handle)
 
     def close(self):
         for connection in self.connections.values():
