@@ -78,7 +78,7 @@ Mac layout 复用 MIT 开源 wechat-mcp 的标识与标题规则，保留完整�
 ## 本轮证据与未关闭验收
 
 * 原项目 91 个回归测试：通过，1 个原有平台跳过；已迁移 MCP 2.3.0 snake_case API。
-* 新增 50 个安全/事务/worker/集成测试：本机 49 项执行通过，Windows AppContainer 项留给 CI，包含真实 SQLCipher 加密合成库、WAL、拒写/错钥，
+* 新增 50 个安全/事务/worker/集成测试：本机 49 项执行通过，Windows AppContainer 项在 CI 通过，包含真实 SQLCipher 加密合成库、WAL、拒写/错钥，
   原生 helper 提交前撤权/过期/摘要及来源额度检查，以及监听正文/模型输入预算。
   每次提案的 execution_id 纳入 intent seal，取消后旧审批不能授权相同内容的新提案；持久 claim 拒绝同一 execution_id 重放。
 * C++20 Core / Swift helper：本机编译及 CTest 通过；SDK 独立安装、外部 CMake consumer 构建通过。
@@ -89,7 +89,9 @@ Mac layout 复用 MIT 开源 wechat-mcp 的标识与标题规则，保留完整�
 * 后续 GUI 实测遇到 Mac 锁定；需要主人解锁及目录读取权限后继续。私有账号、联系人、正文、
   密钥、截图、实际数据库路径不进入仓库或 CI。
 * Windows：C++ UIA/Hello（HWND desktop interop，Windows 11 Build 22000+）/AppContainer + 自动化构建路径；本轮按主人要求 **不做微信实机测试**。
-  Win 平台行为、Hello 与 AppContainer 尚无实机资格证明。
+  macOS / Windows CI 均完成原生编译、CTest 和 141 项回归（各跳过 2 项平台测试）。
+  AppContainer 的合成进程 witness 验证 staged 文件读取、私有文件及 loopback 隔离；
+  Hello 所有者认证全过程和微信 UIA/后台行为尚无设备资格证明。
 * 本地所有者 OS 弹窗、人类批准全过程、任意外部模型 runner、长期稳定监听尚未端到端验证。
 * 未提供成熟安装包签名、经过验收的跨平台原生配置 GUI、硬件反回滚、自动合法获取 WCDB 密钥，
   也未把全部复杂微信版本 schema 或媒体解析声明为支持。

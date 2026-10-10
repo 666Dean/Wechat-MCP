@@ -22,6 +22,7 @@ SDK 真实抽取 BasicX-Hub、BasicX、Connector 的通用基础设施，固定 
 
 跨平台构建、使用、授权流程与实际验收状态见 [Gen1 集成说明](docs/AXR_GEN1.md)。
 Mac 微信聊天 AX 树/密钥/数据库目录受阻，真实收发尚未通过；Windows 本轮不做微信实机测试。
+macOS / Windows 原生编译、CTest 和 141 项回归已在 CI 通过；Windows AppContainer 文件/loopback 隔离为合成进程证据。
 以下历史说明主要描述保留的 **legacy 模式**，不能视为 AXR 的权限或能力说明。
 
 ## 一眼看清当前状态
