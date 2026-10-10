@@ -64,7 +64,10 @@ static Json Main(const Json& req){
         std::function<unsigned(ComPtr<IUIAutomationElement>,unsigned)> matches;
         matches=[&](ComPtr<IUIAutomationElement> node,unsigned depth){if(depth>12)return 0u;unsigned count=Value(node.Get())==text?1:0;for(auto& child:Children(walker.Get(),node.Get()))count+=matches(child,depth+1);return count;};
         auto before=matches(Path(walker.Get(),root,req.at("messages_path")),0);verify();
-        auto wide=Wide(text);if(FAILED(input->SetValue(wide.c_str()))||Value(target.Get())!=text)throw std::runtime_error("draft_prepare_failed");
+        auto wide=Wide(text);BSTR prepared=SysAllocStringLen(wide.data(),UINT(wide.size()));
+        if(!prepared)throw std::runtime_error("draft_allocation_failed");
+        HRESULT changed=input->SetValue(prepared);SysFreeString(prepared);
+        if(FAILED(changed)||Value(target.Get())!=text)throw std::runtime_error("draft_prepare_failed");
         verify();auto send=Path(walker.Get(),root,req.at("send_path"));ComPtr<IUIAutomationInvokePattern> invoke;
         if(FAILED(send->GetCurrentPatternAs(UIA_InvokePatternId,IID_PPV_ARGS(&invoke)))||FAILED(invoke->Invoke()))throw std::runtime_error("send_action_unavailable");
         auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(2);

@@ -12,6 +12,11 @@ import time
 import unittest
 from dataclasses import replace,asdict
 from pathlib import Path
+try:
+    import axr
+except ModuleNotFoundError as exc:
+    if exc.name=="axr":raise unittest.SkipTest("AXR optional: install requirements.axr.txt and native SDK to run these gates") from exc
+    raise
 from axr import _axr_native as native
 from axr.aet import Action,Resource,Provenance,AXRError,canonical
 from axr.guard import Guard
