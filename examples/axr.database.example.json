@@ -1,0 +1,16 @@
+{
+  "principal": "agent:local-wechat",
+  "purpose": "wechat-assistant",
+  "account_id": "OWNER_VERIFIED_ACCOUNT_ID",
+  "agent_destination": "model:OWNER_APPROVED_PROVIDER_OR_LOCAL_WORKER",
+  "mode": "wcdb",
+  "conversations": [{"conversation_id": "OWNER_VERIFIED_CONVERSATION_ID", "display_name": "OWNER_TEST_CONTACT", "schema": "v4", "data_class": "personal"}],
+  "database": {
+    "sqlcipher_library": "/ABSOLUTE/PATH/TO/OWNER_VERIFIED_SQLCIPHER_LIBRARY",
+    "shards": [{"path": "/ABSOLUTE/PATH/TO/OWNER_AUTHORIZED_MESSAGE_SHARD.db", "key_reference": "wcdb.test-account", "cipher_profile": "sqlcipher4"}]
+  },
+  "attribution_prefix": "【自动回复 · AI 助理】",
+  "listener": {"listen": false, "wake_agent": false, "auto_execute": false},
+  "runner": {"enabled": false},
+  "workspace": null
+}

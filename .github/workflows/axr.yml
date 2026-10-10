@@ -1,0 +1,51 @@
+name: AXR native and security gates
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Native dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install openssl@3 sqlcipher
+          echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          echo "AXR_SQLCIPHER_LIBRARY=$(brew --prefix sqlcipher)/lib/libsqlcipher.dylib" >> "$GITHUB_ENV"
+      - name: Native dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          vcpkg install openssl:x64-windows sqlite3:x64-windows nlohmann-json:x64-windows
+          "CMAKE_ARGS=-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows" >> $env:GITHUB_ENV
+          "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin" >> $env:GITHUB_PATH
+      - name: Python and editable C++ SDK
+        run: python -m pip install -r requirements.txt pybind11==3.0.1
+      - name: Root helpers and native tests (macOS)
+        if: runner.os == 'macOS'
+        run: python scripts/build_axr.py --openssl "$OPENSSL_ROOT_DIR"
+      - name: Root helpers and native tests (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: python scripts/build_axr.py --toolchain "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+      - name: Native sandbox witness path (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          echo "AXR_TEST_WORKER=$PWD/.local-private/build/AXR/axr-worker-probe" >> "$GITHUB_ENV"
+          echo "AXR_TEST_RUNTIME_ROOTS=$OPENSSL_ROOT_DIR/lib" >> "$GITHUB_ENV"
+      - name: Security and legacy regressions
+        run: python -m unittest discover -q
+      - name: Confirm private files are absent
+        shell: bash
+        run: |
+          if git ls-files | grep -E '(^\.local-private/|^\.venv/|\.sqlite3($|-)|\.db$|\.dpapi$|\.sealed\.json$|\.(so|pyd|dylib|dll|exe)$)'; then exit 1; fi
