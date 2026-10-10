@@ -194,61 +194,67 @@ class DatabaseAdapter:
         incoming=[]
         for shard in self.config["shards"]:
             db,generation=self._connection(shard)
-            if not db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?",(table,)):
-                continue
-            columns={x["name"] for x in db.query('PRAGMA table_info("'+table+'")')}
-            required=set(schema.values())-{schema["prefix"],"rowid"}
-            if not required<=columns:
-                raise AXRError("wcdb_schema_not_qualified")
-            c={k:'"'+v+'"' for k,v in schema.items() if k!="prefix"}
-            compression='"WCDB_CT_message_content"' if 'WCDB_CT_message_content' in columns else '0'
-            sender_column='"sender_username"' if 'sender_username' in columns else "NULL"
-            sender_ids=binding["schema"]=="v4"
-            if sender_ids:
-                # Adapted from chatlog-keeper Name2Id rowid -> username mapping.
-                # Exact bounded lookup, no catalog dump; require owner-provisioned self ID.
-                self_rows=db.query("SELECT rowid FROM Name2Id WHERE user_name=? LIMIT 2",(self.config["account_id"],))
-                if len(self_rows)!=1:raise AXRError("account_identity_not_present_in_shard")
-            boundary=after.get(generation,[-1,-1]) if after else [-1,-1]
-            sql=(f'SELECT {c["id"]} AS local_id,{c["server"]} AS server_id,{c["time"]} AS created,'
-                 f'{c["type"]} AS type,{c["body"]} AS body,{c["direction"]} AS direction,'
-                 f'{compression} AS compression,{sender_column} AS sender FROM "{table}" '
-                 f'WHERE {c["time"]}>=? AND {c["time"]}<=? AND ({c["time"]},{c["id"]})>(?,?) '
-                 f'ORDER BY {c["time"]},{c["id"]} LIMIT ?')
-            for row in db.query(sql,(since,until,int(boundary[0]),int(boundary[1]),limit+1)):
-                # Do not advance beyond unreadable/unsupported records silently.
-                raw_type=row["type"]
-                if raw_type!=1:
-                    text=None
-                else:
-                    text=decode_text(row["body"],row["compression"])
-                # Schema-specific direction must be explicitly known, never inferred from content.
-                direction=row["direction"]
+            try:
+                if not db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?",(table,)):
+                    continue
+                columns={x["name"] for x in db.query('PRAGMA table_info("'+table+'")')}
+                required=set(schema.values())-{schema["prefix"],"rowid"}
+                if not required<=columns:
+                    raise AXRError("wcdb_schema_not_qualified")
+                c={k:'"'+v+'"' for k,v in schema.items() if k!="prefix"}
+                compression='"WCDB_CT_message_content"' if 'WCDB_CT_message_content' in columns else '0'
+                sender_column='"sender_username"' if 'sender_username' in columns else "NULL"
+                sender_ids=binding["schema"]=="v4"
                 if sender_ids:
-                    resolved=db.query("SELECT user_name FROM Name2Id WHERE rowid=? LIMIT 2",(int(direction),))
-                    if len(resolved)!=1 or not resolved[0]["user_name"]:
-                        raise AXRError("sender_identity_unknown")
-                    actual_sender=resolved[0]["user_name"]
-                    outgoing=actual_sender==self.config["account_id"]
-                    if not conversation_id.endswith("@chatroom") and actual_sender not in {conversation_id,self.config["account_id"]}:
-                        raise AXRError("private_chat_sender_identity_mismatch")
-                else:
-                    if direction not in (0,1):raise AXRError("wcdb_direction_unknown")
-                    outgoing=(direction==1) if binding["schema"]=="v4-is-send" else (direction==0)
-                    actual_sender=row["sender"] or (self.config["account_id"] if outgoing else
-                        conversation_id if not conversation_id.endswith("@chatroom") else None)
-                if conversation_id.endswith("@chatroom") and raw_type==1 and actual_sender is None:
-                    # Legacy group bodies carry an explicit sender prefix. Reject ambiguous data.
-                    if text and ":\n" in text:
-                        actual_sender,text=text.split(":\n",1)
+                    # Adapted from chatlog-keeper Name2Id rowid -> username mapping.
+                    # Exact bounded lookup, no catalog dump; require owner-provisioned self ID.
+                    self_rows=db.query("SELECT rowid FROM Name2Id WHERE user_name=? LIMIT 2",(self.config["account_id"],))
+                    if len(self_rows)!=1:raise AXRError("account_identity_not_present_in_shard")
+                boundary=after.get(generation,[-1,-1]) if after else [-1,-1]
+                sql=(f'SELECT {c["id"]} AS local_id,{c["server"]} AS server_id,{c["time"]} AS created,'
+                     f'{c["type"]} AS type,{c["body"]} AS body,{c["direction"]} AS direction,'
+                     f'{compression} AS compression,{sender_column} AS sender FROM "{table}" '
+                     f'WHERE {c["time"]}>=? AND {c["time"]}<=? AND ({c["time"]},{c["id"]})>(?,?) '
+                     f'ORDER BY {c["time"]},{c["id"]} LIMIT ?')
+                for row in db.query(sql,(since,until,int(boundary[0]),int(boundary[1]),limit+1)):
+                    # Do not advance beyond unreadable/unsupported records silently.
+                    raw_type=row["type"]
+                    if raw_type!=1:
+                        text=None
                     else:
-                        raise AXRError("group_sender_not_resolved")
-                if conversation_id.endswith("@chatroom") and text and text.startswith(actual_sender+":\n"):
-                    text=text[len(actual_sender)+2:]
-                ref=digest([self.config["account_id"],conversation_id,generation,row["local_id"],row["created"]])
-                incoming.append({"reference":ref,"created":row["created"],"local_id":row["local_id"],"server_id":row["server_id"],
-                    "generation":generation,"text":text,"sender":actual_sender,"outgoing":outgoing,
-                    "matches":bool(text is not None and query in text and (sender is None or sender==actual_sender))})
+                        text=decode_text(row["body"],row["compression"])
+                    # Schema-specific direction must be explicitly known, never inferred from content.
+                    direction=row["direction"]
+                    if sender_ids:
+                        resolved=db.query("SELECT user_name FROM Name2Id WHERE rowid=? LIMIT 2",(int(direction),))
+                        if len(resolved)!=1 or not resolved[0]["user_name"]:
+                            raise AXRError("sender_identity_unknown")
+                        actual_sender=resolved[0]["user_name"]
+                        outgoing=actual_sender==self.config["account_id"]
+                        if not conversation_id.endswith("@chatroom") and actual_sender not in {conversation_id,self.config["account_id"]}:
+                            raise AXRError("private_chat_sender_identity_mismatch")
+                    else:
+                        if direction not in (0,1):raise AXRError("wcdb_direction_unknown")
+                        outgoing=(direction==1) if binding["schema"]=="v4-is-send" else (direction==0)
+                        actual_sender=row["sender"] or (self.config["account_id"] if outgoing else
+                            conversation_id if not conversation_id.endswith("@chatroom") else None)
+                    if conversation_id.endswith("@chatroom") and raw_type==1 and actual_sender is None:
+                        # Legacy group bodies carry an explicit sender prefix. Reject ambiguous data.
+                        if text and ":\n" in text:
+                            actual_sender,text=text.split(":\n",1)
+                        else:
+                            raise AXRError("group_sender_not_resolved")
+                    if conversation_id.endswith("@chatroom") and text and text.startswith(actual_sender+":\n"):
+                        text=text[len(actual_sender)+2:]
+                    ref=digest([self.config["account_id"],conversation_id,generation,row["local_id"],row["created"]])
+                    incoming.append({"reference":ref,"created":row["created"],"local_id":row["local_id"],"server_id":row["server_id"],
+                        "generation":generation,"text":text,"sender":actual_sender,"outgoing":outgoing,
+                        "matches":bool(text is not None and query in text and (sender is None or sender==actual_sender))})
+            finally:
+                # Release the page handle, especially FILE_SHARE_DELETE constraints on Windows.
+                # Native pager/WAL queries avoid full plaintext export, without pinning a live shard.
+                db.close()
+                self.connections.pop(str(Path(shard["path"]).resolve()),None)
         incoming.sort(key=lambda x:(x["created"],x["local_id"],x["generation"]))
         scanned=incoming[:limit]
         cursor=dict(after or {})
