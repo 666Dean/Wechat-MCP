@@ -1,4 +1,4 @@
-# WCDB 实时数据库读取原型（0.4.0）
+# WCDB 实时数据库读取原型（0.5.0）
 
 2026-10-10：代码与合成测试已完成，**尚未连接真实微信数据库**。
 ABI 对照 [EchoTrace v3.0.2 FFI 源码](https://github.com/ycccccccy/echotrace/blob/98280f0d0d7b764b2f2027fc4d103024e8ed30fd/lib/services/wechat_wcdb_native.dart)
@@ -44,15 +44,33 @@ UI 后端和数据库后端二选一；数据库模式无需 wxauto4 的 UI 初�
 `connected=true` 表示原生查询成功，不代表发送可用或已验证完整消息格式。
 MCP 参数使用 `--config` 指向本机配置，不添加 `--demo`。
 
+## 查询会话 ID 与诊断改名
+
+配置账号、入口、DLL 和本机密钥后，可以先保持 `conversations=[]`，运行：
+
+```powershell
+.\.venv\Scripts\python.exe .\server.py --config .\config.database.json --list-database-sessions
+```
+
+此本机 CLI 只调用会话和显示名接口，输出 ID、名称、`can_bind`、`configured`、
+`binding_matches` 和排除原因。原生会话记录可能含消息摘要，代码丢弃这些字段；
+不调用消息查询、不输出摘要、不修改绑定、不创建状态库，也不提供对应的 MCP 发现工具。
+输出包含私人联系人元数据，请在本机核对，不公开分享。
+
+`can_bind` 只排除已知群、公众号、本人、系统 ID 及缺失/重名显示名，不证明好友身份。
+已有会话改名时，此命令仍可查看新名称，手工修正本机绑定后重启；
+正常状态、轮询和预览仍拒绝名称不符，不因诊断查询放宽授权。
+查询或打开失败返回非零退出码，已打开句柄会关闭。
+
 ## 轮询与预览
 
-仍使用 `poll_messages`、`reply_to_message`、`dismiss_message`，没有凭据或绑定写入 MCP 工具。
+使用 `poll_messages`、`list_reply_queue`、`reply_to_message`、`dismiss_message`，没有凭据或绑定写入 MCP 工具。
 读取由客户端每次调用触发，可读取显式绑定的后台会话；没有文件监听、定时器或 AI 调度。
 状态报告 `coverage=configured_database_conversations_only`。
 
 - 每个账号与会话第一次成功读取只记录身份基线，历史不入队；新增绑定也先建立基线。
 - 基线、已见身份和新消息队列在同一 SQLite 事务提交，失败不确认新消息。
-- 重启继续使用持久基线；已处理消息不重新入队，仍有效的 pending 事件继续返回。
+- 重启继续使用持久基线；已处理消息不重新入队，仍有效且尚无草稿的 pending 事件继续返回。
 - 去重包含账号、会话、来源及原生元数据，不仅使用 local_id。
   有 `source_db` 时按分库区分；无分库标识时要求正的 server_id，并合并 local_id、时间和 sort_seq。
   已有分库标识时，server_id 从零变为有效值不会产生第二个事件。
@@ -61,6 +79,8 @@ MCP 参数使用 `--config` 指向本机配置，不添加 `--demo`。
   新身份全部记录为已见，过滤后的正文不保存；后续补解码不会自动重放这些消息。
 - 过期按原生 `create_time` 计算，不因读取或重启重新获得 15 分钟资格；未来时间不入队。
 - 返回合计最多 50 条事件，包含 `account_id`、`conversation_id` 和 `source`；预览草稿持久保存。
+- 已保存预览从轮询事件中移除，通过 `list_reply_queue` 分页查看；读取队列无需连接原生数据库。
+  队列仍检查本机授权和时效，离线结果不验证实时账号或目标，详见 [队列使用说明](../README.md#查看已保存的预览)。
 - 数据库来源强制预览，即使 `send_enabled=true` 也不能调用 UI 发送。
   状态中 `send_enabled=false` 是有效权限，`configured_send_enabled` 是原始设置。
 - 预览再次核对账号绑定和显示名。UI 名称不能证明与数据库 ID 相同，发送映射待实现。

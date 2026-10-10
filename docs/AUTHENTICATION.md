@@ -60,15 +60,15 @@ sequenceDiagram
 联系人可以撤销普通待回复消息的资格。发送开关是本机设置，不是逐条消息审批。
 发前名称核对与发送之间仍有 UI 切换竞态，且没有稳定联系人或账号 ID 校验。
 
-## 联系人管理权限（0.3.0）
+## 联系人管理权限
 
-默认服务只注册五个工具：`wechat_status`、`get_reply_contacts`、`poll_messages`、
-`reply_to_message`、`dismiss_message`。`set_reply_contacts` 默认不注册，直接调用
+0.5.0 默认注册六个工具：`wechat_status`、`get_reply_contacts`、`poll_messages`、
+`list_reply_queue`、`reply_to_message`、`dismiss_message`。`set_reply_contacts` 默认不注册，直接调用
 `Bridge.set_contacts` 也会在写入前抛出 `PermissionError`。
 
 日常修改名单可以由本机使用者使用 `--set-contacts` 或 `configure-contacts.ps1`；
 运行中的服务在下一次工具调用加载。只有在信任 MCP 客户端并确实需要它管理名单时，
-才在服务启动参数中加入 `--allow-contact-management`，重启后开放第六个工具。
+才在服务启动参数中加入 `--allow-contact-management`，重启后开放第七个工具。
 例如，将生成的 MCP 配置中的 `args` 改为：
 
 ```toml
@@ -84,6 +84,10 @@ args = ["C:/path/to/wechat-codex-mcp/server.py", "--allow-contact-management"]
 该保护仅覆盖本服务工具；拥有 shell、文件写入或重启权限的本机客户端仍能绕过它。
 
 ## 凭据与 token 的生命周期
+
+`list_reply_queue` 只读取本机队列并刷新授权/过期状态，不初始化 UI 或解密数据库凭据。
+返回结果明确表示未核对实时身份；不能用离线草稿证明发送目标。UI 与数据库草稿均为明文留存。
+`--list-database-sessions` 仅是本机 CLI，不注册 MCP 工具、不修改绑定；原生会话摘要被丢弃。
 
 | 对象 | 本仓库如何处理 |
 |---|---|

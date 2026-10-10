@@ -57,6 +57,7 @@ class FakeNative:
         self.shutdowns = 0
         self.code = 0
         self.payload = b'[{"username":"wxid_friend"}]'
+        self.names = {"wxid_friend": "合成好友"}
         self.null = False
         self.open_code = 0
         self.large_handle = 2 ** 40 + 7
@@ -95,7 +96,7 @@ class FakeNative:
         self.wcdb_get_messages = C.CFUNCTYPE(C.c_int32, C.c_int64, C.c_char_p, C.c_int32, C.c_int32, out)(
             lambda h, u, l, o, p: output(p, self.payload))
         self.wcdb_get_display_names = C.CFUNCTYPE(C.c_int32, C.c_int64, C.c_char_p, out)(
-            lambda h, u, p: output(p, '{"wxid_friend":"合成好友"}'.encode("utf-8")))
+            lambda h, u, p: output(p, json.dumps(self.names).encode("utf-8")))
 
 
 class DatabaseTests(unittest.TestCase):
@@ -158,8 +159,78 @@ class DatabaseTests(unittest.TestCase):
         self.assertIsNone(self.bridge.adapter)
         self.assertFalse(self.bridge.status()["send_enabled"])
         self.restart()
-        self.assertEqual(self.bridge.poll()["events"][0]["id"], event["id"])
+        self.assertEqual(self.bridge.poll()["events"], [])
+        self.assertEqual(self.bridge.list_queue()["items"][0]["id"], event["id"])
         self.assertIn("合成预览", self.bridge.db.execute("SELECT reply FROM messages").fetchone()[0])
+
+    def test_offline_database_queue_does_not_open_reader_or_credentials(self):
+        event = self.event()
+        draft = self.bridge.reply(event["id"], "离线预览")
+        self.bridge.close()
+        with patch("database_reader.WcdbReader", side_effect=AssertionError("must remain offline")):
+            self.bridge = Bridge(self.path)
+            queue = self.bridge.list_queue()
+            self.assertEqual(queue["items"][0]["preview"], draft["text"])
+            self.assertEqual(queue["items"][0]["conversation_id"], "wxid_friend")
+            self.assertFalse(queue["live_identity_verified"])
+            self.assertIsNone(self.bridge.reader)
+            self.bridge.dismiss(event["id"])
+            self.assertEqual(self.bridge.list_queue()["items"], [])
+
+    def test_offline_queue_rechecks_config_and_does_not_expose_removed_binding(self):
+        event = self.event()
+        self.bridge.reply(event["id"], "保密草稿")
+        self.config["database_reader"]["conversations"] = []
+        self.update()
+        with self.assertRaisesRegex(ValueError, "重启"):
+            self.bridge.list_queue()
+        self.restart()
+        self.assertEqual(self.bridge.list_queue()["items"], [])
+
+    def test_offline_queue_does_not_expose_foreign_account_rows(self):
+        self.event()
+        self.bridge.db.execute("""INSERT INTO messages
+            (peer,native_id,text,eligible,created,source,account_id,conversation_id,reply)
+            VALUES(?,?,?,?,?,'wcdb',?,?,?)""",
+            ("合成好友", "foreign-account", "其他账号的合成消息", 1, time.time(),
+             "wxid_other_owner", "wxid_friend", "其他账号草稿"))
+        self.bridge.db.commit()
+        queue = self.bridge.list_queue()
+        self.assertEqual(len(queue["items"]), 1)
+        self.assertNotIn("其他账号", str(queue))
+
+    def test_session_catalog_strips_native_preview_and_diagnoses_rename(self):
+        native = FakeNative()
+        native.payload = json.dumps([{"username": "wxid_friend", "last_message": "不可导出的合成正文"}]).encode("utf-8")
+        native.names["wxid_friend"] = "已改名"
+        reader = self.native_reader(native)
+        try:
+            catalog = reader.session_catalog()
+            self.assertNotIn("不可导出", str(catalog))
+            self.assertEqual(catalog["sessions"][0]["display_name"], "已改名")
+            self.assertTrue(catalog["sessions"][0]["configured"])
+            self.assertFalse(catalog["sessions"][0]["binding_matches"])
+            with self.assertRaises(ReaderError):
+                reader.sessions()  # Normal ingestion must still reject the rename.
+            self.assertEqual(native.buffers, {})
+        finally:
+            reader.close()
+
+    def test_session_catalog_flags_duplicate_missing_and_excluded_ids(self):
+        native = FakeNative()
+        ids = ["wxid_friend", "wxid_duplicate", "wxid_missing", "wxid_owner", "group@chatroom", "gh_public"]
+        native.payload = json.dumps([{"username": cid} for cid in ids]).encode("utf-8")
+        native.names.update(wxid_duplicate="合成好友", wxid_owner="本人", gh_public="公众号",
+                            **{"group@chatroom": "合成群"})
+        reader = self.native_reader(native)
+        try:
+            rows = {s["conversation_id"]: s for s in reader.session_catalog()["sessions"]}
+            self.assertTrue(all(not row["can_bind"] for row in rows.values()))
+            self.assertEqual(rows["wxid_friend"]["reason"], "duplicate_display_name")
+            self.assertEqual(rows["wxid_missing"]["reason"], "missing_or_invalid_display_name")
+            self.assertEqual(rows["wxid_owner"]["reason"], "excluded_conversation_id")
+        finally:
+            reader.close()
 
     def test_shard_local_id_collisions_and_same_second_messages(self):
         self.bridge.poll()

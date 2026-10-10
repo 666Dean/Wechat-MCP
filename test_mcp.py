@@ -56,7 +56,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     tools = await session.list_tools()
                     self.assertEqual({t.name for t in tools.tools}, {
                         "wechat_status", "get_reply_contacts", "set_reply_contacts",
-                        "poll_messages", "reply_to_message", "dismiss_message"})
+                        "poll_messages", "reply_to_message", "dismiss_message", "list_reply_queue"})
                     status = await session.call_tool("wechat_status", {})
                     self.assertFalse(status.isError)
                     self.assertTrue(self.data(status)["permissions"]["mcp_contact_management"])
@@ -92,7 +92,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     tools = await session.list_tools()
                     self.assertEqual({t.name for t in tools.tools}, {
                         "wechat_status", "get_reply_contacts", "poll_messages",
-                        "reply_to_message", "dismiss_message"})
+                        "reply_to_message", "dismiss_message", "list_reply_queue"})
                     code, _, error = await self.cli("--set-contacts", "本机配置的备注")
                     self.assertEqual(code, 0, error)
                     config = json.loads(self.config_path.read_text(encoding="utf-8"))
@@ -174,7 +174,7 @@ server.main()
             async with stdio_client(parameters) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
-                    self.assertEqual(len((await session.list_tools()).tools), 5)
+                    self.assertEqual(len((await session.list_tools()).tools), 6)
                     status = self.data(await session.call_tool("wechat_status", {}))
                     self.assertTrue(status["connected"])
                     self.assertFalse(status["send_enabled"])
@@ -185,6 +185,34 @@ server.main()
                     self.assertFalse(preview.isError)
                     self.assertEqual(self.data(preview)["status"], "preview")
                     self.assertEqual(self.data(preview)["conversation_id"], "wxid_friend")
+                    queued = self.data(await session.call_tool("list_reply_queue", {"limit": 1}))
+                    self.assertEqual(queued["items"][0]["preview"], self.data(preview)["text"])
+                    self.assertEqual(queued["items"][0]["stage"], "preview_ready")
+                    self.assertFalse(queued["live_identity_verified"])
+                    self.assertEqual(self.data(await session.call_tool("poll_messages", {}))["events"], [])
+                    invalid = await session.call_tool("list_reply_queue", {"limit": 101})
+                    self.assertTrue(invalid.isError)
+
+    async def test_queue_tool_works_without_demo_or_installed_wechat_adapter(self):
+        parameters = StdioServerParameters(command=sys.executable,
+            args=[str(self.root / "server.py"), "--config", str(self.config_path)],
+            cwd=str(self.root), env={"PYTHONIOENCODING": "utf-8"})
+        async with asyncio.timeout(30):
+            async with stdio_client(parameters) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    result = await session.call_tool("list_reply_queue", {})
+                    self.assertFalse(result.isError)
+                    self.assertEqual(self.data(result)["items"], [])
+
+    async def test_session_cli_rejects_conflicting_or_non_database_modes(self):
+        for arguments in [("--list-database-sessions", "--demo"),
+                          ("--list-database-sessions", "--set-contacts", "禁止修改"),
+                          ("--list-database-sessions",)]:
+            before = self.config_path.read_bytes()
+            code, _, _ = await self.cli(*arguments)
+            self.assertNotEqual(code, 0)
+            self.assertEqual(self.config_path.read_bytes(), before)
 
     async def test_key_cli_rejects_noninteractive_input_without_creating_secret(self):
         code, _, error = await self.cli("--store-database-key")
