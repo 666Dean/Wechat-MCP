@@ -54,7 +54,7 @@ jobs:
       - name: Root helpers and native tests (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: python scripts/build_axr.py --toolchain "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+        run: python scripts/build_axr.py --config Release --toolchain "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
       - name: Native sandbox witness path (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -64,8 +64,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          "AXR_TEST_WORKER=$env:GITHUB_WORKSPACE/.local-private/build/AXR/Debug/axr-worker-probe.exe" >> $env:GITHUB_ENV
-          "AXR_TEST_WINDOWS_LAUNCHER=$env:GITHUB_WORKSPACE/.local-private/build/AXR/Debug/axr-sandbox.exe" >> $env:GITHUB_ENV
+          "AXR_TEST_WORKER=$env:GITHUB_WORKSPACE/.local-private/build/AXR/Release/axr-worker-probe.exe" >> $env:GITHUB_ENV
+          "AXR_TEST_WINDOWS_LAUNCHER=$env:GITHUB_WORKSPACE/.local-private/build/AXR/Release/axr-sandbox.exe" >> $env:GITHUB_ENV
           "AXR_TEST_RUNTIME_ROOTS=$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/debug/bin;$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin" >> $env:GITHUB_ENV
       - name: Security and legacy regressions
         run: python -m unittest discover -q

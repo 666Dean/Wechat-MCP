@@ -72,7 +72,9 @@ int wmain(int argc,wchar_t** argv){
         if(!job||!SetInformationJobObject(job,JobObjectExtendedLimitInformation,&limits,sizeof(limits))||!AssignProcessToJobObject(job,process.hProcess))throw std::runtime_error("sandbox_job_failed");
         ResumeThread(process.hThread);if(WaitForSingleObject(process.hProcess,60000)!=WAIT_OBJECT_0)throw std::runtime_error("sandbox_timeout");
         DWORD code=1;GetExitCodeProcess(process.hProcess,&code);CloseHandle(process.hThread);CloseHandle(process.hProcess);process={};CloseHandle(job);job=nullptr;
+        if(code)std::cout<<Json{{"error","strict_sandbox_failed"},{"stage","child_exit"},{"exit_code",code}}.dump()<<std::endl;
         return int(code);
-    }catch(...){if(process.hProcess){TerminateProcess(process.hProcess,125);WaitForSingleObject(process.hProcess,2000);CloseHandle(process.hThread);CloseHandle(process.hProcess);}if(job)CloseHandle(job);
-        std::cout<<Json{{"error","strict_sandbox_failed"}}.dump()<<std::endl;return 1;}
+    }catch(const std::exception& error){DWORD code=GetLastError();if(process.hProcess){TerminateProcess(process.hProcess,125);WaitForSingleObject(process.hProcess,2000);CloseHandle(process.hThread);CloseHandle(process.hProcess);}if(job)CloseHandle(job);
+        std::string stage=error.what();if(!stage.starts_with("sandbox_"))stage="native_operation_failed";
+        std::cout<<Json{{"error","strict_sandbox_failed"},{"stage",stage},{"system_error",code}}.dump()<<std::endl;return 1;}
 }
