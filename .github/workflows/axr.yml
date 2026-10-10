@@ -26,9 +26,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          vcpkg install openssl:x64-windows sqlite3:x64-windows nlohmann-json:x64-windows
+          vcpkg install openssl:x64-windows sqlite3:x64-windows nlohmann-json:x64-windows sqlcipher:x64-windows
           "CMAKE_ARGS=-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows" >> $env:GITHUB_ENV
           "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin" >> $env:GITHUB_PATH
+          "AXR_SQLCIPHER_LIBRARY=$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin/sqlcipher.dll" >> $env:GITHUB_ENV
       - name: Python and editable C++ SDK
         run: python -m pip install -r requirements.txt pybind11==3.0.1
       - name: Root helpers and native tests (macOS)

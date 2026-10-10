@@ -30,6 +30,8 @@ if(NOT TARGET SQLite3::SQLite3)
 endif()
 target_link_libraries(axr PUBLIC OpenSSL::Crypto SQLite3::SQLite3 nlohmann_json::nlohmann_json)
 if(WIN32)
+  target_compile_options(axr PUBLIC /utf-8)
+  target_compile_definitions(axr PUBLIC _WIN32_WINNT=0x0A00 WINVER=0x0A00)
   target_link_libraries(axr PRIVATE userenv advapi32)
   add_executable(axr-owner-auth native/windows/Owner.cpp)
   target_link_libraries(axr-owner-auth PRIVATE axr windowsapp user32)
@@ -42,7 +44,21 @@ if(AXR_PYTHON)
   find_package(pybind11 3 CONFIG REQUIRED)
   pybind11_add_module(_axr_native src/Python.cpp)
   target_link_libraries(_axr_native PRIVATE axr)
-  install(TARGETS _axr_native LIBRARY DESTINATION axr RUNTIME DESTINATION axr)
+  if(WIN32)
+    install(TARGETS _axr_native
+      RUNTIME_DEPENDENCIES
+        DIRECTORIES "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin" "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
+        PRE_EXCLUDE_REGEXES "api-ms-" "ext-ms-" "[Pp]ython[0-9]+.*[.]dll"
+        POST_EXCLUDE_REGEXES ".*[Ww]indows/.*"
+      LIBRARY DESTINATION axr RUNTIME DESTINATION axr)
+    foreach(dependency openssl sqlite3)
+      if(EXISTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${dependency}/copyright")
+        install(FILES "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${dependency}/copyright" DESTINATION axr/licenses RENAME "${dependency}.txt")
+      endif()
+    endforeach()
+  else()
+    install(TARGETS _axr_native LIBRARY DESTINATION axr RUNTIME DESTINATION axr)
+  endif()
 endif()
 if(APPLE)
   find_program(AXR_SWIFTC swiftc REQUIRED)
@@ -80,6 +96,11 @@ endif()
 if(APPLE)
   install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/axr-helper" DESTINATION ${AXR_HELPER_DEST})
 elseif(WIN32)
-  install(TARGETS axr-owner-auth axr-sandbox RUNTIME DESTINATION ${AXR_HELPER_DEST})
+  install(TARGETS axr-owner-auth axr-sandbox
+    RUNTIME_DEPENDENCIES
+      DIRECTORIES "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin" "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
+      PRE_EXCLUDE_REGEXES "api-ms-" "ext-ms-"
+      POST_EXCLUDE_REGEXES ".*[Ww]indows/.*"
+    RUNTIME DESTINATION ${AXR_HELPER_DEST})
 endif()
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
