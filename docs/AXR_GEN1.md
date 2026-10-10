@@ -39,7 +39,7 @@ WCDB 密钥：`axr-owner ... secret wcdb.test-account`，本地隐藏输入 32 �
 | 状态/会话元数据 | `wechat_status` / `wechat_find_conversations`，只列明确绑定范围 |
 | 检索/聚焦 | `wechat_read_context`，时间、sender、关键词、cursor、limit；返回 context handle，不外传正文 |
 | 内容披露 | `wechat_disclose_context` 提议精确 AET，主人另授模型目的地披露能力后 `axr_execute` 返回正文 |
-| 回复草稿 | `wechat_prepare_reply`，默认 `【自动回复 · AI 助理】`；主人签名策略可关闭展示，实际 agent 来源仍保留；来源从加密上下文派生，不能用空列表清洗来源 |
+| 回复草稿 | `wechat_prepare_reply`，默认 `【自动回复 · AI 助理】`；主人签名策略可关闭展示，实际 agent 来源仍保留；来源从加密上下文及已披露的加密 scope 元数据派生，不能用空列表或正文 TTL 清洗来源 |
 | 发送 | `wechat_propose_send` → 本地批准 → `axr_execute`；稳定账号及会话证据缺失即拒绝，WCDB 不直接发送 |
 | 事务管理 | `axr_job_status` / `axr_cancel` / `axr_execute(dry_run=true)`；Unknown 永不自动重发 |
 | 工作区 | `axr_workspace_write` 提议受限文本写入，需 workspace authority |
@@ -78,7 +78,7 @@ Mac layout 复用 MIT 开源 wechat-mcp 的标识与标题规则，保留完整�
 ## 本轮证据与未关闭验收
 
 * 原项目 91 个回归测试：通过，1 个原有平台跳过；已迁移 MCP 2.3.0 snake_case API。
-* 新增 46 个安全/事务/worker/集成测试：本机 45 项执行通过，Windows AppContainer 项留给 CI，包含真实 SQLCipher 加密合成库、WAL、拒写/错钥，
+* 新增 48 个安全/事务/worker/集成测试：本机 47 项执行通过，Windows AppContainer 项留给 CI，包含真实 SQLCipher 加密合成库、WAL、拒写/错钥，
   原生 helper 提交前撤权/过期/摘要及来源额度检查，以及监听正文/模型输入预算。
 * C++20 Core / Swift helper：本机编译及 CTest 通过；SDK 独立安装、外部 CMake consumer 构建通过。
 * Mac 沙箱：允许指定 worker/只读 runtime，拒绝白名单外文件；监听中的 loopback socket 在沙箱外可连接、沙箱内拒绝。

@@ -134,7 +134,8 @@ class Service:
         # Conservative session taint: callers cannot launder read data by omitting context IDs.
         active=self.journal.db.execute("SELECT id,resource FROM contexts WHERE principal=? AND expires>? AND policy_version=?",
             (self.principal,self.journal.clock(),self.guard.version)).fetchall()
-        chosen=set(context_ids);sources={}
+        chosen=set(context_ids)
+        sources={(p.resource.key,p.reference):p for p in self.journal.disclosure_taint(self.principal)}
         for row in active:
             for cid in self.bindings:
                 r=self.resource(cid)
@@ -157,6 +158,9 @@ class Service:
     def _disclose(self,action,check,epoch):
         check();data=self.journal.context(action.payload["context_id"],self.principal,action.resource,self.guard.version)
         if digest(data)!=action.payload["context_digest"]:raise AXRError("context_intent_digest_changed")
+        # Persist scope before transmitting, including uncertain/failed calls.
+        for message in data["messages"]:
+            self.journal.taint_disclosure(self.principal,action.resource,message["data_class"])
         if action.payload.get("runner"):
             from .runner import invoke
             data=invoke(self,action,check)

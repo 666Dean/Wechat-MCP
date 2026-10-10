@@ -6,7 +6,7 @@ import sqlite3
 import time
 import uuid
 from dataclasses import asdict
-from .aet import AXRError, Action, TERMINAL, TRANSITIONS, canonical, digest
+from .aet import AXRError, Action, Resource, Provenance, TERMINAL, TRANSITIONS, canonical, digest
 from . import _axr_native as native
 
 
@@ -34,6 +34,8 @@ class Journal:
             BEGIN SELECT RAISE(ABORT,'audit_append_only'); END;
           CREATE TABLE IF NOT EXISTS results(id TEXT PRIMARY KEY,principal TEXT,payload BLOB,
             expires REAL,policy_version INTEGER);
+          CREATE TABLE IF NOT EXISTS disclosed_scopes(principal TEXT,resource TEXT,data_class TEXT,
+            payload BLOB,PRIMARY KEY(principal,resource,data_class));
         """)
 
     def propose(self, action, ttl=300):
@@ -125,6 +127,25 @@ class Journal:
         if row is None or row["expires"] <= self.clock() or row["policy_version"] != policy_version:
             raise AXRError("context_expired_revoked_or_out_of_scope")
         return self.vault.open(row["payload"], cid)
+
+    def taint_disclosure(self,principal,resource,data_class):
+        # Retain a coarse encrypted provenance scope, never chat content/history.
+        # A model may remember disclosed data after our body/context TTL expires.
+        binding="taint:"+digest([principal,resource.key,data_class])
+        source=Provenance(resource,"disclosed-scope:"+digest([resource.key,data_class]),data_class)
+        self.db.execute("INSERT OR IGNORE INTO disclosed_scopes VALUES(?,?,?,?)",
+            (principal,resource.key,data_class,self.vault.seal(asdict(source),binding)))
+
+    def disclosure_taint(self,principal):
+        sources=[]
+        for row in self.db.execute("SELECT resource,data_class,payload FROM disclosed_scopes WHERE principal=?",(principal,)):
+            binding="taint:"+digest([principal,row["resource"],row["data_class"]])
+            data=self.vault.open(row["payload"],binding)
+            source=Provenance(Resource(**data["resource"]),data["reference"],data["data_class"])
+            if source.resource.key!=row["resource"] or source.data_class!=row["data_class"]:
+                raise AXRError("disclosure_provenance_integrity_failed")
+            sources.append(source)
+        return sources
 
     def seen(self, resource, reference):
         return self.db.execute("INSERT OR IGNORE INTO events VALUES(?,?,?)",
