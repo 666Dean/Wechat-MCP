@@ -19,6 +19,8 @@
 
 完整拆分、证据和验证步骤见 [docs/STATUS.md](docs/STATUS.md)。
 认证组件、请求流程及凭据/token 处理见 [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md)。
+数据库读取的参考分析与待实现接入设计见 [docs/ECHOTRACE_REFERENCE.md](docs/ECHOTRACE_REFERENCE.md)。
+当前服务尚未接入该数据库方案。
 已知风险涉及误发、漏收及本地聊天文本留存；模拟测试通过不能证明实机可用。
 
 ## 工作方式
