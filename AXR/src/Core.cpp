@@ -89,7 +89,7 @@ std::string Decrypt(std::string_view key,std::string_view data,std::string_view 
 }
 void ValidateAction(const Json& a) {
     if(!a.is_object() || a.dump().size()>MaximumFrameBytes/2 || !a.at("payload").is_object()) Fail("invalid_action");
-    for(auto k:{"principal","operation","purpose","destination","workflow"}) Identity(a.at(k));
+    for(auto k:{"principal","operation","purpose","destination","workflow","execution_id"}) Identity(a.at(k));
     for(auto k:{"platform","account_id","conversation_id"}) Identity(a.at("resource").at(k));
     for(const auto& source:a.at("sources")) {
         if(source.at("trust")!="untrusted-external") Fail("external_data_cannot_be_trusted");

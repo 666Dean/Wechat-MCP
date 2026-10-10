@@ -3,6 +3,7 @@
 import hashlib
 import json
 import math
+import uuid
 from dataclasses import asdict, dataclass, field
 
 PROTOCOL_VERSION = 1
@@ -76,9 +77,10 @@ class Action:
     sources: tuple[Provenance, ...] = ()
     destination: str = "local"
     workflow: str = "manual"
+    execution_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def __post_init__(self):
-        for v in (self.principal, self.operation, self.purpose, self.destination, self.workflow):
+        for v in (self.principal, self.operation, self.purpose, self.destination, self.workflow, self.execution_id):
             identifier(v)
         if not isinstance(self.payload, dict) or len(canonical(asdict(self))) > MAX_FRAME // 2:
             raise AXRError("invalid_payload")

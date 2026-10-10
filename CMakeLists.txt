@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 project(WeChatAXRIntegration LANGUAGES CXX)
+include(CTest)
 add_subdirectory(AXR)
 if(WIN32)
   add_executable(wechat-uia adapters/windows/WeChatUIA.cpp)

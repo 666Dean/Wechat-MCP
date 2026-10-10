@@ -17,7 +17,7 @@ int main() {
     const auto dir=std::filesystem::temp_directory_path()/std::filesystem::u8path("AXR-验证-"+RandomId());std::filesystem::create_directory(dir);
     Json a{{"principal","agent:test"},{"resource",{{"platform","test"},{"account_id","a"},{"conversation_id","c"}}},
         {"operation","messages.read"},{"purpose","test"},{"payload",Json::object()},
-        {"sources",Json::array()},{"destination","local"},{"workflow","manual"}};
+        {"sources",Json::array()},{"destination","local"},{"workflow","manual"},{"execution_id",RandomId()}};
     {
         Guard guard(dir/"guard.db",key);
         Json b{{"principal","agent:test"},{"resource",a["resource"]},{"operations",Json::array({"messages.read"})},
