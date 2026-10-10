@@ -12,11 +12,11 @@ PYBIND11_MODULE(_axr_native,m) {
     m.def("valid_transition",&ValidTransition);
     m.def("encrypt",[](py::bytes key,py::bytes data,const std::string& binding){return py::bytes(Encrypt(std::string(key),std::string(data),binding));});
     m.def("decrypt",[](py::bytes key,py::bytes data,const std::string& binding){return py::bytes(Decrypt(std::string(key),std::string(data),binding));});
-    m.def("durable_write",[](const std::string& path,py::bytes data){return DurableWrite(path,std::string(data));});
+    m.def("durable_write",[](const std::string& path,py::bytes data){return DurableWrite(std::filesystem::u8path(path),std::string(data));});
     m.def("commit_record",[](const std::string& previous,const std::string& snapshot,const std::string& kind,double at){return CommitRecord(Json::parse(previous),Json::parse(snapshot),kind,at).dump();});
     m.def("verify_record",[](const std::string& record,const std::string& previous){return VerifyRecord(Json::parse(record),Json::parse(previous));});
     py::class_<Guard>(m,"Guard")
-      .def(py::init([](const std::string& path,py::bytes key){return std::make_unique<Guard>(path,std::string(key));}))
+      .def(py::init([](const std::string& path,py::bytes key){return std::make_unique<Guard>(std::filesystem::u8path(path),std::string(key));}))
       .def_property_readonly("version",&Guard::Version)
       .def("issue_owner",[](Guard& g,const std::string& b,double now){return g.IssueOwner(Json::parse(b),now);})
       .def("revoke_owner",&Guard::RevokeOwner)
@@ -28,6 +28,6 @@ PYBIND11_MODULE(_axr_native,m) {
       .value("Running",WorkerProcessState::Running).value("Canceling",WorkerProcessState::Canceling)
       .value("Exited",WorkerProcessState::Exited).value("Crashed",WorkerProcessState::Crashed).value("TimedOut",WorkerProcessState::TimedOut);
     py::class_<WorkerSupervisor>(m,"WorkerSupervisor").def(py::init<>())
-      .def("start",[](WorkerSupervisor& w,const std::string& exe,const std::vector<std::string>& args,unsigned timeout){return w.Start(exe,args,timeout);})
+      .def("start",[](WorkerSupervisor& w,const std::string& exe,const std::vector<std::string>& args,unsigned timeout){return w.Start(std::filesystem::u8path(exe),args,timeout);})
       .def("poll",&WorkerSupervisor::Poll).def("stop",&WorkerSupervisor::Stop).def_property_readonly("exit_code",&WorkerSupervisor::ExitCode);
 }

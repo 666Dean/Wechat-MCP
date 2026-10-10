@@ -8,7 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 from axr.aet import AXRError,Action,Resource,Provenance,canonical,digest
 from axr.policy import OwnerStore
-from axr.host import Lease
+from axr.host import Lease,Supervisor
 from axr.runtime import Runtime
 from axr.workspace import Workspace
 from axr.admission import Budget,Admission
@@ -50,6 +50,7 @@ class Service:
             self.runtime=Runtime(self.guard,self.journal,lease_root,handlers)
             self.budget=Budget(self.journal);self.admission=Admission(self.guard,self.journal,self.budget)
             self.stop_event=threading.Event();self.listener_thread=None
+            self.runner_supervisor=Supervisor(timeout=min(60,self.config.get("runner",{}).get("timeout",30)))
             self.baselines=set();self.cursors={};self.pending_drafts=[]
             self.active_policy_version=self.guard.version
         except BaseException:
@@ -66,7 +67,7 @@ class Service:
 
     def status(self):
         return {"axr":True,"protocol":1,"platform":self.adapter.status(),
-            "policy_version":self.guard.version,"listener":self.config.get("listener",{}),
+            "policy_version":self.guard.version,"listener":{k:self.config.get("listener",{}).get(k,False) for k in ("listen","wake_agent","auto_execute")},
             "metrics":self.journal.metrics(),"audit_valid":self.journal.verify_audit(),
             "approval":"local_owner_os_authentication","unknown_retry":False,
             "restart_required":digest(self.store.config())!=self.initial_policy_digest}
@@ -268,8 +269,13 @@ class Service:
 
     def close(self):
         self.stop_event.set()
-        if self.listener_thread:self.listener_thread.join(timeout=12)
-        self.adapter.close();self.lifetime.__exit__();self.store.close()
+        self.runner_supervisor.cancel()
+        if hasattr(self.adapter,"cancel"):self.adapter.cancel()
+        if self.listener_thread:
+            self.listener_thread.join(timeout=12)
+            if self.listener_thread.is_alive():raise AXRError("listener_shutdown_timeout_resources_retained")
+        with self.runtime.lock:
+            self.adapter.close();self.lifetime.__exit__();self.store.close()
 
 
 def register(mcp,service):

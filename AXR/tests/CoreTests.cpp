@@ -13,7 +13,7 @@ int main() {
     assert(ValidTransition("Executing","Unknown"));assert(!ValidTransition("Unknown","Ready"));
     Json record=CommitRecord(Json::object(),{{"state","Prepared"}},"intent",Now());
     assert(VerifyRecord(record,Json::object()));record["job"]["state"]="Completed";assert(!VerifyRecord(record,Json::object()));
-    const auto dir=std::filesystem::temp_directory_path()/RandomId();std::filesystem::create_directory(dir);
+    const auto dir=std::filesystem::temp_directory_path()/std::filesystem::u8path("AXR-验证-"+RandomId());std::filesystem::create_directory(dir);
     Json a{{"principal","agent:test"},{"resource",{{"platform","test"},{"account_id","a"},{"conversation_id","c"}}},
         {"operation","messages.read"},{"purpose","test"},{"payload",Json::object()},
         {"sources",Json::array()},{"destination","local"},{"workflow","manual"}};
@@ -31,6 +31,16 @@ int main() {
     std::this_thread::sleep_for(std::chrono::milliseconds(60));assert(worker.Poll()==WorkerProcessState::TimedOut);
     assert(worker.Start("/usr/bin/true",{},1000));std::this_thread::sleep_for(std::chrono::milliseconds(30));
     assert(worker.Poll()==WorkerProcessState::Exited);
+#else
+    const char* systemRoot=std::getenv("SystemRoot");assert(systemRoot);
+    auto command=std::filesystem::u8path(systemRoot)/"System32"/"cmd.exe";
+    WorkerSupervisor worker;assert(worker.Start(command,{"/d","/c","exit 0"},5000));
+    auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(3);
+    while(worker.Poll()==WorkerProcessState::Running&&std::chrono::steady_clock::now()<deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    assert(worker.Poll()==WorkerProcessState::Exited);
+    assert(worker.Start(command,{"/d","/c","ping -n 5 127.0.0.1 > nul"},30));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));assert(worker.Poll()==WorkerProcessState::TimedOut);
 #endif
     std::filesystem::remove_all(dir);std::cout<<"native crypto, Guard, durability, state and worker gates passed\n";
 }

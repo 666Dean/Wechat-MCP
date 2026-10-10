@@ -90,5 +90,8 @@ class UIAdapter:
         return {"epoch":epoch,"verified":result.get("verified") is True,
                 "evidence_digest":digest(result)}
 
-    def close(self):
+    def cancel(self):
         self.supervisor.cancel()
+
+    def close(self):
+        self.cancel()
