@@ -46,6 +46,7 @@
 - Windows Supervisor 保留系统用户 profile 路径环境供 AppContainer 初始化，不传密钥或服务配置；原生失败仅输出白名单 stage 与整数错误码，继续拒绝沙箱降级。
 - Windows worker/JobObject 超时及输出上限回归已通过；CI 使用与 wheel 一致的 Release helper/probe，避免依赖不可分发的 Debug CRT；沙箱保持拒绝降级，新增纯元数据 stage/exit 诊断。
 - Windows CI 已验证 profile 环境修复后的 AppContainer 受管启动、staged 文件读取与私有文件拒绝。loopback 探针的阻塞 connect 在 WFP 丢包时超时，改为非阻塞 select + SO_ERROR，最多 1.5 秒；仍要求同一端口的沙箱外控制连接成功，不能用 worker 超时当作网络隔离通过。
+- CI run 38080631671（cf7d64a）：macOS / Windows 原生 SDK、UIA/Hello/AppContainer 编译、CTest、141 项回归均通过（各 2 项平台跳过）。Windows AppContainer 实际合成进程验证受管启动、staged 文件读取、私有文件及 loopback 隔离；Hello 人类认证和微信 UIA 仍待设备验收。更新 README/STATUS/SDK 文档与 PR 证据，保留 Draft。
 - PR 后续修正：监听分页同样进入 AET/账号租约/额度与提交前复核；本地基线 context 在处理后删除，仅 admitted batch 留待精确披露审阅。保留末页高水位便于增量读取，非文本媒体正文不取出 SQLite。
 - 新建纯 legacy venv 安装 requirements.txt 后 93 项发现结果通过（3 项跳过，含 2 个可选 AXR 测试模块），证明 opt-in 路径无原生编译依赖。
 - PR 后续修正：数据库 interrupt/close 生命周期加锁；所有者可显式关闭展示前缀，但密封意图中的 agent 来源仍保留。Win dependency binary cache 加入 CI。

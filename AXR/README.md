@@ -31,9 +31,9 @@ using namespace Stellaria::AXR;
 // OS secret store supplies the 32-byte key. No agent-facing capability issuer.
 Guard guard(ownerControlledDatabase, osKey);
 // sealedAction includes a unique execution_id for this proposal.
-auto reference = guard.Check(sealedAction, Now());
+guard.Check(sealedAction, Now());
 auto reservation = guard.Consume(sealedAction, Now());
-guard.Revalidate(sealedAction, reference, reservation[1], Now());
+guard.Revalidate(sealedAction, reservation[0], reservation[1], Now());
 // Revalidate again immediately before the registered application commit.
 ```
 
@@ -55,6 +55,8 @@ macOS 使用 LocalAuthentication，用户须完成系统身份验证。
 TTL、次数；`--class personal` 可明确允许本地个人数据草稿，敏感分类仍须精确审批。
 `approve JOB --principal PRINCIPAL` 显示精确意图并调用系统认证，发放
 最长 240 秒、一次使用的能力；正文、目标或来源改变后旧能力无效。
+execution_id 也在密封意图内；取消后旧审批不能授权同内容的新任务。
+Journal 的持久 execution claim 在正文 TTL/重启后仍拒绝原 ID 重放。
 `revoke GRANT` 提升全局策略版本，保守失效全部旧能力及上下文；需重新授权所需能力。
 这些命令不注册为 MCP 工具。`dashboard` 显示实际计数与审计验证结果。
 
@@ -78,7 +80,8 @@ TTL、次数；`--class personal` 可明确允许本地个人数据草稿，敏�
   微信外部提交与撤权之间没有共同原子事务；仍可能产生 Unknown，不能承诺 exactly-once。
 * macOS worker 在 deny-default sandbox-exec 下运行；Windows native AppContainer 不发放
   网络 capability，只读 owner-staged runtime，并在恢复线程前加入 JobObject。
-  沙箱失败时拒绝启动。Windows AppContainer 和 Hello 尚待运行验证。
+  沙箱失败时拒绝启动。Windows CI 合成进程已验证受管启动、staged 文件读取、私有文件
+  及 loopback 隔离；这不代表微信实机成功。Hello 的所有者认证全过程尚待设备验证。
 * Python Supervisor 对 Windows helper 在 Popen 后绑定 JobObject；它是可信 broker 辅助进程，
   不能把它当作不可信 agent 的安全边界。Agent 必须走原生 AppContainer launcher。
 * Workspace 只允许有限大小的 md/txt/csv/json 相对路径，拒绝 symlink，原子写入并加密备份；
