@@ -5,6 +5,9 @@ ABI 对照 [EchoTrace v3.0.2 FFI 源码](https://github.com/ycccccccy/echotrace/
 与 [原生接口文档](https://github.com/ycccccccy/echotrace/blob/98280f0d0d7b764b2f2027fc4d103024e8ed30fd/docs/wcdb_realtime.md)。
 不打包 DLL、不自动搜索账号、不提供自动提取现有软件密钥或发送接口。
 
+已对替代开源路线进行静态源码评估，见 [OPEN_SOURCE_READERS.md](OPEN_SOURCE_READERS.md)。
+推荐优先验证密钥模式与校验逻辑；候选尚未安装、运行或接入，本页配置仍只适用于原生 DLL 后端。
+
 ## 本机配置
 
 需要 Windows x64 Python，以及使用者自行提供的兼容 DLL、配套依赖和数据库密钥。

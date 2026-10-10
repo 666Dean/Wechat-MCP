@@ -22,6 +22,7 @@
 认证组件、请求流程及凭据/token 处理见 [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md)。
 数据库参考分析见 [docs/ECHOTRACE_REFERENCE.md](docs/ECHOTRACE_REFERENCE.md)；
 新增后端的配置、增量策略和限制见 [docs/DATABASE_READER.md](docs/DATABASE_READER.md)。
+绕开原生消息接口故障的候选与验证路线见 [开源读取评估](docs/OPEN_SOURCE_READERS.md)；尚未接入或实测候选后端。
 已知风险涉及误发、漏收及本地聊天文本留存；模拟测试通过不能证明实机可用。
 
 ## 工作方式
