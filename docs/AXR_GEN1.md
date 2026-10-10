@@ -39,7 +39,7 @@ WCDB 密钥：`axr-owner ... secret wcdb.test-account`，本地隐藏输入 32 �
 | 状态/会话元数据 | `wechat_status` / `wechat_find_conversations`，只列明确绑定范围 |
 | 检索/聚焦 | `wechat_read_context`，时间、sender、关键词、cursor、limit；返回 context handle，不外传正文 |
 | 内容披露 | `wechat_disclose_context` 提议精确 AET，主人另授模型目的地披露能力后 `axr_execute` 返回正文 |
-| 回复草稿 | `wechat_prepare_reply`，默认 `【自动回复 · AI 助理】`，来源从加密上下文派生，不能用空列表清洗来源 |
+| 回复草稿 | `wechat_prepare_reply`，默认 `【自动回复 · AI 助理】`；主人签名策略可关闭展示，实际 agent 来源仍保留；来源从加密上下文派生，不能用空列表清洗来源 |
 | 发送 | `wechat_propose_send` → 本地批准 → `axr_execute`；稳定账号及会话证据缺失即拒绝，WCDB 不直接发送 |
 | 事务管理 | `axr_job_status` / `axr_cancel` / `axr_execute(dry_run=true)`；Unknown 永不自动重发 |
 | 工作区 | `axr_workspace_write` 提议受限文本写入，需 workspace authority |

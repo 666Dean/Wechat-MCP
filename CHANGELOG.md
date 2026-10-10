@@ -30,6 +30,7 @@
 - C++ Core/Swift 编译与 CTest、SDK 安装、独立 CMake consumer 通过；Mac 实际 sandbox 拒绝范围外文件与 loopback 连接。
 - Win CI 随 PR 运行；本轮按主人要求不做 Windows 微信实机测试。
 
+- PR 后续修正：数据库 interrupt/close 生命周期加锁；所有者可显式关闭展示前缀，但密封意图中的 agent 来源仍保留。Win dependency binary cache 加入 CI。
 - PR 后续修正：每页完成后释放原生数据库连接，避免 Windows 持久句柄阻止微信分库轮换/替换；保留 generation/salt 变化检测与只读 pager。
 - Windows CI 实际发现 UIA SetValue 的 BSTR 类型错误，改为 SysAllocStringLen / SysFreeString；原生 SDK 改成显式 opt-in requirements.axr.txt / setup.ps1 -AXR，保留只装 Python 的 legacy 安装路径，未安装 SDK 时仅跳过其可选测试，原生加载错误仍失败。
 - PR 后续修正：Win 构建显式 UTF-8 / Windows API 版本；wheel/helper 安装收集运行时 DLL 并保留依赖 copyright，避免 Python 3.8+ DLL 搜索规则导致 native import 失败；Windows CI 同样加载 SQLCipher 做加密合成库验证。
