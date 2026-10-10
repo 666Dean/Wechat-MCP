@@ -25,11 +25,17 @@
 
 - MCP 迁移至官方 Python SDK 2.3.0 / MCPServer，更新 snake_case 测试 API；保留旧模式行为。
 - 修复事务插入列数、Swift throwing predicate、worker runtime ancestor stat 权限等开发期问题；发送不明/旧 epoch/崩溃恢复均拒绝重复执行。
-- 本机 128 项 unittest 通过（1 项原有平台跳过）：原有 91 项 + 37 项安全、合成数据库、原生沙箱与实际 stdio AET 测试。
+- 本机 136 项 unittest 通过（2 项平台跳过）：原有 91 项 + 45 项安全、合成数据库、原生沙箱与实际 stdio AET 测试。
 - 真实 SQLCipher 库对合成加密 DB/WAL 验证 committed WAL 可见、原始密钥拒错、只读拒写；这不等同本机微信正文验证。
 - C++ Core/Swift 编译与 CTest、SDK 安装、独立 CMake consumer 通过；Mac 实际 sandbox 拒绝范围外文件与 loopback 连接。
+- Win CI 加入 AppContainer 真实进程合成 witness：staged 文件读取、私有文件拒绝与 loopback 拒绝；这是 CI 验证，不是微信实机测试。
 - Win CI 随 PR 运行；本轮按主人要求不做 Windows 微信实机测试。
 
+- PR 后续修正：可信 Swift/UIA helper 在实际读取/平台提交之前复核 broker 的 grant 摘要、策略版本、墙钟 TTL 和来源额度；私有管道不传 issuer key，不把 metadata proof 声称为公开认证协议。增加原生/Python 撤权、过期、改摘要和来源额度测试。
+- Windows CI 实际发现 Hello interop 的 get_abi 返回 void* / HSTRING 类型错误，按官方 ABI 显式转换；dependency cache 在依赖构建后保存，编译失败不再丢失已构建依赖。
+- PR 后续修正：监听每条 4000 字符、pending 50 条，runner 总正文 24000 字符；预算拒绝负数/非整数/无效窗口；owner grant 可明确授权 personal 本地草稿分类。独立 SDK 安装包含 AGPL/NOTICE/源复用和第三方许可。
+- PR 后续修正：监听分页同样进入 AET/账号租约/额度与提交前复核；本地基线 context 在处理后删除，仅 admitted batch 留待精确披露审阅。保留末页高水位便于增量读取，非文本媒体正文不取出 SQLite。
+- 新建纯 legacy venv 安装 requirements.txt 后 93 项发现结果通过（3 项跳过，含 2 个可选 AXR 测试模块），证明 opt-in 路径无原生编译依赖。
 - PR 后续修正：数据库 interrupt/close 生命周期加锁；所有者可显式关闭展示前缀，但密封意图中的 agent 来源仍保留。Win dependency binary cache 加入 CI。
 - PR 后续修正：每页完成后释放原生数据库连接，避免 Windows 持久句柄阻止微信分库轮换/替换；保留 generation/salt 变化检测与只读 pager。
 - Windows CI 实际发现 UIA SetValue 的 BSTR 类型错误，改为 SysAllocStringLen / SysFreeString；原生 SDK 改成显式 opt-in requirements.axr.txt / setup.ps1 -AXR，保留只装 Python 的 legacy 安装路径，未安装 SDK 时仅跳过其可选测试，原生加载错误仍失败。

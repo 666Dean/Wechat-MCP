@@ -65,9 +65,11 @@ endif()
 if(APPLE)
   find_program(AXR_SWIFTC swiftc REQUIRED)
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/axr-helper"
-    COMMAND "${AXR_SWIFTC}" "${CMAKE_CURRENT_SOURCE_DIR}/native/macos/AXRHelper.swift"
+    COMMAND "${AXR_SWIFTC}" -I "${CMAKE_CURRENT_SOURCE_DIR}/native/bridge"
+      "${CMAKE_CURRENT_SOURCE_DIR}/native/macos/AXRHelper.swift"
+      -Xlinker "$<TARGET_FILE:axr>" -Xlinker "$<TARGET_FILE:OpenSSL::Crypto>" -lsqlite3 -lc++
       -o "${CMAKE_CURRENT_BINARY_DIR}/axr-helper"
-    DEPENDS native/macos/AXRHelper.swift VERBATIM)
+    DEPENDS axr native/macos/AXRHelper.swift native/bridge/module.modulemap include/axr/Commit.h VERBATIM)
   add_custom_target(axr-helper-build ALL DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/axr-helper")
 endif()
 if(BUILD_TESTING)
@@ -106,3 +108,6 @@ elseif(WIN32)
     RUNTIME DESTINATION ${AXR_HELPER_DEST})
 endif()
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+install(FILES LICENSE NOTICE REUSE.json THIRD_PARTY_NOTICES.md DESTINATION ${CMAKE_INSTALL_DATADIR}/StellariaAXR)
+install(DIRECTORY licenses/ DESTINATION ${CMAKE_INSTALL_DATADIR}/StellariaAXR/licenses)

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "axr/Core.hpp"
+#include "axr/Commit.h"
 #include <cassert>
 #include <thread>
 #include <iostream>
@@ -22,8 +23,13 @@ int main() {
         Json b{{"principal","agent:test"},{"resource",a["resource"]},{"operations",Json::array({"messages.read"})},
             {"purpose","test"},{"expires_at",Now()+60},{"max_uses",1},{"destinations",Json::array()},
             {"classes",Json::array({"workspace-normal"})},{"intent",nullptr},{"workflow","manual"}};
-        guard.IssueOwner(b,Now());guard.Check(a,Now());guard.Consume(a,Now());denied=false;
+        guard.IssueOwner(b,Now());guard.Check(a,Now());auto reservation=guard.Consume(a,Now());denied=false;
         try{guard.Check(a,Now());}catch(...){denied=true;}assert(denied);
+        auto proof=guard.ExecutionProof(a,reservation[0],reservation[1],Now()).dump();
+        auto path=(dir/"guard.db").u8string();
+        assert(axr_check_commit(reinterpret_cast<const char*>(path.c_str()),proof.c_str())==1);
+        guard.RevokeOwner(reservation[0]);
+        assert(axr_check_commit(reinterpret_cast<const char*>(path.c_str()),proof.c_str())==0);
     }
     assert(DurableWrite(dir/"record.json",record.dump()));
 #if !defined(_WIN32)

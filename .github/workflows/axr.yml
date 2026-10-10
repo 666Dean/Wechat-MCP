@@ -27,7 +27,8 @@ jobs:
           echo "AXR_SQLCIPHER_LIBRARY=$(brew --prefix sqlcipher)/lib/libsqlcipher.dylib" >> "$GITHUB_ENV"
       - name: Cache Windows dependency builds
         if: runner.os == 'Windows'
-        uses: actions/cache@v4
+        id: windows-cache
+        uses: actions/cache/restore@v4
         with:
           path: ~/AppData/Local/vcpkg/archives
           key: axr-vcpkg-windows-20261011
@@ -39,6 +40,12 @@ jobs:
           "CMAKE_ARGS=-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows" >> $env:GITHUB_ENV
           "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin" >> $env:GITHUB_PATH
           "AXR_SQLCIPHER_LIBRARY=$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin/sqlcipher.dll" >> $env:GITHUB_ENV
+      - name: Save completed Windows dependency builds
+        if: runner.os == 'Windows' && steps.windows-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/AppData/Local/vcpkg/archives
+          key: axr-vcpkg-windows-20261011
       - name: Python and editable C++ SDK
         run: python -m pip install -r requirements.axr.txt pybind11==3.0.1
       - name: Root helpers and native tests (macOS)
@@ -53,6 +60,13 @@ jobs:
         run: |
           echo "AXR_TEST_WORKER=$PWD/.local-private/build/AXR/axr-worker-probe" >> "$GITHUB_ENV"
           echo "AXR_TEST_RUNTIME_ROOTS=$OPENSSL_ROOT_DIR/lib" >> "$GITHUB_ENV"
+      - name: Native sandbox witness paths (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "AXR_TEST_WORKER=$env:GITHUB_WORKSPACE/.local-private/build/AXR/Debug/axr-worker-probe.exe" >> $env:GITHUB_ENV
+          "AXR_TEST_WINDOWS_LAUNCHER=$env:GITHUB_WORKSPACE/.local-private/build/AXR/Debug/axr-sandbox.exe" >> $env:GITHUB_ENV
+          "AXR_TEST_RUNTIME_ROOTS=$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/debug/bin;$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin" >> $env:GITHUB_ENV
       - name: Security and legacy regressions
         run: python -m unittest discover -q
       - name: Confirm private files are absent

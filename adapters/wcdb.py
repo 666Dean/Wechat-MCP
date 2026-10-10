@@ -219,7 +219,7 @@ class DatabaseAdapter:
                     if len(self_rows)!=1:raise AXRError("account_identity_not_present_in_shard")
                 boundary=after.get(generation,[-1,-1]) if after else [-1,-1]
                 sql=(f'SELECT {c["id"]} AS local_id,{c["server"]} AS server_id,{c["time"]} AS created,'
-                     f'{c["type"]} AS type,{c["body"]} AS body,{c["direction"]} AS direction,'
+                     f'{c["type"]} AS type,CASE WHEN {c["type"]}=1 THEN {c["body"]} ELSE NULL END AS body,{c["direction"]} AS direction,'
                      f'{compression} AS compression,{sender_column} AS sender FROM "{table}" '
                      f'WHERE {c["time"]}>=? AND {c["time"]}<=? AND ({c["time"]},{c["id"]})>(?,?) '
                      f'ORDER BY {c["time"]},{c["id"]} LIMIT ?')

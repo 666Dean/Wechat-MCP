@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "axr/Core.hpp"
+#include "axr/Commit.h"
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 namespace py=pybind11;
@@ -9,6 +10,7 @@ PYBIND11_MODULE(_axr_native,m) {
     m.def("digest",&Digest);
     m.def("hmac",[](py::bytes key,const std::string& data){return Hmac(std::string(key),data);});
     m.def("intent_seal",[](const std::string& a){return IntentSeal(Json::parse(a));});
+    m.def("check_commit",[](const std::string& path,const std::string& proof){return axr_check_commit(path.c_str(),proof.c_str())==1;});
     m.def("valid_transition",&ValidTransition);
     m.def("encrypt",[](py::bytes key,py::bytes data,const std::string& binding){return py::bytes(Encrypt(std::string(key),std::string(data),binding));});
     m.def("decrypt",[](py::bytes key,py::bytes data,const std::string& binding){return py::bytes(Decrypt(std::string(key),std::string(data),binding));});
@@ -22,6 +24,7 @@ PYBIND11_MODULE(_axr_native,m) {
       .def("revoke_owner",&Guard::RevokeOwner)
       .def("check",[](const Guard& g,const std::string& a,double now){return g.Check(Json::parse(a),now);})
       .def("consume",[](Guard& g,const std::string& a,double now){return g.Consume(Json::parse(a),now).dump();})
+      .def("execution_proof",[](const Guard& g,const std::string& a,const std::string& id,unsigned v,double now){return g.ExecutionProof(Json::parse(a),id,v,now).dump();})
       .def("revalidate",[](const Guard& g,const std::string& a,const std::string& id,unsigned v,double now){g.Revalidate(Json::parse(a),id,v,now);});
     py::enum_<WorkerProcessState>(m,"WorkerProcessState")
       .value("Stopped",WorkerProcessState::Stopped).value("Starting",WorkerProcessState::Starting)

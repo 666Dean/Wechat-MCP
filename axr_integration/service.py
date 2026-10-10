@@ -102,7 +102,9 @@ class Service:
 
     def _read(self,action,check,epoch):
         check()
-        page=self.adapter.search(action.resource.conversation_id,**action.payload)
+        options=dict(action.payload)
+        if self.config["mode"]=="ui":options["guard_context"]=check.commit_proof()
+        page=self.adapter.search(action.resource.conversation_id,**options)
         check() # A changed policy cannot disclose or persist a newly fetched page.
         self.journal.meter("pages_read")
         # Context cost cap independent of requested record count. No global chat cache.
@@ -120,12 +122,12 @@ class Service:
                  "budget_truncated":len(messages)<len([m for m in page["messages"] if isinstance(m.get("text"),str)]) or any(m["truncated"] for m in messages)}
         cid=self.journal.remember(self.principal,action.resource,context,self.guard.version,ttl=900)
         next_cursor=None
-        if page.get("cursor") and page.get("has_more"):
+        if page.get("cursor"):
             next_cursor=self.journal.remember(self.principal,action.resource,
                 {"filters":[action.payload[k] for k in ("query","sender","since","until")],"after":page["cursor"]},
                 self.guard.version,ttl=300)
         return {"epoch":epoch,"verified":True,"evidence_digest":digest([cid,len(messages)]),
-            "output":{"context_id":cid,"count":len(messages),"cursor":next_cursor,
+            "output":{"context_id":cid,"count":len(messages),"cursor":next_cursor,"has_more":bool(page.get("has_more")),
                       "coverage":page["coverage"],"complete_history":False,"body_disclosed":False}}
 
     def _sources(self,resource,context_ids=()):
@@ -238,13 +240,30 @@ class Service:
             decisions=[]
             for cid in self.bindings:
                 resource=self.resource(cid)
-                action=self._action(cid,"messages.read",{},workflow=policy.get("workflow","manual"))
+                # Listener pages use the same AET/lease/quota path as explicit reads.
+                # Six bounded text records fit the 24k local context budget.
+                payload=dict(query="",sender=None,since=0,until=2**63-1,after=self.cursors.get(cid),limit=6)
+                action=self._action(cid,"messages.read",payload,workflow=policy.get("workflow","manual"))
+                data_class=self.bindings[cid].get("data_class","personal")
+                if data_class in {"sensitive","credentials","financial"}:
+                    from dataclasses import replace
+                    action=replace(action,sources=(Provenance(resource,"query:"+digest(payload),data_class),))
                 self.guard.check(action)
-                page=self.adapter.search(cid,after=self.cursors.get(cid),limit=50)
-                self.cursors[cid]=page.get("cursor")
+                proposal=self.runtime.propose(action);receipt=self.execute(proposal["id"])
+                if receipt["state"]!="Completed":raise AXRError("listener_page_not_verified")
+                result=receipt["result"]
+                page=self.journal.context(result["context_id"],self.principal,resource,self.guard.version)
+                cursor=result.get("cursor")
+                if cursor:
+                    self.cursors[cid]=self.journal.context(cursor,self.principal,resource,self.guard.version)["after"]
+                else:self.cursors[cid]=payload["after"]
+                # These local baseline pages are never a disclosure handle. Only an
+                # admitted runner batch creates a new reviewable disclosure context.
+                for handle in (result["context_id"],cursor):
+                    if handle:self.journal.db.execute("DELETE FROM contexts WHERE id=? AND principal=?",(handle,self.principal))
                 if resource.key not in self.baselines:
                     for m in page["messages"]:self.journal.seen(resource,m["reference"])
-                    if not page.get("has_more"):self.baselines.add(resource.key)
+                    if not result["has_more"]:self.baselines.add(resource.key)
                     continue
                 result=self.admission.evaluate(resource,page["messages"],policy,lambda:self.guard.check(action))
                 decisions.extend(result["decisions"])

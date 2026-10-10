@@ -18,7 +18,7 @@ int main(){using namespace winrt::Windows::Security::Credentials::UI;Stellaria::
         auto interop=winrt::get_activation_factory<UserConsentVerifier,IUserConsentVerifierInterop>();
         winrt::Windows::Foundation::IAsyncOperation<UserConsentVerificationResult> operation{nullptr};
         winrt::hstring message=L"Authorize the exact AXR operation reviewed in your local owner terminal or panel.";
-        winrt::check_hresult(interop->RequestVerificationForWindowAsync(window,winrt::get_abi(message),
+        winrt::check_hresult(interop->RequestVerificationForWindowAsync(window,static_cast<HSTRING>(winrt::get_abi(message)),
             winrt::guid_of<decltype(operation)>(),reinterpret_cast<void**>(winrt::put_abi(operation))));
         result={{"verified",operation.get()==UserConsentVerificationResult::Verified}};
     }catch(...){result={{"error","owner_auth_failed_or_unavailable"}};}

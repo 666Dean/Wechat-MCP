@@ -6,7 +6,13 @@ from axr.host import Supervisor,Sandbox
 def run(service,resource,events,policy):
     config=service.config.get("runner",{})
     if not config.get("enabled",False):raise AXRError("runner_disabled")
-    data={"messages":[{**e,"data_class":service.bindings[resource.conversation_id].get("data_class","personal")} for e in events],
+    messages=[];remaining=24000
+    for event in events:
+        if remaining<=0:break
+        text=event["text"][:min(4000,remaining)];remaining-=len(text)
+        messages.append({**event,"text":text,"text_truncated":event.get("text_truncated",False) or len(text)<len(event["text"]),
+                         "data_class":service.bindings[resource.conversation_id].get("data_class","personal")})
+    data={"messages":messages,
           "coverage":"admitted_listener_batch","complete_history":False}
     cid=service.journal.remember(service.principal,resource,data,service.guard.version,ttl=300)
     proposal=service.disclose(resource.conversation_id,cid,runner=True)

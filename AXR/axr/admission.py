@@ -15,6 +15,8 @@ class Budget:
         self.db.execute("CREATE TABLE IF NOT EXISTS throttle(key TEXT,window INTEGER,count INTEGER,PRIMARY KEY(key,window))")
 
     def reserve(self, identity, maximum, *, amount=1, seconds=86400):
+        if any(type(v) is not int for v in (maximum,amount,seconds)) or maximum<0 or amount<1 or not 1<=seconds<=86400:
+            raise AXRError("invalid_budget_reservation")
         now=int(self.journal.clock());window=now//seconds*seconds
         key=hashlib.sha256(identity.encode()).hexdigest()
         # Adapted from Hub: reject without incrementing if this reservation exceeds the ceiling.
@@ -70,7 +72,9 @@ class Admission:
                 self.journal.meter("events_admitted" if wake else "events_filtered")
                 if wake:
                     bucket=self.pending.setdefault(resource.key,[])
-                    bucket.append((now,event,decision))
+                    bounded={**event,"text":event["text"][:4000]}
+                    if len(event["text"])>4000:bounded["text_truncated"]=True
+                    bucket.append((now,bounded,decision))
                     del bucket[:-50]
             decisions.append(decision)
         return {"decisions":decisions,"model_calls":0,"simulation":replay}

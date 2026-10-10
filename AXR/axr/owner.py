@@ -55,6 +55,8 @@ def main():
     p.add_argument("--account",required=True);p.add_argument("--conversation",required=True)
     p.add_argument("--purpose",required=True);p.add_argument("--operation",action="append",required=True)
     p.add_argument("--workflow",default="manual");p.add_argument("--ttl",type=int,default=3600);p.add_argument("--uses",type=int,default=100)
+    p.add_argument("--class",dest="classes",action="append",choices=["workspace-normal","personal"],
+                   help="Explicit local data classes; sensitive classes require exact job approval")
     p=commands.add_parser("approve");p.add_argument("job");p.add_argument("--principal",required=True)
     p=commands.add_parser("revoke");p.add_argument("grant")
     p=commands.add_parser("secret");p.add_argument("reference")
@@ -88,7 +90,8 @@ def main():
             elif args.command=="grant":
                 result={"grant_id":store.guard._issue_owner(principal=args.principal,
                     resource=Resource(args.platform,args.account,args.conversation),operations=args.operation,
-                    purpose=args.purpose,expires_at=time.time()+args.ttl,max_uses=args.uses,workflow=args.workflow)}
+                    purpose=args.purpose,expires_at=time.time()+args.ttl,max_uses=args.uses,workflow=args.workflow,
+                    classes=args.classes or ["workspace-normal"])}
             elif args.command=="approve":result={"grant_id":approve(store,args.job,args.principal)}
             elif args.command=="revoke":store.guard.revoke_owner(args.grant);result={"revoked":True}
             else:

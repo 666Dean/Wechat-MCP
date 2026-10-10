@@ -9,6 +9,7 @@ from .aet import AXRError, canonical
 class Guard:
     def __init__(self, path, signing_key, clock=time.time):
         self.clock = clock
+        self.path=str(path)
         self.native = native.Guard(str(path), signing_key)
 
     @property
@@ -30,6 +31,10 @@ class Guard:
 
     def consume(self, action):
         return tuple(json.loads(self._call(self.native.consume, canonical(asdict(action)).decode(), self.clock())))
+
+    def execution_proof(self,action,grant_id,version):
+        proof=self._call(self.native.execution_proof,canonical(asdict(action)).decode(),grant_id,version,self.clock())
+        return {"store":self.path,"proof":proof}
 
     def revalidate(self, action, grant_id, version):
         return self._call(self.native.revalidate, canonical(asdict(action)).decode(), grant_id, version, self.clock())
