@@ -4,6 +4,7 @@ import Foundation
 import AppKit
 import ApplicationServices
 import LocalAuthentication
+import AXRCommit
 
 func attr(_ node: AXUIElement, _ key: String) -> Any? {
     var result: CFTypeRef?
@@ -99,6 +100,10 @@ func main() throws -> [String:Any] {
     guard let headerPath = req["header_path"] as? [Int], let expected = req["expected_title"] as? String,
           !expected.isEmpty, let targetPath = req["path"] as? [Int] else { throw Failure("scope_required") }
     func verify() throws {
+        guard let control=req["guard_context"] as? [String:String],let store=control["store"],let proof=control["proof"],
+              store.withCString({ p in proof.withCString({ q in axr_check_commit(p,q) }) })==1 else {
+            throw Failure("authority_changed_or_commit_proof_missing")
+        }
         let header = try path(root,headerPath)
         guard value(header) == expected else { throw Failure("target_identity_changed") }
         if op == "send_text" || op == "read" {

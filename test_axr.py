@@ -57,6 +57,38 @@ class Foundation(unittest.TestCase):
     def test_revocation_before_commit(self):
         gid=self.grant();used,v=self.guard.consume(self.action);self.guard.revoke_owner(gid)
         with self.assertRaises(AXRError):self.guard.revalidate(self.action,used,v)
+    def test_native_helper_commit_proof_revoke_and_body_tamper(self):
+        self.now[0]=time.time();self.grant(max_uses=1)
+        gid,version=self.guard.consume(self.action)
+        control=self.guard.execution_proof(self.action,gid,version)
+        self.assertTrue(native.check_commit(control['store'],control['proof']))
+        changed=json.loads(control['proof']);changed['grants'][0]['require_quota']=True
+        self.assertFalse(native.check_commit(control['store'],json.dumps(changed)))
+        changed=json.loads(control['proof']);changed['grants'][0]['body_sha256']='0'*64
+        self.assertFalse(native.check_commit(control['store'],json.dumps(changed)))
+        self.guard.revoke_owner(gid)
+        self.assertFalse(native.check_commit(control['store'],control['proof']))
+        self.grant();gid,version=self.guard.consume(self.action)
+        control=self.guard.execution_proof(self.action,gid,version)
+        db=sqlite3.connect(self.root/'guard.db')
+        db.execute("UPDATE grants SET body=replace(body,'purpose','other') WHERE id=?",(gid,));db.commit();db.close()
+        self.assertFalse(native.check_commit(control['store'],control['proof']))
+    def test_native_helper_commit_proof_wall_expiry_and_missing_store(self):
+        self.grant();gid,version=self.guard.consume(self.action)
+        control=self.guard.execution_proof(self.action,gid,version)
+        # Broker's injected test clock cannot extend the real helper's wall expiry.
+        self.assertFalse(native.check_commit(control['store'],control['proof']))
+        missing=str(self.root/'absent.db')
+        self.assertFalse(native.check_commit(missing,control['proof']));self.assertFalse(Path(missing).exists())
+        self.assertFalse(native.check_commit(control['store'],'{}'))
+    def test_native_helper_commit_proof_rechecks_source_quota(self):
+        self.now[0]=time.time();source_id=self.grant(max_uses=1)
+        action=replace(self.action,operation='reply.prepare',sources=(Provenance(self.resource,'ref','personal'),))
+        self.grant(action,classes=['personal'],max_uses=1)
+        gid,version=self.guard.consume(action);control=self.guard.execution_proof(action,gid,version)
+        self.assertTrue(native.check_commit(control['store'],control['proof']))
+        self.guard.consume(self.action)
+        self.assertFalse(native.check_commit(control['store'],control['proof']))
     def test_tampered_grant(self):
         self.grant();db=sqlite3.connect(self.root/'guard.db');db.execute("UPDATE grants SET body=replace(body,'purpose','forged')");db.commit();db.close()
         with self.assertRaises(AXRError):self.guard.check(self.action)
@@ -127,6 +159,12 @@ class Foundation(unittest.TestCase):
         budget=Budget(self.journal);budget.reserve('calls',2,amount=2)
         with self.assertRaises(AXRError):Budget(self.journal).reserve('calls',2)
         self.now[0]+=86400;budget.reserve('calls',2)
+    def test_budget_invalid_reservation_cannot_refund_or_bypass(self):
+        budget=Budget(self.journal)
+        for options in [dict(amount=-1),dict(amount=0),dict(amount=True),dict(seconds=0),dict(seconds=86401),dict(amount=1.5)]:
+            with self.assertRaises(AXRError):budget.reserve('calls',1,**options)
+        budget.reserve('calls',1)
+        with self.assertRaises(AXRError):budget.reserve('calls',1)
     def test_account_lease_independent_of_config(self):
         with Lease(self.root/'leases',['test','account']):
             with self.assertRaises(AXRError):
@@ -165,6 +203,11 @@ class Foundation(unittest.TestCase):
         a.evaluate(self.resource,[e],p,lambda:None);self.assertEqual(a.drain(self.resource,p),[])
         self.assertEqual(a.evaluate(self.resource,[e],p,lambda:None)['decisions'][0]['reason'],'duplicate')
         self.now[0]+=4;self.assertEqual(len(a.drain(self.resource,p)),1)
+    def test_admission_pending_body_and_event_count_bounded(self):
+        a=Admission(self.guard,self.journal,Budget(self.journal));p={'listen':True,'wake_agent':True,'keywords':['AI']}
+        events=[{'reference':str(i),'text':'AI'+'x'*9000,'created':1000.,'outgoing':False} for i in range(60)]
+        a.evaluate(self.resource,events,p,lambda:None);batch=a.drain(self.resource,p,force=True)
+        self.assertEqual(len(batch),50);self.assertTrue(all(len(e['text'])==4000 and e['text_truncated'] for e in batch))
 
 class ServiceTests(unittest.TestCase):
     def setUp(self):
@@ -201,6 +244,28 @@ class ServiceTests(unittest.TestCase):
     def test_unauthorized_scope_and_forged_context(self):
         with self.assertRaises(AXRError):self.service.read('other')
         with self.assertRaises(AXRError):self.service.prepare('friend','text',['forged'])
+    def test_runner_batch_context_has_total_cost_bound_before_disclosure(self):
+        from axr_integration.runner import run
+        self.service.config['runner']={'enabled':True}
+        events=[{'reference':str(i),'text':'x'*9000,'created':time.time(),'outgoing':False} for i in range(50)]
+        proposal=run(self.service,self.resource,events,{})
+        context=self.service.journal.context(proposal['context_id'],'agent',self.resource,self.service.guard.version)
+        self.assertEqual(sum(len(e['text']) for e in context['messages']),24000)
+        self.assertEqual(len(context['messages']),6);self.assertTrue(all(e['text_truncated'] for e in context['messages']))
+        self.assertEqual(proposal['state'],'AwaitingDisclosureApproval');self.assertEqual(self.service.journal.metrics().get('model_calls',0),0)
+    def test_listener_reads_use_aet_quota_and_revocation_without_disclosure(self):
+        from unittest.mock import patch
+        from axr.aet import digest
+        s=self.service;s.config['listener']={'listen':True,'wake_agent':False,'keywords':['fixture']}
+        s.initial_policy_digest=digest(s.config)
+        with patch.object(s.store,'config',return_value=s.config),patch.object(s.adapter,'search',wraps=s.adapter.search) as search:
+            s.tick();s.tick()
+            self.assertEqual(search.call_count,2)
+            self.assertEqual(s.journal.metrics()['jobs_completed'],2)
+            self.assertEqual(s.journal.db.execute('SELECT count(*) FROM contexts').fetchone()[0],0)
+            s.guard.revoke_owner('policy-change')
+            with self.assertRaises(AXRError):s.tick()
+            self.assertEqual(search.call_count,2)
     def test_mcp_surface_has_no_grant_or_key_endpoint(self):
         from mcp.server import MCPServer
         from axr_integration.service import register
@@ -213,6 +278,31 @@ class ServiceTests(unittest.TestCase):
         asyncio.run(check())
 
 class Workers(unittest.TestCase):
+    @unittest.skipUnless(sys.platform=='win32','Windows native AppContainer')
+    def test_native_windows_sandbox_staged_file_private_denial_and_loopback(self):
+        import shutil,socket
+        from axr.storage import private_directory
+        binary=os.environ.get('AXR_TEST_WORKER');launcher=os.environ.get('AXR_TEST_WINDOWS_LAUNCHER')
+        if not binary or not launcher:self.skipTest('native Windows witnesses not provided')
+        self.assertTrue(Path(binary).is_file());self.assertTrue(Path(launcher).is_file())
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);staged=root/'runtime';staged.mkdir()
+            worker=staged/Path(binary).name;shutil.copy2(binary,worker)
+            for directory in os.environ.get('AXR_TEST_RUNTIME_ROOTS','').split(os.pathsep):
+                if directory:
+                    for dll in Path(directory).glob('*.dll'):shutil.copy2(dll,staged/dll.name)
+            allowed=staged/'allowed.txt';allowed.write_text('synthetic')
+            private=private_directory(root/'private')/'denied.txt';private.write_text('synthetic')
+            sandbox=Sandbox(windows_launcher=launcher,windows_root=str(staged))
+            supervisor=Supervisor(timeout=20)
+            self.assertTrue(supervisor.invoke([str(worker)],{'op':'read','path':str(allowed)},sandbox=sandbox)['result']['allowed'])
+            self.assertFalse(supervisor.invoke([str(worker)],{'op':'read','path':str(private)},sandbox=sandbox)['result']['allowed'])
+            with socket.socket() as listener:
+                listener.bind(('127.0.0.1',0));listener.listen(2)
+                request={'op':'network','port':listener.getsockname()[1]}
+                self.assertTrue(supervisor.invoke([str(worker)],request)['result']['allowed'])
+                self.assertFalse(supervisor.invoke([str(worker)],request,sandbox=sandbox)['result']['allowed'])
+
     def test_ui_display_name_alone_cannot_read_content(self):
         from adapters.ui import UIAdapter
         from unittest.mock import patch

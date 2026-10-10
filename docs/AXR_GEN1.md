@@ -17,7 +17,7 @@ Legacy 安装仍使用 `requirements.txt` / `setup.ps1`；AXR opt-in 使用 `req
 
 ```sh
 axr-owner --state STATE --helper HELPER init --policy PRIVATE_POLICY
-axr-owner --state STATE --helper HELPER grant --principal PRINCIPAL --platform wechat --account ACCOUNT --conversation CONVERSATION --purpose wechat-assistant --operation messages.read --operation messages.search --operation reply.prepare --ttl 3600 --uses 100
+axr-owner --state STATE --helper HELPER grant --principal PRINCIPAL --platform wechat --account ACCOUNT --conversation CONVERSATION --purpose wechat-assistant --operation messages.read --operation messages.search --operation reply.prepare --class personal --ttl 3600 --uses 100
 python server.py --axr-state STATE --doctor
 python server.py --axr-state STATE --listener
 ```
@@ -59,6 +59,8 @@ Runner contract：owner-pinned command 从 stdin 读取 `{version, context, inst
 不得把整个用户目录、策略目录、Keychain/credential store 放入 runtime roots。
 `auto_execute` 允许已批准事务继续执行，绝不创造发送 authority；Gen1 runner 当前只输出草稿，
 需要单独发送提议和精确批准，不提供 blanket 自动发送。
+监听 pending 最多 50 个事件、每条正文 4000 字符，模型 batch 总正文最多 24000 字符；
+截断保留来源及标记，预算拒绝负数、非整数和无效窗口，失败调用仍保留已预留的成本。
 
 ## 模式与真实范围
 
@@ -76,7 +78,8 @@ Mac layout 复用 MIT 开源 wechat-mcp 的标识与标题规则，保留完整�
 ## 本轮证据与未关闭验收
 
 * 原项目 91 个回归测试：通过，1 个原有平台跳过；已迁移 MCP 2.3.0 snake_case API。
-* 新增 37 个安全/事务/worker/集成测试：通过，包含真实 SQLCipher 加密合成库、WAL、拒写/错钥。
+* 新增 45 个安全/事务/worker/集成测试：本机 44 项执行通过，Windows AppContainer 项留给 CI，包含真实 SQLCipher 加密合成库、WAL、拒写/错钥，
+  原生 helper 提交前撤权/过期/摘要及来源额度检查，以及监听正文/模型输入预算。
 * C++20 Core / Swift helper：本机编译及 CTest 通过；SDK 独立安装、外部 CMake consumer 构建通过。
 * Mac 沙箱：允许指定 worker/只读 runtime，拒绝白名单外文件；监听中的 loopback socket 在沙箱外可连接、沙箱内拒绝。
 * Mac 微信 4.1.15：进程与 Accessibility 权限检测成功，但聊天树未暴露；增强 AX 失败，

@@ -33,13 +33,14 @@ class UIAdapter:
     def structure(self):
         return self._request("structure",allow_labels=[b["display_name"] for b in self.bindings.values()])
 
-    def search(self, conversation_id, *, query="",sender=None,since=0,until=2**63-1,after=None,limit=20):
+    def search(self, conversation_id, *, query="",sender=None,since=0,until=2**63-1,after=None,limit=20,guard_context=None):
         binding=self.bindings.get(conversation_id)
         if binding is None:
             raise AXRError("conversation_not_authorized")
         identity=binding.get("identity_witness")
         if not identity or identity.get("platform_verified") is not True:
             raise AXRError("stable_account_and_conversation_witness_required_for_read")
+        if not guard_context:raise AXRError("broker_commit_proof_required")
         structure=self.structure()
         if sys.platform=="darwin":
             from .macos.layout import selected_paths
@@ -52,7 +53,7 @@ class UIAdapter:
         result=self._request("read",path=message_path,header_path=header,
             expected_title=binding["display_name"],expected_pid=structure["pid"],
             account_path=identity["account_path"],identity_path=identity["conversation_path"],
-            expected_account=self.config["account_id"],expected_identity=conversation_id)
+            expected_account=self.config["account_id"],expected_identity=conversation_id,guard_context=guard_context)
         messages=[]
         for node in result["nodes"]:
             identifier=node.get("identifier","")
@@ -86,7 +87,7 @@ class UIAdapter:
             header_path=layout["header_path"],send_path=layout["send_path"],
             messages_path=layout["messages_path"],account_path=identity["account_path"],
             identity_path=identity["conversation_path"],expected_account=action.resource.account_id,
-            expected_identity=action.resource.conversation_id,text=action.payload["text"])
+            expected_identity=action.resource.conversation_id,text=action.payload["text"],guard_context=check.commit_proof())
         return {"epoch":epoch,"verified":result.get("verified") is True,
                 "evidence_digest":digest(result)}
 

@@ -61,6 +61,7 @@ class Runtime:
                 try:
                     # Handler must call check() directly before the actual side effect.
                     check = lambda: self.guard.revalidate(action, gid, version)
+                    check.commit_proof=lambda:self.guard.execution_proof(action,gid,version)
                     result = self.handlers[action.operation](action, check, self.epoch)
                     if result.get("epoch") != self.epoch:
                         raise AXRError("stale_worker_receipt")

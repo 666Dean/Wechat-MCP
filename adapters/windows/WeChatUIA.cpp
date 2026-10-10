@@ -9,6 +9,7 @@
 #include <chrono>
 #include <thread>
 #include "axr/Core.hpp"
+#include "axr/Commit.h"
 using Microsoft::WRL::ComPtr;
 using Stellaria::AXR::Json;
 static std::string Utf8(const std::wstring& s){if(s.empty())return {};int n=WideCharToMultiByte(CP_UTF8,0,s.data(),int(s.size()),nullptr,0,nullptr,nullptr);std::string v(n,'\0');WideCharToMultiByte(CP_UTF8,0,s.data(),int(s.size()),v.data(),n,nullptr,nullptr);return v;}
@@ -47,7 +48,10 @@ static Json Main(const Json& req){
     };
     if(op=="structure"){walk(root,Json::array(),0,false);return {{"nodes",nodes},{"pid",pid},{"text_redacted",true}};}
     if(req.at("expected_pid").get<DWORD>()!=pid)throw std::runtime_error("application_epoch_changed");
-    auto verify=[&]{if(Value(Path(walker.Get(),root,req.at("header_path")).Get())!=req.at("expected_title").get<std::string>())throw std::runtime_error("target_identity_changed");
+    auto verify=[&]{
+        const auto& control=req.at("guard_context");
+        if(!axr_check_commit(control.at("store").get<std::string>().c_str(),control.at("proof").get<std::string>().c_str()))throw std::runtime_error("authority_changed_or_commit_proof_missing");
+        if(Value(Path(walker.Get(),root,req.at("header_path")).Get())!=req.at("expected_title").get<std::string>())throw std::runtime_error("target_identity_changed");
         DWORD current=0;GetWindowThreadProcessId(window,&current);if(current!=pid)throw std::runtime_error("application_epoch_changed");
         if(op=="send_text"||op=="read"){
             for(auto pair:{std::pair{"account_path","expected_account"},std::pair{"identity_path","expected_identity"}}){

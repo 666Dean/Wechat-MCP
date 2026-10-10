@@ -36,6 +36,7 @@ public:
     void RevokeOwner(const std::string& id);
     std::string Check(const Json& action, double now, bool quota=true) const;
     Json Consume(const Json& action, double now);
+    Json ExecutionProof(const Json& action, const std::string& consumedId, unsigned version, double now) const;
     void Revalidate(const Json& action, const std::string& id, unsigned version, double now) const;
 private:
     struct Impl;

@@ -51,7 +51,8 @@ Windows owner auth 使用 UserConsentVerifier / Windows Hello；设备无可用�
 macOS 使用 LocalAuthentication，用户须完成系统身份验证。
 
 `grant` 绑定 principal、platform/account/conversation、operation、purpose、workflow、
-TTL、次数。`approve JOB --principal PRINCIPAL` 显示精确意图并调用系统认证，发放
+TTL、次数；`--class personal` 可明确允许本地个人数据草稿，敏感分类仍须精确审批。
+`approve JOB --principal PRINCIPAL` 显示精确意图并调用系统认证，发放
 最长 240 秒、一次使用的能力；正文、目标或来源改变后旧能力无效。
 `revoke GRANT` 提升全局策略版本，保守失效全部旧能力及上下文；需重新授权所需能力。
 这些命令不注册为 MCP 工具。`dashboard` 显示实际计数与审计验证结果。
@@ -69,6 +70,10 @@ TTL、次数。`approve JOB --principal PRINCIPAL` 显示精确意图并调用�
 * 每账号执行租约、每 journal 生命周期租约；幂等来自本地记录，不是假定微信有 idempotency key。
 * 一次性 helper 使用私有继承管道、有界 JSON、固定 owner command 和超时；持久 worker
   可使用 FrameCodec 的 version/epoch/sequence/HMAC。FrameCodec 不代表所有平台管道已实测。
+* 可信 UI helper 在读取及实际平台 commit 前，通过 C ABI 复核 broker 提供的 grant 摘要、
+  策略版本、墙钟过期及来源额度，不携带 issuer key。此 proof 只供可信私有管道使用，
+  不构成公开认证协议，也不阻止拥有同用户任意 shell 权限的人直接操作应用。
+  微信外部提交与撤权之间没有共同原子事务；仍可能产生 Unknown，不能承诺 exactly-once。
 * macOS worker 在 deny-default sandbox-exec 下运行；Windows native AppContainer 不发放
   网络 capability，只读 owner-staged runtime，并在恢复线程前加入 JobObject。
   沙箱失败时拒绝启动。Windows AppContainer 和 Hello 尚待运行验证。

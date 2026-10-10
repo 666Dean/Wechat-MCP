@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "axr/Core.hpp"
+#include "axr/Commit.h"
+#include <cmath>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -139,17 +141,19 @@ struct Guard::Impl {
         }
         Fail("authority_missing_expired_revoked_or_exhausted");
     }
-    void Sources(const Json& a,double now) const {
+    std::vector<std::string> Sources(const Json& a,double now) const {
+        std::vector<std::string> ids;
         for(const auto& p:a.at("sources")) {
             auto access=a;access["resource"]=p.at("resource");access["sources"]=Json::array();
             access["operation"]="messages.read";access["payload"]=Json::object();access["destination"]="local";
-            Find(access,now,true);
+            ids.push_back(Find(access,now,true));
             if(a.at("destination")!="local") {
                 access["operation"]="disclosure.send";access["payload"]={{"output_seal",IntentSeal(a)}};
                 access["destination"]=a.at("destination");access["sources"]=Json::array({p});
-                Find(access,now,true);
+                ids.push_back(Find(access,now,true));
             }
         }
+        return ids;
     }
 };
 Guard::Guard(const std::filesystem::path& path,std::string key):impl_(std::make_unique<Impl>()) {
@@ -186,7 +190,51 @@ Json Guard::Consume(const Json& a,double now) {
     try{auto id=Check(a,now);Statement q(impl_->db,"UPDATE grants SET used=used+1 WHERE id=?");q.Text(1,id);if(q.Step()!=SQLITE_DONE)Fail("quota_update_failed");auto v=Version();Exec(impl_->db,"COMMIT");return Json::array({id,v});}
     catch(...){Exec(impl_->db,"ROLLBACK");throw;}
 }
+Json Guard::ExecutionProof(const Json& a,const std::string& id,unsigned version,double now) const {
+    Revalidate(a,id,version,now);
+    Json grants=Json::array();
+    auto descriptor=[&](const std::string& grant,bool quota){
+        Statement q(impl_->db,"SELECT body FROM grants WHERE id=?");q.Text(1,grant);
+        if(q.Step()!=SQLITE_ROW)Fail("grant_missing_before_commit");
+        return Json{{"id",grant},{"body_sha256",Digest(q.Text(0))},{"require_quota",quota}};
+    };
+    grants.push_back(descriptor(id,false));
+    for(const auto& source:impl_->Sources(a,now))grants.push_back(descriptor(source,true));
+    return {{"version",1},{"policy_version",version},{"intent_seal",IntentSeal(a)},{"grants",grants}};
+}
 void Guard::Revalidate(const Json& a,const std::string& id,unsigned version,double now) const {
     ValidateAction(a);if(version!=Version())Fail("policy_changed_before_commit");impl_->Sources(a,now);impl_->Find(a,now,false,id);
 }
+}
+
+extern "C" int axr_check_commit(const char* path,const char* encoded) {
+    using namespace Stellaria::AXR;sqlite3* db=nullptr;
+    try {
+        if(!path||!encoded||std::char_traits<char>::length(encoded)>MaximumFrameBytes)return 0;
+        auto proof=Json::parse(encoded);
+        if(proof.at("version")!=1||proof.at("grants").empty()||proof.at("grants").size()>401)return 0;
+        if(sqlite3_open_v2(path,&db,SQLITE_OPEN_READONLY|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK){if(db)sqlite3_close(db);return 0;}
+        sqlite3_busy_timeout(db,1000);
+        bool valid=true;
+        {
+            Statement version(db,"SELECT version FROM policy");
+            valid=version.Step()==SQLITE_ROW&&sqlite3_column_int(version.s,0)==proof.at("policy_version").get<int>();
+            for(const auto& descriptor:proof.at("grants")) {
+                Statement grant(db,"SELECT body,used,revoked FROM grants WHERE id=?");grant.Text(1,descriptor.at("id").get<std::string>());
+                if(grant.Step()!=SQLITE_ROW){valid=false;break;}
+                auto body=grant.Text(0);auto parsed=Json::parse(body);
+                valid=valid&&ConstantEqual(Digest(body),descriptor.at("body_sha256").get<std::string>())&&
+                    !sqlite3_column_int(grant.s,2)&&parsed.at("expires_at").get<double>()>Now()&&
+                    (!descriptor.at("require_quota").get<bool>()||sqlite3_column_int(grant.s,1)<parsed.at("max_uses").get<int>());
+            }
+        }
+        // The previous active statements share a read snapshot. End that snapshot
+        // before checking the latest policy version, so a concurrent owner revoke
+        // is observed before the helper proceeds to its platform commit.
+        {
+            Statement latest(db,"SELECT version FROM policy");
+            valid=valid&&latest.Step()==SQLITE_ROW&&sqlite3_column_int(latest.s,0)==proof.at("policy_version").get<int>();
+        }
+        sqlite3_close(db);db=nullptr;return valid?1:0;
+    }catch(...){if(db)sqlite3_close(db);return 0;}
 }
