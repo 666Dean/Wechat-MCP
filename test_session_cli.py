@@ -107,6 +107,35 @@ class SessionCliTests(unittest.TestCase):
                 self.assertEqual(caught.exception.code, 2)
                 reader.assert_not_called()
 
+    def test_probe_cleanup_failure_preserves_query_error_and_sanitizes_details(self):
+        reader = Mock()
+        reader.probe_messages.side_effect = ReaderError("WCDB get_messages 失败（状态码 -100）")
+        reader.close.side_effect = OSError("private native details")
+        output = io.StringIO()
+        with patch.object(sys, "argv", ["server.py", "--config", str(self.path),
+                          "--probe-database-messages", "wxid_friend"]), \
+                patch("database_reader.WcdbReader", return_value=reader), patch("sys.stdout", output):
+            with self.assertRaises(SystemExit) as caught:
+                server.main()
+        result = json.loads(output.getvalue())
+        self.assertEqual(caught.exception.code, 1)
+        self.assertIn("-100", result["error"])
+        self.assertIn("cleanup_error", result)
+        self.assertNotIn("private", output.getvalue())
+
+    def test_successful_probe_with_failed_cleanup_is_not_reported_as_success(self):
+        reader = Mock()
+        reader.probe_messages.return_value = {"connected": True, "sample_count": 1}
+        reader.close.side_effect = ReaderError("synthetic cleanup error")
+        output = io.StringIO()
+        with patch.object(sys, "argv", ["server.py", "--config", str(self.path),
+                          "--probe-database-messages", "wxid_friend"]), \
+                patch("database_reader.WcdbReader", return_value=reader), patch("sys.stdout", output):
+            with self.assertRaises(SystemExit) as caught:
+                server.main()
+        self.assertEqual(caught.exception.code, 1)
+        self.assertFalse(json.loads(output.getvalue())["connected"])
+
 
 if __name__ == "__main__":
     unittest.main()
