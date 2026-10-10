@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+.test-work/
+.pytest_cache/
+config.json
+codex-mcp.toml
+*.sqlite3
+*.sqlite3-*
+*.db
+*.log
+.env
+.env.*
+!.env.example
+.contacts-*.tmp
+dist/

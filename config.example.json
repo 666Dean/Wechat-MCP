@@ -1,0 +1,11 @@
+{
+  "backend": "wxauto4",
+  "active_contacts": [],
+  "mention_pattern": "(?i)(?<![A-Za-z])(?:@?codex)(?![A-Za-z])",
+  "send_enabled": false,
+  "reply_prefix": "【Codex · AI 助理】",
+  "introduction": "你好，我是 Codex，是他的 AI 助理。",
+  "max_reply_chars": 2000,
+  "min_reply_interval_seconds": 10,
+  "state_file": "state.sqlite3"
+}

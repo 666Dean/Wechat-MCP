@@ -1,0 +1,8 @@
+# Run setup.ps1 to generate codex-mcp.toml with paths for your computer.
+# Replace these example paths if configuring manually.
+[mcp_servers.wechat-personal]
+command = "C:/path/to/wechat-codex-mcp/.venv/Scripts/python.exe"
+args = ["C:/path/to/wechat-codex-mcp/server.py"]
+cwd = "C:/path/to/wechat-codex-mcp"
+startup_timeout_sec = 20
+tool_timeout_sec = 60
