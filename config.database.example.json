@@ -1,0 +1,20 @@
+{
+  "backend": "wcdb",
+  "active_contacts": [],
+  "mention_pattern": "(?i)(?<![A-Za-z])(?:@?codex)(?![A-Za-z])",
+  "send_enabled": false,
+  "reply_prefix": "【Codex · AI 助理】",
+  "introduction": "你好，我是 Codex，是他的 AI 助理。",
+  "max_reply_chars": 2000,
+  "min_reply_interval_seconds": 10,
+  "state_file": "database-state.sqlite3",
+  "database_reader": {
+    "account_id": "wxid_example",
+    "session_db": "C:/path/to/xwechat_files/wxid_example/db_storage/session/session.db",
+    "dll_path": "C:/path/to/EchoTrace/data/flutter_assets/assets/dll/wcdb_api.dll",
+    "key_file": "C:/path/to/private/database-key.dpapi",
+    "page_size": 200,
+    "max_pages": 100,
+    "conversations": []
+  }
+}

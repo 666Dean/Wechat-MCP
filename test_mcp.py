@@ -33,6 +33,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         process = await asyncio.create_subprocess_exec(sys.executable,
             str(self.root / "server.py"), "--config", str(self.config_path), *args,
             cwd=self.root, env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=15)
@@ -141,6 +142,55 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         code, output, error = await self.cli("--demo", "--doctor")
         self.assertEqual(code, 0, error)
         self.assertTrue(json.loads(output)["demo"])
+
+    async def test_database_stream_through_real_mcp_transport_is_always_preview(self):
+        config = json.loads((self.root / "config.database.example.json").read_text(encoding="utf-8"))
+        entry = self.config_path.parent / "wxid_owner" / "db_storage" / "session" / "session.db"
+        entry.parent.mkdir(parents=True)
+        entry.write_bytes(b"synthetic fixture")
+        config["send_enabled"] = True  # Must never turn the read-only source into a sender.
+        config["database_reader"].update(account_id="wxid_owner", session_db=str(entry),
+            dll_path=str(self.config_path.parent / "fake.dll"), key_file=str(self.config_path.parent / "test.dpapi"),
+            conversations=[{"conversation_id": "wxid_friend", "display_name": "合成好友"}])
+        self.config_path.write_text(json.dumps(config), encoding="utf-8")
+        # Inject the synthetic reader only inside this test child. Production has
+        # no fixture backend, credential MCP tool, or implicit mock fallback.
+        script = """import database_reader, server
+from test_database_reader import StreamReader, message
+def factory(config):
+    reader = StreamReader(config)
+    def messages(cid, limit, offset):
+        reader.reads.append((cid, limit, offset))
+        return [] if len(reader.reads) <= 2 else [message(1)]
+    reader.messages = messages
+    return reader
+database_reader.WcdbReader = factory
+server.main()
+"""
+        parameters = StdioServerParameters(command=sys.executable,
+            args=["-c", script, "--config", str(self.config_path)], cwd=str(self.root),
+            env={"PYTHONIOENCODING": "utf-8"})
+        async with asyncio.timeout(30):
+            async with stdio_client(parameters) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    self.assertEqual(len((await session.list_tools()).tools), 5)
+                    status = self.data(await session.call_tool("wechat_status", {}))
+                    self.assertTrue(status["connected"])
+                    self.assertFalse(status["send_enabled"])
+                    self.assertEqual(self.data(await session.call_tool("poll_messages", {}))["events"], [])
+                    events = self.data(await session.call_tool("poll_messages", {}))["events"]
+                    self.assertEqual(len(events), 1)
+                    preview = await session.call_tool("reply_to_message", {"message_id": events[0]["id"], "text": "合成回复"})
+                    self.assertFalse(preview.isError)
+                    self.assertEqual(self.data(preview)["status"], "preview")
+                    self.assertEqual(self.data(preview)["conversation_id"], "wxid_friend")
+
+    async def test_key_cli_rejects_noninteractive_input_without_creating_secret(self):
+        code, _, error = await self.cli("--store-database-key")
+        self.assertNotEqual(code, 0)
+        self.assertIn("交互终端", error)
+        self.assertEqual(list(self.config_path.parent.glob("*.dpapi")), [])
 
 
 if __name__ == "__main__":

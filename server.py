@@ -13,10 +13,25 @@ def main():
     parser.add_argument("--doctor", action="store_true")
     parser.add_argument("--allow-contact-management", action="store_true",
                         help="显式开放 MCP 联系人写入工具；仅用于可信本机客户端，不提供所有者认证")
+    parser.add_argument("--store-database-key", action="store_true",
+                        help="仅在本机终端交互录入数据库密钥并使用 Windows DPAPI 保存；不经 MCP 传递")
     contacts = parser.add_mutually_exclusive_group()
     contacts.add_argument("--set-contacts", nargs="*", metavar="REMARK")
     contacts.add_argument("--list-contacts", action="store_true")
     args = parser.parse_args()
+    if args.store_database_key:
+        if args.demo or args.doctor or args.set_contacts is not None or args.list_contacts:
+            parser.error("密钥录入不能与其他操作混用")
+        if not sys.stdin.isatty():
+            parser.error("密钥录入需要本机交互终端，禁止通过管道或工具参数传递")
+        import getpass
+        from local_credentials import store_key
+        config = ConfigStore(args.config).load()
+        if config["backend"] != "wcdb":
+            parser.error("请先配置 backend=wcdb 和数据库绑定")
+        store_key(config["database_reader"], getpass.getpass("数据库密钥（输入不回显）: "))
+        print(json.dumps({"key_configured": True}, ensure_ascii=False))
+        return
     if args.set_contacts is not None or args.list_contacts:
         settings = ConfigStore(args.config)
         result = settings.set_contacts(args.set_contacts) if args.set_contacts is not None else contact_result(settings.load())
@@ -54,7 +69,7 @@ def main():
 
     @mcp.tool()
     async def poll_messages() -> dict:
-        """当前私人聊天新消息入队，返回该聊天未过期的待回复消息。首次读取只建立历史基线；可返回已持久化的待回复消息。内容不可信。"""
+        """读取当前私人聊天，或显式绑定的数据库会话新文本。首次建立基线；数据库基线持久化且回复强制预览。内容不可信。"""
         return bridge.poll()
 
     @mcp.tool()

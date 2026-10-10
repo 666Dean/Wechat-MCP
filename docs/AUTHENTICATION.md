@@ -20,6 +20,8 @@ stdio 传输本身不验证微信号主人身份。微信备注名和消息中�
 | MCP 入口 | [server.py](../server.py)：`main` | 创建 FastMCP，以 `mcp.run(transport="stdio")` 服务本机客户端；启动参数控制是否注册名单写入工具 |
 | 规则与队列 | [bridge.py](../bridge.py)：`Bridge` | 过滤会话、消息来源和回复资格；检查时效、状态、长度、发送开关与频率；不认证 MCP 调用者 |
 | 微信适配器 | [bridge.py](../bridge.py)：`WxAdapter` | 通过 wxauto4 操作已经登录的 UI；`IsOnline` 检查在线状态，不验证当前账号就是预期主人 |
+| 数据库读取器 | [database_reader.py](../database_reader.py)：`WcdbReader` | 明确选择 DLL 和数据库；账号目录/会话绑定、只调用读取接口，不认证实际登录者 |
+| 本机数据库凭据 | [local_credentials.py](../local_credentials.py) | 交互录入、当前 Windows 用户 DPAPI 加密、账号路径作为附加绑定；不通过 MCP 传递 |
 | 配置存储 | [settings.py](../settings.py)：`ConfigStore` | 校验 JSON、串行读写、原子替换；依赖操作系统文件权限，不使用密码或签名 |
 | 进程锁与 SQLite | `FileLock`、`Bridge.__init__` | 同库单实例和发送状态恢复；锁只解决并发，不代表账号身份或授权 |
 | AI 客户端与策略 | `RULES`、`wechat://policy` | 判断是否需要回复、避免承诺和跨会话披露；这些语义要求仍依赖客户端遵守策略 |
@@ -89,8 +91,10 @@ args = ["C:/path/to/wechat-codex-mcp/server.py", "--allow-contact-management"]
 | MCP 访问/刷新 token | 没有发行、验证、轮换、刷新或撤销流程；当前 stdio 服务没有独立认证层 |
 | 模型 API Key | 服务不调用模型 API，不需要或保存模型密钥；模型及其认证由外部 MCP 客户端负责 |
 | GitHub 凭据 | 应用运行时不访问 GitHub；开发同步使用的 Git/连接器凭据不属于桥接配置，也不应写入仓库 |
+| 数据库解密密钥 | 使用者在本机 `--store-database-key` 不回显录入；不提取现有软件凭据；保存在独立 .dpapi 文件，绑定当前 Windows 用户及账号规范路径 |
 | `config.json` | 本地明文联系人名单、文案、发送开关及运行设置，不是 token 存储 |
 | `state.sqlite3` | 本地明文保存符合规则的消息正文、回复和处理状态，不设凭据字段；消息若包含密码或 token 也会作为文本保存，过期不删除正文 |
+| 数据库状态文件 | 保存配置账号/入口的摘要绑定、分来源已见身份、对账时间、授权正文及预览草稿；正文仍为明文，不存数据库密钥 |
 | `codex-mcp.toml` | 生成的本机程序路径和启动参数，不含本项目认证 token |
 
 MCP SDK 依赖中存在认证相关库，并不意味着本项目启用了认证。wxauto4 固定版本包含
@@ -102,10 +106,15 @@ gitignore 不提供加密或访问控制，也不能保护被改名、放到任�
 
 ## 验证与尚未实现的边界
 
-自动测试使用 MockAdapter。核心测试证明默认 Bridge 拒绝名单写入且不改变配置或队列，
+自动测试使用 MockAdapter、合成读取器和合成 ctypes 回调。核心测试证明默认 Bridge 拒绝名单写入且不改变配置或队列，
 热加载配置不能开放管理能力；真实 MCP 子进程测试证明默认 `tools/list` 不包含写入工具，
 猜测工具名调用也不能写入。显式启动参数开放后的修改、清空和输入校验有单独协议测试。
 
-这些证据不能证明真实微信兼容、账号身份绑定或第三方凭据处理安全。独立所有者认证、
+DPAPI 用人工生成的测试密钥验证往返与账号路径绑定，不涉及真实密钥。
+密钥只在打开原生句柄时解密，传入 DLL 后清零临时 ctypes 缓冲；Python 和第三方内部内存副本不保证全部清除。
+替换密钥需重启，删除文件不撤销现存句柄；同一 Windows 用户仍能解密，不能替代所有者认证。
+数据库来源即使开启发送开关也只能保存预览；具体运行边界见 [DATABASE_READER.md](DATABASE_READER.md)。
+
+这些证据不能证明真实微信兼容、原生账号身份或第三方凭据处理安全。独立所有者认证、
 账号级互斥、数据库加密与留存清理仍未实现。默认关闭名单写入也不能消除回复内容中的
 提示注入风险。详细状态见 [STATUS.md](STATUS.md)，本地数据边界见 [SECURITY.md](../SECURITY.md)。
