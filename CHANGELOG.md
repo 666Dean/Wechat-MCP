@@ -39,6 +39,7 @@
 - PR 后续修正：Mac draft 核验只读取真实 AXValue，空值不会被标题/描述替代；无法读取 draft value 时拒绝提交。C++ Core 新提交前复核路径通过本机 ASan/UBSan；独立 wheel 在全新 venv 验证 crypto/Guard/Swift helper 与许可文件。
 - 验证入口强化：显式指定的 SQLCipher 库不存在时测试失败，不能通过平台跳过掩盖 CI 配置错误。
 - Windows SDK 已完成 MSVC 编译；CI 暴露 install 阶段对系统 DLL 路径分隔符匹配错误，现按 CMake CMP0207 归一化并兼容两种分隔符，避免递归打包 Windows 系统依赖。
+- Windows wheel/install、UIA/Hello/AppContainer 编译及 CTest 均已运行通过；真实 CI 回归暴露 pywin32 JobObject 不接受 None name，改为每次随机唯一名称，并使用 PyHANDLE.Close 正确释放、对配置失败清理句柄与进程。
 - PR 后续修正：监听分页同样进入 AET/账号租约/额度与提交前复核；本地基线 context 在处理后删除，仅 admitted batch 留待精确披露审阅。保留末页高水位便于增量读取，非文本媒体正文不取出 SQLite。
 - 新建纯 legacy venv 安装 requirements.txt 后 93 项发现结果通过（3 项跳过，含 2 个可选 AXR 测试模块），证明 opt-in 路径无原生编译依赖。
 - PR 后续修正：数据库 interrupt/close 生命周期加锁；所有者可显式关闭展示前缀，但密封意图中的 agent 来源仍保留。Win dependency binary cache 加入 CI。

@@ -129,7 +129,7 @@ class Supervisor:
             finally:
                 reader.join(timeout=2)
                 if job is not None:
-                    job.close()
+                    job.Close()
             if errors:
                 raise AXRError(errors[0])
             if reader.is_alive() or process.returncode != 0:
