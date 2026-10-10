@@ -17,6 +17,16 @@ def authenticate(helper):
     result=Supervisor(timeout=65).invoke([str(Path(helper).resolve(strict=True))],{"op":"owner_auth"})["result"]
     if result.get("verified") is not True:raise AXRError("owner_os_authentication_failed")
 
+def review(store,jid,principal):
+    action=store.journal.action(store.journal.get(jid,principal))
+    result={"intent":asdict(action),"seal":action.seal}
+    if action.operation=="disclosure.send" and "context_id" in action.payload:
+        context=store.journal.context(action.payload["context_id"],principal,action.resource,store.guard.version)
+        from .aet import digest
+        if digest(context)!=action.payload.get("context_digest"):raise AXRError("context_intent_digest_changed")
+        result["exact_disclosure"]=context
+    return result
+
 def approve(store,jid,principal):
     row=store.journal.get(jid,principal)
     if row["state"] not in {"AwaitingApproval","Ready"} or row["expires"]<=time.time():
@@ -65,7 +75,7 @@ def main():
         elif args.command=="approve":
             # Read exact encrypted intent before invoking trusted OS authentication.
             store=OwnerStore(args.state)
-            try:print(json.dumps(asdict(store.journal.action(store.journal.get(args.job,args.principal))),ensure_ascii=True,indent=2))
+            try:print(json.dumps(review(store,args.job,args.principal),ensure_ascii=True,indent=2))
             finally:store.close()
         print("Review the operation above. Owner authentication will authorize precisely this operation.")
         authenticate(args.helper)

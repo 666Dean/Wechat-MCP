@@ -6,7 +6,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk,messagebox
 from axr.policy import OwnerStore
-from axr.owner import authenticate,approve
+from axr.owner import authenticate,approve,review
 from axr.aet import AXRError
 
 class Panel:
@@ -79,7 +79,7 @@ class Panel:
             with self.store() as store:
                 principal=store.config()['principal'];row=store.journal.get(jid,principal)
                 from dataclasses import asdict
-                text=json.dumps(asdict(store.journal.action(row)),ensure_ascii=True,indent=2)
+                text=json.dumps(review(store,jid,principal),ensure_ascii=True,indent=2)
             self.intent.configure(state='normal');self.intent.delete('1.0','end');self.intent.insert('1.0',text);self.intent.configure(state='disabled')
         except AXRError as exc:self.notice.set(str(exc))
     def decide(self,allowed):
