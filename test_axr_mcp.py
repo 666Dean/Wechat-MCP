@@ -10,6 +10,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from mcp import ClientSession,StdioServerParameters
 from mcp.client.stdio import stdio_client
+try:
+    import axr
+except ModuleNotFoundError as exc:
+    if exc.name=="axr":raise unittest.SkipTest("AXR optional: install requirements.axr.txt and native SDK to run these gates") from exc
+    raise
 from axr.guard import Guard
 from axr.journal import Journal
 from axr.storage import Vault

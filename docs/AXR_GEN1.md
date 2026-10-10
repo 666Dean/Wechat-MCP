@@ -6,7 +6,9 @@
 
 ## 本地安装和授权
 
-1. Python 3.12，安装原生构建依赖与 `requirements.txt`；Windows 的 wxauto4 只用于 legacy。
+1. Python 3.12，安装原生构建依赖与 `requirements.axr.txt`；Windows 的 wxauto4 只用于 legacy。
+Legacy 安装仍使用 `requirements.txt` / `setup.ps1`；AXR opt-in 使用 `requirements.axr.txt` / `setup.ps1 -AXR`，后者须先安装 C++ 构建依赖。
+
 2. 开发构建 `python scripts/build_axr.py --openssl /path/to/openssl3`，生成 Swift / C++ helper
    和 C++20 绑定。pip 安装 AXR 本身也会构建绑定，但不会构建微信 UIA；UIA 要构建根 CMake。
 3. 把 `examples/axr.policy.example.json` 或 `axr.database.example.json` 复制到 Git 外的私有目录，
