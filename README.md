@@ -2,13 +2,15 @@
 
 **实验性原型 · 仅完成小范围数据库读取验证 · 真实发送与实时增量未验证**
 
-把 Windows 个人微信客户端的当前可见私人聊天，或显式绑定的 WCDB 数据库会话，包装为 MCP 工具。
+把 macOS / Windows 个人微信客户端的当前可见私人聊天，或显式绑定的 WCDB 数据库会话，包装为 MCP 工具。
 目标是让 AI 以明确标注的助理身份回复，而不是冒充微信号主人。
 
 本仓库 `AXR/` 内 Stellaria AXR SDK 使用 [AGPL v3](AXR/LICENSE)；其他项目源码保持 [MIT](LICENSE)，第三方依赖保持各自协议。组合发行的 AGPL 义务见 [许可证边界](LICENSES.md)。
 项目不是微信、腾讯或 OpenAI 的官方产品。Codex 是默认助理称呼，不代表官方集成或认证。
 
 ## Stellaria AXR SDK Gen1 合作开发
+
+新增 [Mac 回复与本地 OCR](docs/MAC_REPLY.md)：WCDB + UI 混合模式、进程定向输入及独立发送记录观察。合成窗口失焦发送/OCR 读回已验证；本机微信聊天控件与受保护画面仍阻塞真实发送，保持实验状态。
 
 根目录 [AXR/](AXR/README.md) 是应用无关的 **C++20 SDK**，提供 Guard / Host / Journal
 授权执行能力及 Python 绑定；Mac 通用 adapter 使用 Swift，Win 使用 C++。

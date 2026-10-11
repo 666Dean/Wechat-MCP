@@ -11,6 +11,7 @@ PYBIND11_MODULE(_axr_native,m) {
     m.def("hmac",[](py::bytes key,const std::string& data){return Hmac(std::string(key),data);});
     m.def("intent_seal",[](const std::string& a){return IntentSeal(Json::parse(a));});
     m.def("check_commit",[](const std::string& path,const std::string& proof){return axr_check_commit(path.c_str(),proof.c_str())==1;});
+    m.def("check_scoped_commit",[](const std::string& path,const std::string& proof,const std::string& scope){return axr_check_scoped_commit(path.c_str(),proof.c_str(),scope.c_str())==1;});
     m.def("valid_transition",&ValidTransition);
     m.def("encrypt",[](py::bytes key,py::bytes data,const std::string& binding){return py::bytes(Encrypt(std::string(key),std::string(data),binding));});
     m.def("decrypt",[](py::bytes key,py::bytes data,const std::string& binding){return py::bytes(Decrypt(std::string(key),std::string(data),binding));});

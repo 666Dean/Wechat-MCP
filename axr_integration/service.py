@@ -36,10 +36,18 @@ class Service:
             if not self.journal.verify_audit():raise AXRError("journal_audit_integrity_failed")
             self.journal.recover();self.journal.purge()
             if adapter is not None:self.adapter=adapter
-            elif self.config["mode"]=="wcdb":
+            elif self.config["mode"] in {"wcdb","hybrid"}:
                 from adapters.wcdb import DatabaseAdapter
                 self.adapter=DatabaseAdapter({**self.config["database"],"account_id":self.account,
                     "conversations":self.config["conversations"]},self.store.secrets)
+                if self.config["mode"]=="hybrid":
+                    from adapters.ui import UIAdapter
+                    from adapters.hybrid import HybridAdapter
+                    try:
+                        ui=UIAdapter({**self.config["ui"],"account_id":self.account,"conversations":self.config["conversations"]})
+                    except BaseException:
+                        self.adapter.close();raise
+                    self.adapter=HybridAdapter(self.adapter,ui)
             elif self.config["mode"]=="ui":
                 from adapters.ui import UIAdapter
                 self.adapter=UIAdapter({**self.config["ui"],"account_id":self.account,"conversations":self.config["conversations"]})
@@ -84,6 +92,9 @@ class Service:
                       tuple(sources),destination,workflow)
 
     def _read_action(self,conversation_id,payload,*,workflow="manual"):
+        binding=self.bindings[conversation_id]
+        if self.config["mode"]=="ui" and binding.get("read_method")=="ocr":
+            payload={**payload,"visual_binding":binding["visual_binding"]}
         action=self._action(conversation_id,"messages.search" if payload.get("query") else "messages.read",payload,workflow=workflow)
         data_class=self.bindings[conversation_id].get("data_class","personal")
         return replace(action,sources=(Provenance(action.resource,"query:"+digest(payload),data_class),))
@@ -106,10 +117,23 @@ class Service:
     def _read(self,action,check,epoch):
         check()
         options=dict(action.payload)
+        options.pop("visual_binding",None) # Sealed owner selector, not a query filter.
+        readback_job=options.pop("readback_job",None)
         if self.config["mode"]=="ui":options["guard_context"]=check.commit_proof()
         page=self.adapter.search(action.resource.conversation_id,**options)
         check() # A changed policy cannot disclose or persist a newly fetched page.
         self.journal.meter("pages_read")
+        if readback_job is not None:
+            original=self.journal.action(self.journal.get(readback_job,self.principal))
+            if original.operation!="messages.send" or original.resource!=action.resource:
+                raise AXRError("readback_resource_changed")
+            matches=[m for m in page["messages"] if m.get("text")==original.payload["text"] and m.get("outgoing") is True
+                     and m.get("sender")==self.account and type(m.get("server_id")) is int and m["server_id"]>0
+                     and not m.get("truncated") and not m.get("text_truncated")]
+            observation={"database_record_observed":len(matches)==1 and not page.get("has_more"),
+                         "matching_record_count":len(matches),"delivery_confirmed":False,"body_disclosed":False}
+            # Never create a disclosable body context from a send observation.
+            return {"epoch":epoch,"verified":True,"evidence_digest":digest(observation),"output":observation}
         # Context cost cap independent of requested record count. No global chat cache.
         messages=[];remaining=24000
         for message in page["messages"]:
@@ -195,8 +219,34 @@ class Service:
             destination="wechat:"+resource.key,workflow=draft.workflow))
 
     def _send(self,action,check,epoch):
-        if self.config["mode"]!="ui":raise AXRError("database_read_mode_has_no_send_authority")
+        if self.config["mode"] not in {"ui","hybrid"}:raise AXRError("database_read_mode_has_no_send_authority")
         return self.adapter.send(action,check,epoch)
+
+    def observe_send_record(self,jid):
+        """Separate read AET; never retry a send or promote an Unknown receipt."""
+        with self.runtime.lock:
+            self.ensure_policy()
+            if self.config["mode"] not in {"wcdb","hybrid"}:raise AXRError("database_readback_required")
+            row=self.journal.get(jid,self.principal)
+            action=self.journal.action(row)
+            if action.operation!="messages.send" or row["state"] not in {"Completed","Unknown"}:
+                raise AXRError("completed_or_unknown_send_required")
+            text=action.payload["text"]
+            read_action=self._read_action(action.resource.conversation_id,
+                {"query":text[:256],"sender":self.account,"since":max(0,int(row["created"])-1),
+                 "until":2**63-1,"after":None,"limit":50,"readback_job":jid})
+            classes={p.data_class for p in action.sources}
+            read_action=replace(read_action,sources=(*read_action.sources,
+                *(Provenance(action.resource,"readback-class:"+data_class,data_class) for data_class in sorted(classes))))
+            read=self.runtime.propose(read_action)
+            if read["state"]=="Ready":read=self.execute(read["id"])
+            summary={"send_state":row["state"],"send_state_changed":False,"retry":False,
+                     "delivery_confirmed":False,"database_record_observed":False,"read_job":read}
+            if read["state"]!="Completed":return summary
+            # An existing/manual identical record is not proof of this UI action's
+            # delivery. Report observation only; retain Unknown and disable retries.
+            summary.update(read["result"])
+            return summary
 
     def execute(self,jid,dry_run=False):
         with self.runtime.lock:return self._execute_locked(jid,dry_run)
@@ -326,6 +376,11 @@ def register(mcp,service):
     @mcp.tool()
     def wechat_propose_send(conversation_id:str,draft_id:str)->dict:
         return service.propose_send(conversation_id,draft_id)
+    @mcp.tool()
+    def wechat_observe_send_record(job_id:str)->dict:
+        """Read a separate bounded WCDB AET for exact outgoing text. Counts only;
+        no resend, no Unknown state change, no claim of recipient delivery."""
+        return service.observe_send_record(job_id)
     @mcp.tool()
     def axr_execute(job_id:str,dry_run:bool=False)->dict:return service.execute(job_id,dry_run)
     @mcp.tool()
