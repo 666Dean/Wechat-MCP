@@ -156,6 +156,15 @@ class NativeImageTests(unittest.TestCase):
             with patch.object(qualification.os, 'fstat', side_effect=[before, changed]):
                 with self.assertRaisesRegex(AXRError, 'bundle_changed'):
                     qualification.read_regular(path, 32)
+            # Reopening must detect path replacement and every metadata field,
+            # even when the original descriptor's before/after views agree.
+            for field in fields:
+                replacement = SimpleNamespace(**{f: getattr(before, f) for f in fields})
+                setattr(replacement, field, getattr(before, field) + 1)
+                with self.subTest(field=field), \
+                        patch.object(qualification.os, 'fstat', side_effect=[before, before, replacement]), \
+                        self.assertRaisesRegex(AXRError, 'bundle_changed'):
+                    qualification.read_regular(path, 32)
             link = path.with_name('link')
             try:
                 link.symlink_to(path)

@@ -66,11 +66,21 @@ def read_regular(path, maximum):
         with os.fdopen(descriptor, 'rb', closefd=False) as stream:
             data = stream.read(maximum + 1)
         after = os.fstat(descriptor)
-        current = path.stat(follow_symlinks=False)
         fields = ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns', 'st_mode', 'st_nlink')
-        if (len(data) != before.st_size or any(p.is_symlink() for p in (path, *path.parents)) or
-                any(getattr(before, f) != getattr(x, f) for x in (after, current) for f in fields)):
+        if (len(data) != before.st_size or
+                any(getattr(before, f) != getattr(after, f) for f in fields)):
             raise AXRError('wechat_native_bundle_changed')
+        # Reopen the exact path while the first handle remains alive. Compare
+        # handle snapshots using the same API, not stat/fstat timestamp views
+        # that can differ on Windows. All seven identity/change fields remain.
+        current_descriptor = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+        try:
+            current = os.fstat(current_descriptor)
+            if (any(p.is_symlink() for p in (path, *path.parents)) or
+                    any(getattr(before, f) != getattr(current, f) for f in fields)):
+                raise AXRError('wechat_native_bundle_changed')
+        finally:
+            os.close(current_descriptor)
         return data
     finally:
         os.close(descriptor)

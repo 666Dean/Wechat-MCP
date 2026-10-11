@@ -31,6 +31,8 @@ python -m adapters.macos.native_qualification
 
 入口只允许固定安装位置，没有用户提供的地址、调用签名、收件人、正文或发送参数；不是 MCP 工具。读取 bundle 元数据和核心程序字节，前后校验原厂签名身份；拒绝链接、硬链接、非普通文件、超限及读中替换。不同 build、模块、函数字节或锚点失败即返回非零，异常隐藏路径及子进程诊断。
 
+文件复核保留原句柄，用只读重新打开的精确路径取得另一份 fstat；核对设备、inode、大小、mtime、ctime、mode、nlink 全七字段。读中变化与路径指向替换分别拒绝，避免 stat/fstat 视图混比，不放宽时间精度或身份规则。
+
 本机实际运行结果：原 3 个函数、任务调用链和厂商签名通过；本轮进一步核对下节 15 个对象/账号函数及 7 条普通微信分支调用边。报告为 `offline_layout_and_ownership_only`，`native_send_available=false`、`runtime_identity_verified=false`。不会写 OwnerStore、访问 Keychain/数据库、发放权限、读取画面或发送。无需为离线程序代码校验新增聊天授权。
 
 SDK 的 `axr.native_image.NativeImage` 是独立编写的通用离线工具，只解析 arm64 Mach-O：有界 universal32/64 切片、唯一 UUID、文件支持的代码区、函数边界/哈希、直接 BL 目标和相邻 ADRP/ADD 字符串引用。不执行文件、猜寄存器状态或自动迁移旧偏移；同样没有授予调用权限的接口。微信版本知识保持在 SDK 外。
