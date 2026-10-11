@@ -51,6 +51,9 @@ jobs:
       - name: Root helpers and native tests (macOS)
         if: runner.os == 'macOS'
         run: python scripts/build_axr.py --openssl "$OPENSSL_ROOT_DIR" --mac-selection-probe
+      - name: Compile read-only native process eligibility probe (macOS)
+        if: runner.os == 'macOS'
+        run: swiftc adapters/macos/native_runtime_probe.swift -o .local-private/build/wechat-native-runtime-probe
       - name: Root helpers and native tests (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

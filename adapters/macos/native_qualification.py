@@ -14,6 +14,7 @@ from pathlib import Path
 from axr.aet import AXRError
 from axr.native_image import NativeImage
 from adapters.wcdb_owner import installed_signature, signature_identity
+from .native_contract import verify_contract
 
 BUILD = '270134'
 UUID = '8acf7a2f-517c-32b4-9dfb-47e8849cd444'
@@ -42,11 +43,13 @@ def qualify_image(data):
         raise AXRError('wechat_native_anchor_mismatch')
     if not any(c['target'] == FUNCTIONS[1][1] for c in image.direct_calls(FUNCTIONS[0][1])):
         raise AXRError('wechat_native_task_chain_mismatch')
+    contract = verify_contract(image)
     return {'build': BUILD, 'architecture': 'arm64', 'sample_identity_verified': True,
             'function_fingerprints_verified': len(FUNCTIONS), 'task_chain_verified': True,
-            'evidence': 'offline_code_identity_only', 'native_send_available': False,
+            'contract': contract,
+            'evidence': 'offline_layout_and_ownership_only', 'native_send_available': False,
             'runtime_identity_verified': False,
-            'remaining': ['request_construction_and_lifetime', 'calling_thread_and_private_abi',
+            'remaining': ['wire_request_and_cancellation_contract', 'calling_thread_and_private_abi',
                           'runtime_account_and_exact_private_recipient', 'one_shot_submission_and_record_observation']}
 
 
