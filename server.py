@@ -23,10 +23,34 @@ def main():
     parser.add_argument("--probe-limit", type=int, default=20, help="验证页大小（1 到 50，默认 20）")
     parser.add_argument("--probe-database-key", action="store_true",
                         help="本机只读校验会话库及最多 64 个消息分库首页面；不加载 DLL、不输出密钥或正文")
+    parser.add_argument("--import-keeper-key", metavar="CACHE_FILE",
+                        help="本机交互导入一个 chatlog-keeper 密钥缓存；全部首页面匹配后才保存 DPAPI")
     contacts = parser.add_mutually_exclusive_group()
     contacts.add_argument("--set-contacts", nargs="*", metavar="REMARK")
     contacts.add_argument("--list-contacts", action="store_true")
     args = parser.parse_args()
+    if args.import_keeper_key is not None:
+        if (args.demo or args.doctor or args.store_database_key or args.probe_database_key
+                or args.list_database_sessions or args.probe_database_messages is not None
+                or args.set_contacts is not None or args.list_contacts or args.allow_contact_management):
+            parser.error("缓存导入不能与其他操作混用")
+        if not sys.stdin.isatty():
+            parser.error("缓存导入需要本机交互终端")
+        try:
+            from database_key_import import import_key_cache
+            config = ConfigStore(args.config).load()
+            if config["backend"] != "wcdb":
+                raise ValueError("backend 无效")
+            result = import_key_cache(config["database_reader"], args.import_keeper_key)
+        except Exception:
+            print(json.dumps({"key_imported": False,
+                              "error": "缓存导入失败；请在 Windows 本机核对缓存格式、数据库绑定及 DPAPI 存储"},
+                             ensure_ascii=False))
+            sys.exit(1)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if not result["key_imported"]:
+            sys.exit(1)
+        return
     if args.probe_database_key:
         if (args.demo or args.doctor or args.store_database_key or args.list_database_sessions
                 or args.probe_database_messages is not None or args.set_contacts is not None
