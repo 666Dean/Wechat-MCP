@@ -54,6 +54,11 @@ class Service:
             else:raise AXRError("unknown_data_mode")
             handlers={"messages.read":self._read,"messages.search":self._read,
                       "disclosure.send":self._disclose,"reply.prepare":self._prepare,"messages.send":self._send}
+            self.navigation=None
+            if "navigation" in self.config:
+                from adapters.macos.navigation import NavigationAdapter
+                self.navigation=NavigationAdapter(self.config["navigation"])
+                handlers["application.navigate"]=self.navigation.execute
             if self.config.get("workspace"):
                 self.workspace=Workspace(self.config["workspace"],self.store.vault,self.store.directory/"versions")
                 handlers["workspace.write"]=self.workspace.write
@@ -80,7 +85,20 @@ class Service:
             "policy_version":self.guard.version,"listener":{k:self.config.get("listener",{}).get(k,False) for k in ("listen","wake_agent","auto_execute")},
             "metrics":self.journal.metrics(),"audit_valid":self.journal.verify_audit(),
             "approval":"local_owner_os_authentication","unknown_retry":False,
+            "navigation":{"enabled":self.navigation is not None,
+                "actions":list(self.config.get("navigation",{}).get("actions",[])),
+                "scope":"application_menu_only","message_send_authority":False},
             "restart_required":digest(self.store.config())!=self.initial_policy_digest}
+
+    def navigate(self,command):
+        self.ensure_policy()
+        if self.navigation is None:raise AXRError("navigation_disabled_by_owner")
+        from adapters.macos.navigation import APPLICATION_SCOPE
+        action=Action(self.principal,Resource("wechat",self.account,APPLICATION_SCOPE),
+            "application.navigate",self.purpose+":ui-navigation",
+            {"command":command,"navigation_binding":self.navigation.binding(command)})
+        # Always return the proposal. Approval belongs to the local owner CLI.
+        return self.runtime.propose(action)
 
     def conversations(self):
         return {"conversations":[{"conversation_id":k,"display_name":v["display_name"]} for k,v in self.bindings.items()],
@@ -347,6 +365,7 @@ class Service:
     def close(self):
         self.stop_event.set()
         self.runner_supervisor.cancel()
+        if self.navigation is not None:self.navigation.cancel()
         if hasattr(self.adapter,"cancel"):self.adapter.cancel()
         if self.listener_thread:
             self.listener_thread.join(timeout=12)
@@ -361,6 +380,10 @@ def register(mcp,service):
     def wechat_status()->dict:return service.status()
     @mcp.tool()
     def wechat_find_conversations()->dict:return service.conversations()
+    @mcp.tool()
+    def wechat_ui_navigate(command:str)->dict:
+        """Propose an owner-allowlisted menu action. No contact selection, reading or sending."""
+        return service.navigate(command)
     @mcp.tool()
     def wechat_read_context(conversation_id:str,query:str="",sender:str|None=None,since:int=0,
                             until:int=2**63-1,cursor:str|None=None,limit:int=20)->dict:

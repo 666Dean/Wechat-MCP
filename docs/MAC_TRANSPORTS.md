@@ -22,8 +22,21 @@
 | --- | --- | --- |
 | [wechat-hook-macos](https://github.com/lovezm/wechat-hook-macos/tree/bf3a0ed1dff128eef2df8138183990d86d5fcf1f) | bf3a0ed | README 对应 4.1.8.29；send_text 实现返回未完成错误，要求重签名/注入，不能作为现有版本的真实发送实现 |
 | [SovietExtension](https://github.com/MustangYM/SovietExtension/tree/a0e7533ff39b14fc135445c4c79d838544b97fdc) | a0e7533 | 已记录支持版本为 4.1.11.23 / 269079、4.1.10.53 / 268853，未证明支持本机 270102 或升级后 270134 |
+| [wechat_chatter](https://github.com/yincongcyincong/wechat_chatter/tree/f222f37321f66d3a199cb3c7642f77f7504d85da) | f222f37 | GPL-3.0；有按收件人 ID 构造原生/protobuf 发送代码，版本配置最高到 4.1.12.53；没有 4.1.15.54 / 270134 的配置或精确二进制身份门禁。文档运行方式为关闭 SIP 或修改原版加载 Gadget、重签名；仅静态阅读，未运行 |
+| [wechat-use](https://github.com/leeguooooo/wechat-use/tree/8538667abb2b2ca587b65cd04b58885bfc771105) | 8538667 | 宣称后台原生键盘/调试发送，安装器绑定 4.1.9；公开仓库未包含核心发送实现，不能审计当前版本。其自定义非商业学习许可证限制商业用途及再分发，不能作为本项目可直接整合的开源依赖 |
 
 仅阅读源代码，没有执行这些插件、安装二进制或调用内部发送地址；版本不匹配不能靠猜偏移、自动重试或修改隐私保护补齐资格。之前 AX/本地 OCR 审查见 [MAC_UI_RESEARCH.md](MAC_UI_RESEARCH.md)。
+
+进一步检查 SovietExtension 的发送运行时解析器：具体 SendMsgCGI 路径仅允许旧 build 268853；
+269079 的独立转发 ABI 也有版本/UUID 条件，不能把旧地址当作本机能力。
+微信 bundle 没有可用 scripting dictionary，URL scheme 也没有已验证的收件人 ID + 文本发送契约。
+官方分享扩展声明图片/文件/网页等输入；纯文本、合成文件、网页的旧 NSSharingService 枚举均未返回微信。
+这些枚举只属于静态/元数据检查，没有调用分享或选择联系人，不能证明现代 Share 菜单彻底不可用。
+
+目前实际可用的非 OCR 路径是 [固定菜单导航](MAC_NAVIGATION.md)：真实 AET 从失焦微信打开会话选择面板，
+窗口验证成功；内部控件仍缺失。原账号“稳定收件人 ID → 精确发送 → 独立数据库读回”的写入环节尚未资格。
+后续原生发送适配需当前版本/架构/厂商签名/模块身份与 ABI 匹配、独立账户/收件人见证、
+精确正文授权、单次提交和本地记录观察；未知结果不得盲重发。不把历史 hook、机器人身份或数据库写入当作发送成功。
 
 ## 标准升级与系统选择器
 

@@ -125,6 +125,54 @@ class Foundation(unittest.TestCase):
         self.assertFalse(native.check_commit(control['store'],json.dumps(swapped)))
         self.guard.consume(self.action)
         self.assertFalse(native.check_commit(control['store'],control['proof']))
+    def test_navigation_requires_exact_short_grant_and_native_binding(self):
+        self.now[0]=time.time()
+        binding={'bundle':'fixture','pid':123,'menu_path':['File','Select'],
+                 'window_title':'Selector','window_subrole':'AXDialog'}
+        action=replace(self.action,operation='application.navigate',payload={'navigation_binding':binding})
+        with self.assertRaisesRegex(AXRError,'exact_intent'):self.grant(action)
+        with self.assertRaisesRegex(AXRError,'short_expiry'):self.grant(action,intent=action.seal,max_uses=2)
+        self.grant(action,intent=action.seal,max_uses=1)
+        gid,version=self.guard.consume(action);control=self.guard.execution_proof(action,gid,version)
+        scope={'resource':asdict(action.resource),'operations':['application.navigate']}
+        check=lambda s:native.check_scoped_commit(control['store'],control['proof'],json.dumps(s))
+        self.assertFalse(check(scope))
+        self.assertTrue(check({**scope,'navigation_binding':binding}))
+        for key,new in [('pid',124),('bundle','other'),('menu_path',['File','Send']),
+                        ('window_title','Other'),('window_subrole','AXStandardWindow')]:
+            self.assertFalse(check({**scope,'navigation_binding':{**binding,key:new}}),key)
+        self.guard.revoke_owner(gid)
+        self.assertFalse(check({**scope,'navigation_binding':binding}))
+        # A validly signed grant from an older issuer must not bypass the new
+        # policy at either broker or helper commit boundary.
+        import hmac
+        for changed in ({'intent':None},{'max_uses':2},{'expires_at':self.now[0]+1000}):
+            with self.subTest(legacy_grant=changed):
+                self.grant(action,intent=action.seal,max_uses=1)
+                gid,version=self.guard.consume(action);control=self.guard.execution_proof(action,gid,version)
+                with sqlite3.connect(self.root/'guard.db') as db:
+                    body=json.loads(db.execute('SELECT body FROM grants WHERE id=?',(gid,)).fetchone()[0])
+                    encoded=canonical({**body,**changed}).decode()
+                    db.execute('UPDATE grants SET body=?,signature=? WHERE id=?',
+                        (encoded,hmac.new(b'g'*32,encoded.encode(),'sha256').hexdigest(),gid))
+                proof=json.loads(control['proof']);proof['grants'][0]['body_sha256']=hashlib.sha256(encoded.encode()).hexdigest()
+                with self.assertRaisesRegex(AXRError,'authority_missing'):self.guard.revalidate(action,gid,version)
+                self.assertFalse(native.check_scoped_commit(control['store'],json.dumps(proof),
+                    json.dumps({**scope,'navigation_binding':binding})))
+                self.guard.revoke_owner(gid)
+    def test_navigation_cleanup_removes_only_own_result_even_when_revoke_fails(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from axr_integration.owner_navigation import cleanup
+        own=self.journal.propose(self.action)
+        other=self.journal.propose(replace(self.action,execution_id=str(uuid.uuid4())))
+        for jid in (own,other):self.journal.save_result(jid,self.action.principal,{'window_verified':True},self.guard.version)
+        guard=Mock();guard.revoke_owner.side_effect=AXRError('fixture_revoke_failed')
+        with self.assertRaisesRegex(AXRError,'fixture_revoke_failed'):
+            cleanup(SimpleNamespace(guard=guard,journal=self.journal),own,self.action.principal,'grant')
+        with self.assertRaises(AXRError):self.journal.result(own,self.action.principal,self.guard.version)
+        self.assertTrue(self.journal.result(other,self.action.principal,self.guard.version)['window_verified'])
+        self.assertTrue(self.journal.verify_audit())
     def test_tampered_grant(self):
         self.grant();db=sqlite3.connect(self.root/'guard.db');db.execute("UPDATE grants SET body=replace(body,'purpose','forged')");db.commit();db.close()
         with self.assertRaises(AXRError):self.guard.check(self.action)
@@ -322,6 +370,38 @@ class ServiceTests(unittest.TestCase):
             self.service.guard._issue_owner(principal='agent',resource=self.resource,operations=[op],purpose='purpose',
                 expires_at=time.time()+100,max_uses=100,classes=['personal'])
     def tearDown(self):self.service.close();self.tmp.cleanup()
+    def test_navigation_disabled_without_owner_config(self):
+        with self.assertRaisesRegex(AXRError,'navigation_disabled_by_owner'):
+            self.service.navigate('open_chat_selector')
+    def test_navigation_application_scope_approval_and_unknown_never_retry(self):
+        from unittest.mock import patch
+        from adapters.macos.navigation import NavigationAdapter,APPLICATION_SCOPE
+        s=self.service
+        s.navigation=NavigationAdapter({'native_helper':str(Path(self.tmp.name)/'helper'),'actions':['open_chat_selector']})
+        s.runtime.handlers['application.navigate']=s.navigation.execute
+        response={'pid':123,'window_verified':True,'content_read':False,'message_sent':False,'method':'ax_menu','foreground':False}
+        with patch.object(s.navigation,'_request',return_value={'running':True,'accessibility':True,'pid':123}) as request:
+            job=s.navigate('open_chat_selector')
+        self.assertEqual(job['state'],'AwaitingApproval');self.assertEqual(request.call_args.args,('status',))
+        action=s.journal.action(s.journal.get(job['id'],s.principal))
+        self.assertEqual(action.resource.conversation_id,APPLICATION_SCOPE)
+        self.assertNotEqual(action.resource,self.resource)
+        with patch.object(s.navigation,'_request') as request:
+            with self.assertRaises(AXRError):s.execute(job['id'])
+            request.assert_not_called()
+        approve(s.store,job['id'],s.principal)
+        with patch.object(s.navigation,'_request',return_value=response) as request:
+            result=s.execute(job['id'])
+        self.assertEqual(result['state'],'Completed');self.assertFalse(result['result']['message_sent'])
+        self.assertEqual(request.call_args.kwargs['expected_pid'],123)
+        self.assertIn('proof',request.call_args.kwargs['guard_context'])
+        with patch.object(s.navigation,'_request',return_value={'running':True,'accessibility':True,'pid':123}):
+            job=s.navigate('open_chat_selector')
+        approve(s.store,job['id'],s.principal)
+        with patch.object(s.navigation,'_request',return_value={**response,'window_verified':False}) as request:
+            self.assertEqual(s.execute(job['id'])['state'],'Unknown')
+            self.assertEqual(s.execute(job['id'])['state'],'Unknown')
+            self.assertEqual(request.call_count,1)
     def test_read_body_hidden_until_independent_disclosure(self):
         s=self.service;result=s.read('friend');self.assertEqual(result['state'],'Completed');self.assertNotIn('untrusted fixture',json.dumps(result))
         job=s.disclose('friend',result['result']['context_id']);self.assertEqual(job['state'],'AwaitingApproval')
@@ -498,6 +578,54 @@ class ServiceTests(unittest.TestCase):
         asyncio.run(check())
 
 class Workers(unittest.TestCase):
+    def test_navigation_qualification_cannot_open_owner_store_without_os_auth(self):
+        from unittest.mock import patch
+        from axr_integration.owner_navigation import main
+        with tempfile.NamedTemporaryFile() as helper:
+            argv=['owner-navigation','--state','unused-state','--helper',helper.name,'--command','open_chat_selector']
+            with patch('sys.argv',argv),patch('sys.stdin.isatty',return_value=False),\
+                 patch('axr_integration.owner_navigation.NavigationAdapter.binding') as binding,\
+                 patch('axr_integration.owner_navigation.OwnerStore') as store:
+                with self.assertRaisesRegex(AXRError,'interactive_terminal'):main()
+                binding.assert_not_called();store.assert_not_called()
+            with patch('sys.argv',argv),patch('sys.stdin.isatty',return_value=True),patch('sys.stdout.isatty',return_value=True),\
+                 patch('axr_integration.owner_navigation.NavigationAdapter.binding',return_value={'pid':123}),\
+                 patch('axr_integration.owner_navigation.authenticate',side_effect=AXRError('auth_denied')),\
+                 patch('axr_integration.owner_navigation.OwnerStore') as store,patch('builtins.print'):
+                with self.assertRaisesRegex(AXRError,'auth_denied'):main()
+                store.assert_not_called()
+    def test_navigation_catalog_denies_arbitrary_menus_and_platform(self):
+        from unittest.mock import patch
+        from adapters.macos.navigation import NavigationAdapter,validate_navigation
+        config={'native_helper':str(Path(tempfile.gettempdir())/'helper'),'actions':['open_chat_selector']}
+        for changed in ({'actions':['send_text']},{'actions':['open_chat_selector','open_chat_selector']},
+                        {'native_helper':'helper'},{'menu_path':['文件','退出']},{'actions':[{}]}):
+            with self.subTest(changed=changed),self.assertRaises(AXRError):validate_navigation({**config,**changed})
+        adapter=NavigationAdapter(config)
+        for command in ('send_text','pin','mute','quit',{},['open_chat_selector']):
+            with patch.object(adapter,'_request') as request,self.assertRaises(AXRError):
+                adapter.binding(command)
+            request.assert_not_called()
+        with patch('adapters.macos.navigation.sys.platform','win32'),patch.object(adapter.supervisor,'invoke') as invoke:
+            with self.assertRaisesRegex(AXRError,'platform_unavailable'):adapter.binding('open_chat_selector')
+            invoke.assert_not_called()
+        from axr_integration.policy import validate_controls
+        with self.assertRaisesRegex(AXRError,'reserved_application_navigation_scope'):
+            validate_controls({'navigation':config,'conversations':[{'conversation_id':'axr:application-ui'}]})
+    def test_navigation_binding_substitution_stops_before_native_dispatch(self):
+        from unittest.mock import patch
+        from adapters.macos.navigation import NavigationAdapter,APPLICATION_SCOPE
+        adapter=NavigationAdapter({'native_helper':str(Path(tempfile.gettempdir())/'helper'),'actions':['open_chat_selector']})
+        with patch.object(adapter,'_request',return_value={'running':True,'accessibility':True,'pid':123}):
+            binding=adapter.binding('open_chat_selector')
+        action=Action('agent',Resource('wechat','fixture',APPLICATION_SCOPE),'application.navigate','test',
+                     {'command':'open_chat_selector','navigation_binding':binding})
+        for changed in ({'menu_path':['文件','发起会话','发送']},{'bundle':'other'},{'pid':True},
+                        {'window_title':'Other'},{'extra':'unreviewed'}):
+            with self.subTest(changed=changed),patch.object(adapter,'_request') as request:
+                with self.assertRaises(AXRError):
+                    adapter.execute(replace(action,payload={**action.payload,'navigation_binding':{**binding,**changed}}),lambda:None,'epoch')
+                request.assert_not_called()
     def test_owner_picker_rejects_unsealed_or_nonfinite_window_bindings(self):
         from axr.owner_window_ocr import validate_request
         value={'resource':asdict(Resource('fixture','fixture-account','fixture-chat')),

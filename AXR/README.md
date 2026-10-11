@@ -87,6 +87,9 @@ Journal 的持久 execution claim 在正文 TTL/重启后仍拒绝原 ID 重放�
   策略版本、墙钟过期及来源额度，不携带 issuer key。此 proof 只供可信私有管道使用，
   不构成公开认证协议，也不阻止拥有同用户任意 shell 权限的人直接操作应用。
   微信外部提交与撤权之间没有共同原子事务；仍可能产生 Unknown，不能承诺 exactly-once。
+  通用 `menu_navigate` 仅接受精确 `application.navigate` 能力，密封两级菜单与窗口验证条件、bundle/PID；
+  签发、broker 校验及 native commit 均拒绝无 intent、多次或剩余期限超过 300 秒的导航权限。
+  应用菜单目录由 SDK 外的集成实现；SDK 不提供联系人、微信账号或发送逻辑。
 * macOS worker 在 deny-default sandbox-exec 下运行；Windows native AppContainer 不发放
   网络 capability，只读 owner-staged runtime，并在恢复线程前加入 JobObject。
   沙箱失败时拒绝启动。Windows CI 合成进程已验证受管启动、staged 文件读取、私有文件
