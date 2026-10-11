@@ -58,6 +58,16 @@ Journal 的持久 execution claim 在正文 TTL/重启后仍拒绝原 ID 重放�
 `revoke GRANT` 提升全局策略版本，保守失效全部旧能力及上下文；需重新授权所需能力。
 这些命令不注册为 MCP 工具。`dashboard` 显示实际计数与审计验证结果。
 
+## 所有者单窗口读取验收
+
+可选构建 `AXR_MAC_SELECTION_PROBE` 提供 Apple 官方单窗口选择器。默认仅元数据；
+`python -m axr.owner_window_ocr` 是交互式、本地所有者入口，不注册为 MCP。
+新读取须 OS 认证，精确绑定资源、bundle/PID、窗口 ID、标题及几何，一次授权最长 240 秒。
+仅使用主人选择器返回的原始 filter，读取一帧并执行本地 Vision；不保存图片、不联网、不输入。
+取消、范围变化、空帧和超时失败关闭；操作结束撤权并逻辑清理加密 OCR 结果。
+这不授予平台身份、模型披露、监听或发送资格。构建、私有请求格式及实测边界见
+[单窗口验收](../docs/MAC_REPLY.md)。SDK 的合成失焦窗口对照通过，不能外推真实应用可用性。
+
 ## 安全与验收边界
 
 * Guard / Host / Journal 统一使用 AET：Proposed → PolicyChecked → Ready / AwaitingApproval
