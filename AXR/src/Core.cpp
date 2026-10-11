@@ -135,6 +135,8 @@ struct Guard::Impl {
                b.at("resource")!=a.at("resource")||!Contains(b.at("operations"),a.at("operation"))||
                b.at("purpose")!=a.at("purpose")||b.at("workflow")!=a.at("workflow")||
                (!b.at("intent").is_null()&&b.at("intent")!=IntentSeal(a))||
+               (a.at("operation")=="application.navigate"&&
+                (b.at("intent")!=IntentSeal(a)||b.at("max_uses")!=1||b.at("expires_at").get<double>()-now>300))||
                (a.at("destination")!="local"&&!Contains(b.at("destinations"),a.at("destination")))||
                (Risk(a)==4&&b.at("intent")!=IntentSeal(a))||
                (!requiredClass.empty()&&!Contains(b.at("classes"),requiredClass))) continue;
@@ -178,7 +180,7 @@ std::string Guard::IssueOwner(Json b,double now) {
        b.at("max_uses").get<int>()<1||b.at("max_uses").get<int>()>100000||b.at("operations").empty())Fail("invalid_grant");
     for(const auto& op:b.at("operations")) {
         Identity(op);auto s=op.get<std::string>();
-        if((s.starts_with("messages.send")||s.starts_with("disclosure.")||s.starts_with("files.delete")||s.starts_with("funds.")||s.starts_with("credentials."))&&b.at("intent").is_null())Fail("external_action_requires_exact_intent");
+        if((s=="application.navigate"||s.starts_with("messages.send")||s.starts_with("disclosure.")||s.starts_with("files.delete")||s.starts_with("funds.")||s.starts_with("credentials."))&&b.at("intent").is_null())Fail("external_action_requires_exact_intent");
     }
     if(!b.at("intent").is_null()&&(expiry-now>300||b.at("max_uses")!=1))Fail("one_action_grant_requires_short_expiry");
     b["id"]=RandomId();b["policy_version"]=Version();
@@ -254,6 +256,8 @@ extern "C" int axr_check_commit(const char* path,const char* encoded) {
                         parsed.at("purpose")==requested.at("purpose")&&parsed.at("workflow")==requested.at("workflow")&&
                         Contains(parsed.at("operations"),requested.at("operation"))&&
                         (parsed.at("intent").is_null()||parsed.at("intent")==IntentSeal(requested))&&
+                        (requested.at("operation")!="application.navigate"||
+                         (parsed.at("intent")==IntentSeal(requested)&&parsed.at("max_uses")==1&&parsed.at("expires_at").get<double>()-Now()<=300))&&
                         (requested.at("destination")=="local"||Contains(parsed.at("destinations"),requested.at("destination")))&&
                         (requiredClass.empty()||Contains(parsed.at("classes"),requiredClass));
                     for(const auto& source:requested.at("sources"))valid=valid&&Contains(parsed.at("classes"),source.at("data_class"));
@@ -286,6 +290,11 @@ extern "C" int axr_check_scoped_commit(const char* path,const char* encoded,cons
            !Contains(scope.at("operations"),action.at("operation")))return 0;
         if(scope.contains("text")&&scope.at("text")!=action.at("payload").at("text"))return 0;
         if(scope.contains("visual_binding")&&scope.at("visual_binding")!=action.at("payload").at("visual_binding"))return 0;
+        // Navigation is a side effect. A resource-only proof cannot authorize
+        // a substituted process, menu command or verification window.
+        if(action.at("operation")=="application.navigate" &&
+           (!scope.contains("navigation_binding") ||
+            scope.at("navigation_binding")!=action.at("payload").at("navigation_binding")))return 0;
         return 1;
     }catch(...){return 0;}
 }

@@ -74,6 +74,7 @@ func verifyCommit(_ req: [String:Any], operations: [String], text: String? = nil
         "resource":["platform":platform,"account_id":account,"conversation_id":identity]]
     if let text { scope["text"]=text }
     if req["op"] as? String == "read_ocr" { scope["visual_binding"]=req["visual_binding"] }
+    if req["op"] as? String == "menu_navigate" { scope["navigation_binding"]=req["navigation_binding"] }
     let data=try JSONSerialization.data(withJSONObject:scope)
     let encoded=String(decoding:data,as:UTF8.self)
     guard store.withCString({ p in proof.withCString({ q in encoded.withCString({ s in axr_check_scoped_commit(p,q,s) }) }) })==1 else {
@@ -179,6 +180,69 @@ func main() throws -> [String:Any] {
     if op == "read_ocr" {
         try verifyCommit(req,operations:["messages.read","messages.search"])
         return try localOCR(req,app:app)
+    }
+    if op == "menu_navigate" {
+        try verifyCommit(req,operations:["application.navigate"])
+        guard let binding=req["navigation_binding"] as? [String:Any],
+              binding["bundle"] as? String == bundle,
+              let pid=binding["pid"] as? Int, pid == Int(app.processIdentifier),
+              req["expected_pid"] as? Int == pid,
+              let labels=binding["menu_path"] as? [String], labels.count == 2,
+              labels.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 }),
+              let title=binding["window_title"] as? String, !title.isEmpty, title.utf8.count <= 256,
+              let subrole=binding["window_subrole"] as? String, ["AXDialog","AXStandardWindow"].contains(subrole) else {
+            throw Failure("navigation_binding_required")
+        }
+        func verifyNavigation() throws {
+            try verifyCommit(req,operations:["application.navigate"])
+            let current=NSRunningApplication.runningApplications(withBundleIdentifier:bundle)
+            guard !app.isTerminated, current.count == 1, current[0].processIdentifier == app.processIdentifier else {
+                throw Failure("application_epoch_changed")
+            }
+        }
+        func matches() -> [AXUIElement] {
+            // Read only the window shell. No descendants, chat text or contacts.
+            (attr(root,kAXWindowsAttribute) as? [AXUIElement] ?? []).filter {
+                string($0,kAXTitleAttribute) == title && string($0,kAXSubroleAttribute) == subrole
+            }
+        }
+        guard matches().isEmpty else { throw Failure("navigation_window_already_present") }
+        guard let bar=attr(root,kAXMenuBarAttribute) as CFTypeRef?, CFGetTypeID(bar)==AXUIElementGetTypeID() else {
+            throw Failure("menu_bar_unavailable")
+        }
+        let parents=children(bar as! AXUIElement).filter { string($0,kAXTitleAttribute) == labels[0] }
+        guard parents.count == 1 else { throw Failure("menu_parent_missing_or_ambiguous") }
+        let parent=parents[0]
+        try verifyNavigation()
+        guard AXUIElementPerformAction(parent,kAXPressAction as CFString) == .success else {
+            throw Failure("menu_open_unavailable")
+        }
+        // Cancel only this opened menu on failure, never another dialog/window.
+        defer {
+            for menu in children(parent) where string(menu,kAXRoleAttribute) == "AXMenu" {
+                AXUIElementPerformAction(menu,kAXCancelAction as CFString)
+            }
+        }
+        let menus=children(parent).filter { string($0,kAXRoleAttribute) == "AXMenu" }
+        guard menus.count == 1 else { throw Failure("menu_changed") }
+        let items=children(menus[0]).filter { string($0,kAXTitleAttribute) == labels[1] }
+        guard items.count == 1, attr(items[0],kAXEnabledAttribute) as? Bool == true else {
+            throw Failure("menu_item_missing_ambiguous_or_disabled")
+        }
+        try verifyNavigation()
+        guard matches().isEmpty else { throw Failure("navigation_window_changed_before_commit") }
+        guard AXUIElementPerformAction(items[0],kAXPressAction as CFString) == .success else {
+            throw Failure("menu_command_unavailable")
+        }
+        let deadline=Date().addingTimeInterval(2)
+        while matches().isEmpty && Date() < deadline {
+            RunLoop.current.run(until:Date().addingTimeInterval(0.05))
+            try verifyNavigation()
+        }
+        try verifyNavigation()
+        guard matches().count == 1 else { throw Failure("navigation_postcondition_unconfirmed") }
+        return ["pid":pid,"window_verified":true,"content_read":false,"message_sent":false,
+                "foreground":app.isActive,"method":"ax_menu"]
     }
     guard op == "read" || op == "send_text" else { throw Failure("unknown_operation") }
     guard let headerPath = req["header_path"] as? [Int], let expected = req["expected_title"] as? String,
