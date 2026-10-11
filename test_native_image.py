@@ -188,7 +188,7 @@ class NativeImageTests(unittest.TestCase):
                 patch.object(qualification, 'read_regular', side_effect=[plistlib.dumps(info), b'fixture']) as read, \
                 patch.object(qualification, 'qualify_image', return_value=report):
             self.assertTrue(qualification.installed_report()['vendor_signature_verified'])
-            self.assertTrue(str(read.call_args_list[1].args[0]).endswith('/Contents/Resources/wechat.dylib'))
+            self.assertEqual(read.call_args_list[1].args[0].parts[-3:], ('Contents', 'Resources', 'wechat.dylib'))
         bad = dict(info, CFBundleVersion='270133')
         with patch.object(sys, 'platform', 'darwin'), patch.object(qualification, 'installed_signature', return_value=signature), \
                 patch.object(qualification, 'read_regular', return_value=plistlib.dumps(bad)) as read:
