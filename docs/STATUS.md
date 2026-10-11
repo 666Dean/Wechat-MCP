@@ -8,7 +8,7 @@
 SDK C++20、Mac Swift、Win C++，微信业务全部在 SDK 外。旧模式继续保留原有边界。
 Mac 真实 WCDB 正文读取、稳定私聊绑定、后台失焦读取、所有者 OS 认证及 AET/MCP stdio 读取已通过；真实发送仍未通过。自己的会话近 14 天为空，不能称为已有正文读回验证。Windows 按本轮要求无微信实机测试。
 新增本地 [WCDB 初始化](WCDB_OWNER.md)、原始 key/HMAC 校验与有界完整 Zstd frame；本机 150 项回归通过（2 项平台跳过），本轮 CI 结果随 PR 更新。
-本轮 b4c9cca 双平台 CI 150 项通过（Mac/Win 分别跳过 2/4 项）；原生适配器 30 分钟、714 次后台查询零错误，记录见 [Mac 实机验收](AXR_MAC_ACCEPTANCE.md)。正式 CLI 的再次取钥认证未完成，发送和多日 AET 监听仍未验收。
+本轮 b4c9cca 双平台 CI 150 项通过（Mac/Win 分别跳过 2/4 项）；原生适配器 30 分钟、714 次后台查询零错误，记录见 [Mac 实机验收](AXR_MAC_ACCEPTANCE.md)。正式 observe-mac 与 qualify CLI 已分别通过 OS 认证实测、完成清理恢复及唯一绑定；发送和多日 AET 监听仍未验收。
 本机及 macOS / Windows CI 的 141 项回归通过（各 2 项平台跳过），审批取消/重放已加入持久执行标识验证；Windows AppContainer 受管启动、文件及 loopback 隔离通过合成进程验证。Hello 与微信 UIA 全过程仍未设备验收。
 下面的 0.6.1 表格保留为原项目历史记录，不能外推为 AXR 已通过的证据。
 

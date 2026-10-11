@@ -91,6 +91,8 @@ class KeyTests(unittest.TestCase):
             def terminate(self):self.stopped=True
             def wait(self,timeout):return 0
         def launch(command,**options):
+            if command[0]=='/Applications/WeChat.app/Contents/MacOS/WeChat':
+                self.assertEqual(list(root.glob('wcdb-owner-*')),[])
             child=Process();launched.append((command,options,child));return child
         def run(command,**options):return SimpleNamespace(returncode=1 if command[0]=='pgrep' else 0)
         with tempfile.TemporaryDirectory() as tmp:
@@ -108,6 +110,44 @@ class KeyTests(unittest.TestCase):
             self.assertEqual(launched[1][0],['/Applications/WeChat.app/Contents/MacOS/WeChat'])
             self.assertFalse(any(k.startswith(('DYLD_','AXR_OWNER_')) for k in launched[1][1]['env']))
             self.assertEqual(list(root.glob('wcdb-owner-*')),[])
+
+    @unittest.skipUnless(sys.platform=='darwin','macOS temporary application lifecycle')
+    def test_capture_prelaunch_failures_restore_original_without_duplicate_or_bad_signature(self):
+        from adapters.wcdb_owner import observe_mac
+        from types import SimpleNamespace
+        for failure in ('ditto','codesign','launch','interrupt'):
+            with self.subTest(failure=failure),tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp).resolve();observer=root/'fixture.dylib';observer.write_bytes(b'fixture-not-loaded')
+                store=SimpleNamespace(directory=root);launched=[]
+                rows={'contact/contact.db':{},'session/session.db':{},'message/message_0.db':{}}
+                def run(command,**options):
+                    if command[0]==failure:raise subprocess.CalledProcessError(1,command)
+                    if failure=='interrupt' and command[0]=='ditto':raise KeyboardInterrupt()
+                    return SimpleNamespace(returncode=1 if command[0]=='pgrep' else 0)
+                def launch(command,**options):
+                    if command[0]!='/Applications/WeChat.app/Contents/MacOS/WeChat':
+                        self.assertEqual(failure,'launch');raise OSError('fixture startup failed')
+                    self.assertEqual(list(root.glob('wcdb-owner-*')),[])
+                    launched.append((command,options));return SimpleNamespace()
+                with patch('adapters.wcdb_owner.installed_signature',return_value=b'fixture-vendor-signature'),\
+                     patch('adapters.wcdb_owner.subprocess.run',side_effect=run),\
+                     patch('adapters.wcdb_owner.subprocess.Popen',side_effect=launch),\
+                     patch.dict(os.environ,{'DYLD_INJECTED_TEST':'must-not-restore','AXR_OWNER_TEST':'must-not-restore'}):
+                    expected=KeyboardInterrupt if failure=='interrupt' else (OSError if failure=='launch' else subprocess.CalledProcessError)
+                    with self.assertRaises(expected):observe_mac(store,root,rows,{},observer)
+                self.assertEqual(len(launched),1)
+                self.assertFalse(any(k.startswith(('DYLD_','AXR_OWNER_')) for k in launched[0][1]['env']))
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp).resolve();observer=root/'missing.dylib';store=SimpleNamespace(directory=root)
+            rows={'contact/contact.db':{},'session/session.db':{}}
+            for case in ('restarted','signature-changed','already-running'):
+                with self.subTest(case=case),\
+                     patch('adapters.wcdb_owner.installed_signature',side_effect=[b'vendor',b'changed'] if case=='signature-changed' else [b'vendor',b'vendor']),\
+                     patch('adapters.wcdb_owner.subprocess.run',side_effect=[SimpleNamespace(returncode=0)] if case=='already-running' else [SimpleNamespace(returncode=1),SimpleNamespace(returncode=0)]),\
+                     patch('adapters.wcdb_owner.subprocess.Popen') as launch:
+                    with self.assertRaisesRegex(AXRError,{'restarted':'observer_required','signature-changed':'signature_changed','already-running':'quit_installed'}[case]):
+                        observe_mac(store,root,rows,{},observer)
+                    launch.assert_not_called()
 
     def test_wrong_key_tamper_and_generation_rejected_before_storage(self):
         page=encrypted_page()

@@ -22,10 +22,10 @@ SDK 真实抽取 BasicX-Hub、BasicX、Connector 的通用基础设施，固定 
 
 跨平台构建、使用、授权流程与实际验收状态见 [Gen1 集成说明](docs/AXR_GEN1.md)。
 Mac 已完成密钥校验入 Keychain、两个私聊的目录/联系人稳定 ID 绑定，以及真实 WCDB → AET → MCP stdio 只读调用；后台失焦读取成功。聊天 AX 树与取画面仍受阻，真实发送尚未通过。
-本地所有者的 [WCDB 初始化工具](docs/WCDB_OWNER.md) 支持隐藏密钥导入与可选 Mac 临时副本启动观察；不会自动开通模型或发送权限。Windows 本轮不做微信实机测试。
+本地所有者的 [WCDB 初始化工具](docs/WCDB_OWNER.md) 支持隐藏密钥导入与可选 Mac 临时副本启动观察；正式取钥和身份绑定 CLI 已分别通过 OS 认证实测；不会自动开通模型或发送权限。Windows 本轮不做微信实机测试。
 macOS / Windows 原生编译、CTest 和 141 项回归已在 CI 通过；Windows AppContainer 文件/loopback 隔离为合成进程证据。
 本轮新增校验/身份/压缩/observer 回归后，本机 150 项通过（2 项平台跳过）；当前提交的双平台 CI 状态见 PR。
-本轮代码双平台 CI 通过；原生只读适配器完成 30 分钟、714 次后台查询零错误。[匿名实机记录](docs/AXR_MAC_ACCEPTANCE.md) 明确列出仍未通过的发送、正式取钥 CLI 组合流程与多日监听资格。
+本轮代码双平台 CI 通过；原生只读适配器完成 30 分钟、714 次后台查询零错误。[匿名实机记录](docs/AXR_MAC_ACCEPTANCE.md) 明确列出仍未通过的发送与多日监听资格。
 以下历史说明主要描述保留的 **legacy 模式**，不能视为 AXR 的权限或能力说明。
 
 ## 一眼看清当前状态
