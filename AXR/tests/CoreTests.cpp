@@ -30,6 +30,22 @@ int main() {
         assert(axr_check_commit(reinterpret_cast<const char*>(path.c_str()),proof.c_str())==1);
         guard.RevokeOwner(reservation[0]);
         assert(axr_check_commit(reinterpret_cast<const char*>(path.c_str()),proof.c_str())==0);
+        auto classified=a;
+        classified["sources"]=Json::array({Json{{"resource",a["resource"]},{"reference","query:fixture"},
+            {"data_class","personal"},{"trust","untrusted-external"}}});
+        guard.IssueOwner(b,Now());denied=false;
+        try{guard.Check(classified,Now());}catch(...){denied=true;}assert(denied);
+        b["classes"]=Json::array({"personal"});guard.IssueOwner(b,Now());
+        reservation=guard.Consume(classified,Now());
+        auto checked=guard.ExecutionProof(classified,reservation[0],reservation[1],Now());
+        assert(checked["grants"].size()==1);proof=checked.dump();
+        assert(axr_check_commit(reinterpret_cast<const char*>(path.c_str()),proof.c_str())==1);
+        denied=false;try{guard.Check(classified,Now());}catch(...){denied=true;}assert(denied);
+        classified["sources"][0]["data_class"]="sensitive";b["classes"]=Json::array({"sensitive"});
+        b["intent"]=IntentSeal(classified);guard.IssueOwner(b,Now());
+        reservation=guard.Consume(classified,Now());
+        proof=guard.ExecutionProof(classified,reservation[0],reservation[1],Now()).dump();
+        assert(axr_check_commit(reinterpret_cast<const char*>(path.c_str()),proof.c_str())==1);
     }
     assert(DurableWrite(dir/"record.json",record.dump()));
 #if !defined(_WIN32)

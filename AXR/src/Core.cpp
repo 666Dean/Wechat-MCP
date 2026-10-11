@@ -122,7 +122,7 @@ struct Guard::Impl {
     sqlite3* db{};std::string key;
     ~Impl(){if(db)sqlite3_close(db);OPENSSL_cleanse(key.data(),key.size());}
     unsigned Version() const {Statement q(db,"SELECT version FROM policy");if(q.Step()!=SQLITE_ROW)Fail("policy_missing");return unsigned(sqlite3_column_int(q.s,0));}
-    std::string Find(const Json& a,double now,bool quota,const std::string& id="") const {
+    std::string Find(const Json& a,double now,bool quota,const std::string& id="",const std::string& requiredClass="") const {
         Statement q(db,id.empty()?"SELECT id,body,signature,used,revoked FROM grants":"SELECT id,body,signature,used,revoked FROM grants WHERE id=?");
         if(!id.empty())q.Text(1,id);
         while(q.Step()==SQLITE_ROW) {
@@ -135,7 +135,8 @@ struct Guard::Impl {
                b.at("purpose")!=a.at("purpose")||b.at("workflow")!=a.at("workflow")||
                (!b.at("intent").is_null()&&b.at("intent")!=IntentSeal(a))||
                (a.at("destination")!="local"&&!Contains(b.at("destinations"),a.at("destination")))||
-               (Risk(a)==4&&b.at("intent")!=IntentSeal(a))) continue;
+               (Risk(a)==4&&b.at("intent")!=IntentSeal(a))||
+               (!requiredClass.empty()&&!Contains(b.at("classes"),requiredClass))) continue;
             bool valid=true;for(const auto& p:a.at("sources"))valid=valid&&Contains(b.at("classes"),p.at("data_class"));
             if(valid)return q.Text(0);
         }
@@ -144,9 +145,14 @@ struct Guard::Impl {
     std::vector<std::string> Sources(const Json& a,double now) const {
         std::vector<std::string> ids;
         for(const auto& p:a.at("sources")) {
+            // A read's own classified query is covered by its primary grant.
+            // Requiring a second empty-payload grant would reject exact sensitive
+            // approvals and the last allowed page after primary quota consumption.
+            if(Contains(Json{"messages.read","messages.search"},a.at("operation"))&&
+               p.at("resource")==a.at("resource"))continue;
             auto access=a;access["resource"]=p.at("resource");access["sources"]=Json::array();
             access["operation"]="messages.read";access["payload"]=Json::object();access["destination"]="local";
-            ids.push_back(Find(access,now,true));
+            ids.push_back(Find(access,now,true,"",p.at("data_class").get<std::string>()));
             if(a.at("destination")!="local") {
                 access["operation"]="disclosure.send";access["payload"]={{"output_seal",IntentSeal(a)}};
                 access["destination"]=a.at("destination");access["sources"]=Json::array({p});

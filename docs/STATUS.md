@@ -10,6 +10,8 @@ Mac 真实 WCDB 正文读取、稳定私聊绑定、后台失焦读取、所有�
 新增本地 [WCDB 初始化](WCDB_OWNER.md)、原始 key/HMAC 校验与有界完整 Zstd frame；本机 150 项回归通过（2 项平台跳过），本轮 CI 结果随 PR 更新。
 本轮 b4c9cca 双平台 CI 150 项通过（Mac/Win 分别跳过 2/4 项）；原生适配器 30 分钟、714 次后台查询零错误，记录见 [Mac 实机验收](AXR_MAC_ACCEPTANCE.md)。正式 observe-mac 与 qualify CLI 已分别通过 OS 认证实测、完成清理恢复及唯一绑定；发送和多日 AET 监听仍未验收。
 本机及 macOS / Windows CI 的 141 项回归通过（各 2 项平台跳过），审批取消/重放已加入持久执行标识验证；Windows AppContainer 受管启动、文件及 loopback 隔离通过合成进程验证。Hello 与微信 UIA 全过程仍未设备验收。
+新增读取分类/来源访问/最后一页与严格布尔控制回归，本机 155 项通过（2 项跳过），Core ASan/UBSan CTest 通过；持续设备记录按实际启动的版本归属。
+
 下面的 0.6.1 表格保留为原项目历史记录，不能外推为 AXR 已通过的证据。
 
 ## 如何理解证据

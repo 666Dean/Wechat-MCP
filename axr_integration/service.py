@@ -4,7 +4,7 @@ import hmac
 import json
 import threading
 import time
-from dataclasses import asdict
+from dataclasses import asdict,replace
 from pathlib import Path
 from axr.aet import AXRError,Action,Resource,Provenance,canonical,digest
 from axr.policy import OwnerStore
@@ -12,12 +12,14 @@ from axr.host import Lease,Supervisor
 from axr.runtime import Runtime
 from axr.workspace import Workspace
 from axr.admission import Budget,Admission
+from .policy import validate_controls
 
 class Service:
     def __init__(self,state,*,store=None,adapter=None,leases=None):
         self.store=store or OwnerStore(state)
         self.guard,self.journal=self.store.guard,self.store.journal
-        self.config=self.store.config()
+        try:self.config=validate_controls(self.store.config())
+        except BaseException:self.store.close();raise
         self.initial_policy_digest=digest(self.config)
         self.principal=self.config["principal"]
         self.purpose=self.config.get("purpose","wechat-assistant")
@@ -81,6 +83,11 @@ class Service:
         return Action(self.principal,self.resource(conversation_id),operation,self.purpose,payload,
                       tuple(sources),destination,workflow)
 
+    def _read_action(self,conversation_id,payload,*,workflow="manual"):
+        action=self._action(conversation_id,"messages.search" if payload.get("query") else "messages.read",payload,workflow=workflow)
+        data_class=self.bindings[conversation_id].get("data_class","personal")
+        return replace(action,sources=(Provenance(action.resource,"query:"+digest(payload),data_class),))
+
     def read(self,conversation_id,query="",sender=None,since=0,until=2**63-1,cursor=None,limit=20):
         if not isinstance(query,str) or len(query)>256 or type(limit) is not int or not 1<=limit<=100:
             raise AXRError("invalid_context_budget")
@@ -90,12 +97,8 @@ class Service:
             cursor_data=self.journal.context(cursor,self.principal,resource,self.guard.version)
             if cursor_data.get("filters")!=[query,sender,since,until]:raise AXRError("cursor_filter_mismatch")
             after=cursor_data["after"]
-        action=self._action(conversation_id,"messages.search" if query else "messages.read",
+        action=self._read_action(conversation_id,
             dict(query=query,sender=sender,since=since,until=until,after=after,limit=limit))
-        data_class=self.bindings[conversation_id].get("data_class","personal")
-        if data_class in {"sensitive","credentials","financial"}:
-            from dataclasses import replace
-            action=replace(action,sources=(Provenance(resource,"query:"+digest(action.payload),data_class),))
         receipt=self.runtime.propose(action)
         if receipt["state"]=="Ready":return self.execute(receipt["id"])
         return receipt
@@ -213,7 +216,7 @@ class Service:
         resource=self.resource(conversation_id)
         policy=self.config.get("listener",{})
         return self.admission.evaluate(resource,events,policy,lambda:self.guard.check(
-            self._action(conversation_id,"messages.read",{},workflow=policy.get("workflow","manual"))),replay=True)
+            self._read_action(conversation_id,{},workflow=policy.get("workflow","manual"))),replay=True)
 
     def write_workspace(self,conversation_id,path,text,context_ids=()):
         return self.runtime.propose(self._action(conversation_id,"workspace.write",{"path":path,"text":text},
@@ -247,11 +250,7 @@ class Service:
                 # Listener pages use the same AET/lease/quota path as explicit reads.
                 # Six bounded text records fit the 24k local context budget.
                 payload=dict(query="",sender=None,since=0,until=2**63-1,after=self.cursors.get(cid),limit=6)
-                action=self._action(cid,"messages.read",payload,workflow=policy.get("workflow","manual"))
-                data_class=self.bindings[cid].get("data_class","personal")
-                if data_class in {"sensitive","credentials","financial"}:
-                    from dataclasses import replace
-                    action=replace(action,sources=(Provenance(resource,"query:"+digest(payload),data_class),))
+                action=self._read_action(cid,payload,workflow=policy.get("workflow","manual"))
                 self.guard.check(action)
                 proposal=self.runtime.propose(action);receipt=self.execute(proposal["id"])
                 if receipt["state"]!="Completed":raise AXRError("listener_page_not_verified")

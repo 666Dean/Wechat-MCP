@@ -83,7 +83,7 @@ class Foundation(unittest.TestCase):
         self.assertFalse(native.check_commit(missing,control['proof']));self.assertFalse(Path(missing).exists())
         self.assertFalse(native.check_commit(control['store'],'{}'))
     def test_native_helper_commit_proof_rechecks_source_quota(self):
-        self.now[0]=time.time();source_id=self.grant(max_uses=1)
+        self.now[0]=time.time();source_id=self.grant(max_uses=1,classes=['personal'])
         action=replace(self.action,operation='reply.prepare',sources=(Provenance(self.resource,'ref','personal'),))
         self.grant(action,classes=['personal'],max_uses=1)
         gid,version=self.guard.consume(action);control=self.guard.execution_proof(action,gid,version)
@@ -105,11 +105,29 @@ class Foundation(unittest.TestCase):
         send=replace(self.action,resource=target,operation='messages.send',payload={'text':'summary'},sources=(source,),destination='external')
         self.grant(send,destinations=['external'],classes=['personal'],intent=send.seal,max_uses=1)
         with self.assertRaises(AXRError):self.guard.check(send)
-        self.grant()
+        self.grant(classes=['personal'])
         with self.assertRaises(AXRError):self.guard.check(send)
         disclosure=replace(send,resource=self.resource,operation='disclosure.send',payload={'output_seal':send.seal})
         self.grant(disclosure,destinations=['external'],classes=['personal'],intent=disclosure.seal,max_uses=1)
         self.guard.check(send)
+    def test_classified_read_final_use_and_exact_sensitive_approval(self):
+        self.now[0]=time.time()
+        for data_class in ('personal','sensitive'):
+            action=replace(self.action,payload={'limit':1},sources=(Provenance(self.resource,'query:fixture',data_class),))
+            self.grant(action,classes=[data_class],max_uses=1,**({'intent':action.seal} if data_class=='sensitive' else {}))
+            gid,version=self.guard.consume(action)
+            self.guard.revalidate(action,gid,version)
+            control=self.guard.execution_proof(action,gid,version)
+            self.assertTrue(native.check_commit(control['store'],control['proof']))
+            self.assertEqual(len(json.loads(control['proof'])['grants']),1)
+            with self.assertRaises(AXRError):self.guard.consume(action)
+    def test_source_access_class_cannot_be_replaced_by_workspace_grant(self):
+        self.grant(classes=['workspace-normal'])
+        prepare=replace(self.action,operation='reply.prepare',sources=(Provenance(self.resource,'ref','personal'),))
+        self.grant(prepare,classes=['personal'])
+        with self.assertRaises(AXRError):self.guard.check(prepare)
+        self.grant(classes=['personal'])
+        self.guard.check(prepare)
     def test_sensitive_source_requires_exact_reauthorization(self):
         sensitive=replace(self.action,sources=(Provenance(self.resource,'secret','sensitive'),))
         self.grant(classes=['sensitive'])
@@ -274,6 +292,40 @@ class ServiceTests(unittest.TestCase):
         job=s.disclose('friend',result['result']['context_id']);self.assertEqual(job['state'],'AwaitingApproval')
         with self.assertRaises(AXRError):s.execute(job['id'])
         approve(s.store,job['id'],'agent');out=s.execute(job['id']);self.assertEqual(out['result']['messages'][0]['text'],'untrusted fixture')
+    def test_personal_read_and_listener_require_personal_class_before_adapter(self):
+        from unittest.mock import patch
+        from axr.aet import digest
+        s=self.service;s.guard.revoke_owner('policy-change')
+        s.guard._issue_owner(principal='agent',resource=self.resource,operations=['messages.read'],purpose='purpose',
+            expires_at=time.time()+100,max_uses=10,classes=['workspace-normal'])
+        s.config['listener']={'listen':True,'wake_agent':False,'keywords':['fixture']};s.initial_policy_digest=digest(s.config)
+        with patch.object(s.store,'config',return_value=s.config),patch.object(s.adapter,'search',side_effect=AssertionError('unclassified grant cannot reach data')):
+            self.assertEqual(s.read('friend')['state'],'AwaitingApproval')
+            with self.assertRaises(AXRError):s.tick()
+            simulation=s.simulate('friend',[{'reference':'fixture-simulation','text':'fixture','created':time.time(),'outgoing':False}])
+            self.assertEqual(simulation['decisions'][0]['reason'],'authority_denied')
+        s.guard._issue_owner(principal='agent',resource=self.resource,operations=['messages.read'],purpose='purpose',
+            expires_at=time.time()+100,max_uses=1,classes=['personal'])
+        with patch.object(s.store,'config',return_value=s.config):
+            self.assertEqual(s.read('friend')['state'],'Completed')
+    def test_signed_string_false_cannot_enable_listener_or_runner(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from axr_integration.policy import validate_controls
+        for section,fields in (('listener',('listen','wake_agent','auto_execute')),('runner',('enabled',))):
+            for field in fields:
+                for value in ('false','true',0,1,None,[],{}):
+                    with self.subTest(section=section,field=field,value=value):
+                        config={**self.service.config,section:{field:value}};close=Mock();adapter=Mock()
+                        store=SimpleNamespace(guard=None,journal=None,config=lambda:config,close=close)
+                        with self.assertRaisesRegex(AXRError,'requires_boolean'):
+                            Service(self.tmp.name,store=store,adapter=adapter)
+                        close.assert_called_once();self.assertEqual(adapter.mock_calls,[])
+            for value in (None,[],True):
+                with self.assertRaisesRegex(AXRError,'invalid_wechat_controls'):
+                    validate_controls({section:value})
+        valid=validate_controls({'listener':{'listen':False,'wake_agent':False,'auto_execute':False},'runner':{'enabled':False}})
+        self.assertFalse(valid['listener']['listen']);self.assertFalse(valid['runner']['enabled'])
     def test_taint_cannot_be_omitted_in_send_draft(self):
         s=self.service;s.read('friend');draft=s.prepare('friend','generated summary',[])
         self.assertEqual(draft['state'],'Completed');job=s.propose_send('friend',draft['result']['draft_id'])

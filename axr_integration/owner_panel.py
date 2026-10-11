@@ -8,6 +8,7 @@ from tkinter import ttk,messagebox
 from axr.policy import OwnerStore
 from axr.owner import authenticate,approve,review
 from axr.aet import AXRError
+from .policy import validate_controls
 
 class Panel:
     def __init__(self,root,state,helper):
@@ -63,7 +64,8 @@ class Panel:
         try:
             config=json.loads(self.editor.get('1.0','end'))
             if not isinstance(config,dict):raise ValueError()
-        except Exception:messagebox.showerror('Invalid policy','Policy must be a JSON object.');return
+            validate_controls(config)
+        except Exception:messagebox.showerror('Invalid policy','Policy must be a JSON object and controls must be true/false booleans.');return
         if not messagebox.askyesno('Review policy','Authorize precisely the JSON currently displayed? All previous capabilities will be invalidated.'):
             return
         def commit():
