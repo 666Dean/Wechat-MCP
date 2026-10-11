@@ -35,12 +35,18 @@ def verified_cached(store, root, rows):
     if not path.exists():return {}
     if path.is_symlink() or path.stat().st_size>128*1024:raise AXRError('wcdb_index_invalid')
     value=json.loads(path.read_bytes())
-    if value.get('version')!=1 or value.get('account_root')!=str(root) or value.get('namespace')!=store.secrets.namespace:
+    if not isinstance(value,dict) or type(value.get('version')) is not int or value['version']!=1:
+        raise AXRError('wcdb_index_invalid')
+    if value.get('account_root')!=str(root) or value.get('namespace')!=store.secrets.namespace:
         raise AXRError('wcdb_index_account_or_owner_mismatch')
+    entries=value.get('keys')
+    if not isinstance(entries,dict) or len(entries)>128:raise AXRError('wcdb_index_invalid')
     # Index cannot introduce a key into policy: HMAC revalidation is mandatory.
     result={}
     from .wcdb_keys import verified_raw_key
-    for rel,item in value['keys'].items():
+    for rel,item in entries.items():
+        if not isinstance(item,dict) or any(not isinstance(item.get(field),str) for field in ('salt','key_reference')):
+            raise AXRError('wcdb_index_invalid')
         row=rows.get(rel)
         if row and row['salt']==item.get('salt'):
             expected='wcdb:'+digest([str(row['path']),row['salt']])
@@ -58,6 +64,16 @@ def installed_signature(app):
     if b'Identifier=com.tencent.xinWeChat\n' not in signature or b'TeamIdentifier=5A4RE8SF68\n' not in signature:
         raise AXRError('installed_vendor_signature_unqualified')
     return signature
+
+
+def signature_identity(signature):
+    # Executable paths differ after copying; signed identity and CDHash must not.
+    fields=[]
+    for name in (b'Identifier=',b'TeamIdentifier=',b'CDHash='):
+        values=[line[len(name):] for line in signature.splitlines() if line.startswith(name)]
+        if len(values)!=1 or not values[0]:raise AXRError('vendor_signature_identity_missing')
+        fields.append(values[0])
+    return tuple(fields)
 
 
 def observe_mac(store, root, rows, keys, observer, *, timeout=120):
@@ -82,6 +98,10 @@ def observe_mac(store, root, rows, keys, observer, *, timeout=120):
             fifo=stage/'keys.fifo';fd=None
             try:
                 subprocess.run(['ditto',str(app),str(copy)],check=True,capture_output=True,timeout=180)
+                # Do not erase evidence of an incomplete or changed copy by
+                # ad-hoc signing it before verifying the original vendor seal.
+                if signature_identity(installed_signature(copy))!=signature_identity(before):
+                    raise AXRError('temporary_vendor_copy_signature_mismatch')
                 entitlements=stage/'entitlements.plist'
                 entitlements.write_text('<?xml version="1.0"?><plist version="1.0"><dict>'
                     '<key>com.apple.security.cs.disable-library-validation</key><true/>'

@@ -25,7 +25,7 @@ python -m adapters.wcdb_owner --state STATE --helper HELPER --account-root ACCOU
 ```
 
 主人先正常退出已安装微信。明确选择此模式并完成系统认证后，工具制作私有临时副本，
-给该副本临时 ad-hoc 签名，并在其启动时加载本项目构建的 C++20 KDF observer。
+先严格验证副本 Tencent 签名及 Identifier / TeamIdentifier / CDHash 与原版一致，再给该副本临时 ad-hoc 签名，并在其启动时加载本项目构建的 C++20 KDF observer。
 observer 调用 Apple 原有 KDF，保持参数、结果与返回状态，只将匹配的派生结果经
 当前用户的 0600 FIFO 交给父进程。父进程只接受选定账户数据库的 salt/HMAC 校验结果，
 120 秒、128 条记录封顶；没有调试附加、进程内存扫描、登录 token 读取或 SIP 修改。
