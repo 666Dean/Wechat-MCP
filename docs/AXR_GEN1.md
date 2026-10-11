@@ -28,7 +28,7 @@ WCDB 密钥：`axr-owner ... secret wcdb.test-account`，本地隐藏输入 32 �
 Mac 可明确选择临时副本内的 C++20 KDF interposition；保持已安装客户端与 SIP，密钥仅进 OS 凭据库。
 该路径已在授权本机取得所需数据库 key；不承诺其他版本、Windows 自动初始化或无主人参与。
 
-本地配置面板：在主人终端运行 `python -m axr_integration.owner_panel --state STATE --helper HELPER`，提供 policy JSON、三个开关、精确审批/拒绝和实际 telemetry。Python 需有 Tk；所有写入仍需系统认证，按钮本身不授予权限。界面尚未实机验证。
+本地配置面板：在主人终端运行 `python -m axr_integration.owner_panel --state STATE --helper HELPER`，提供 policy JSON、三个开关、精确审批/拒绝和实际 telemetry。Python 需有 Tk；所有写入仍需系统认证，按钮本身不授予权限。Mac 已使用独立合成数据完成三页显示、独立开关更新草稿 JSON、精确意图查看和审计刷新；F1/F2/F3 切换页，F4 聚焦草稿开关，F5 刷新。刷新保留有效选择，任务消失时清空旧意图。GUI 的 OS 认证写入/拒绝/审批流程与 Windows 界面仍未设备验收。
 
 所有者 `configure` 会使旧能力失效，并要求重启 broker，防止热改账号/数据源产生身份混用。
 监听授权的 workflow 必须与 grant 一致；个人会话读取需 `--class personal`，workspace-normal 不覆盖个人分类。
