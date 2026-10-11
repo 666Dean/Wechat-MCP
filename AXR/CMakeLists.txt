@@ -66,6 +66,16 @@ if(AXR_PYTHON)
   endif()
 endif()
 if(APPLE)
+  option(AXR_MAC_UI_FIXTURE "Build the manual synthetic input fixture (never installed)" OFF)
+  if(AXR_MAC_UI_FIXTURE AND BUILD_TESTING)
+    enable_language(OBJC)
+    add_executable(axr-mac-input-fixture MACOSX_BUNDLE tests/MacInputFixture.m)
+    target_compile_options(axr-mac-input-fixture PRIVATE -fobjc-arc)
+    target_link_libraries(axr-mac-input-fixture PRIVATE "-framework Cocoa")
+    set_target_properties(axr-mac-input-fixture PROPERTIES
+      MACOSX_BUNDLE_GUI_IDENTIFIER dev.axr.input-fixture
+      MACOSX_BUNDLE_BUNDLE_NAME AXRInputFixture)
+  endif()
   find_program(AXR_SWIFTC swiftc REQUIRED)
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/axr-helper"
     COMMAND "${AXR_SWIFTC}" -I "${CMAKE_CURRENT_SOURCE_DIR}/native/bridge"

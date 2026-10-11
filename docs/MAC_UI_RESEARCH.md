@@ -58,3 +58,11 @@ Windows 同类修正已通过 CI 原生编译与回归，未做微信硬件验�
 [bf25e9c 双平台 CI](https://github.com/Aethra2007/wechat-codex-mcp/actions/runs/38121786431)
 均通过原生构建与 CTest；160 项回归，Mac 执行 158 项/跳过 2 项，Win 执行 154 项/跳过 6 项。
 这证明本次代码回归，不改变上述设备验收限制。
+
+## 本轮补充的固定开源审查与实现
+
+- [WeChatAutoReply](https://github.com/JunxiBao/WeChatAutoReply/tree/e3b0b96284a6cf863c8243249c7bcd7593956229)，MIT：源码使用 AX 输入、CGEvent.postToPid。没有采用其清空草稿、猜测 sender、云端模型、随机延迟或无读回即成功的逻辑；本项目自行实现资格焦点/精确意图与气泡见证。
+- [WeChatBridge](https://github.com/freestylefly/WeChatBridge/tree/0b00e3f89ace0e8f5d9c17478b2c966d0e2b890e)，MIT：官方 Share Extension 合并转发可作为主人主动导出的读取候选；需要手动选择，标题不能证明内部 ID，不解决回复输入。没有安装或运行其应用/转发器，也未接入自动 AI/剪贴板转发。
+- [wechat-controller](https://github.com/dragonking-T/wechat-controller)：其坐标、Vision/provider 路线不能自动取得本项目所需稳定身份和草稿证据；未运行其云端/坐标发送器。
+
+已接入的本地 OCR 与 PID 输入及真实/合成证据见 [MAC_REPLY.md](MAC_REPLY.md)。本轮新源码审查结论不等于第三方版本的兼容承诺；官方独立聊天窗口实测仍受保护且无输入节点，真实发送未执行。

@@ -55,6 +55,7 @@ class Protocol(unittest.IsolatedAsyncioTestCase):
                     async with ClientSession(read,write) as client:
                         await client.initialize();tools=await client.list_tools()
                         names={t.name for t in tools.tools};self.assertIn('axr_execute',names)
+                        self.assertIn('wechat_observe_send_record',names)
                         self.assertNotIn('approve',names);self.assertNotIn('grant',names)
                         result=await client.call_tool('wechat_read_context',{'conversation_id':'fixture-chat'})
                         self.assertFalse(result.is_error);metadata=json.loads(result.content[0].text)

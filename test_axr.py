@@ -82,12 +82,47 @@ class Foundation(unittest.TestCase):
         missing=str(self.root/'absent.db')
         self.assertFalse(native.check_commit(missing,control['proof']));self.assertFalse(Path(missing).exists())
         self.assertFalse(native.check_commit(control['store'],'{}'))
+    def test_native_commit_scope_cannot_exchange_read_for_send_or_another_target(self):
+        self.now[0]=time.time();self.grant(max_uses=1)
+        gid,version=self.guard.consume(self.action);control=self.guard.execution_proof(self.action,gid,version)
+        scope={'resource':asdict(self.resource),'operations':['messages.read','messages.search']}
+        check=lambda s:native.check_scoped_commit(control['store'],control['proof'],json.dumps(s))
+        self.assertTrue(check(scope))
+        self.assertFalse(check({**scope,'operations':['messages.send']}))
+        self.assertFalse(check({**scope,'resource':asdict(Resource('test','account','other'))}))
+        forged=json.loads(control['proof']);forged['action']['operation']='messages.send';forged['action']['payload']={'text':'test'}
+        forged['intent_seal']=native.intent_seal(json.dumps(forged['action']))
+        self.assertFalse(native.check_commit(control['store'],json.dumps(forged)))
+    def test_native_source_budget_precedes_proof_expansion(self):
+        action=asdict(self.action)
+        action['sources']=[asdict(Provenance(self.resource,str(i),'personal')) for i in range(201)]
+        with self.assertRaisesRegex(RuntimeError,'provenance_budget'):native.intent_seal(json.dumps(action))
+    def test_native_commit_send_text_and_visual_regions_are_sealed(self):
+        self.now[0]=time.time()
+        action=replace(self.action,operation='messages.send',payload={'text':'fixture reply'})
+        self.grant(action,intent=action.seal,max_uses=1)
+        gid,version=self.guard.consume(action);control=self.guard.execution_proof(action,gid,version)
+        scope={'resource':asdict(self.resource),'operations':['messages.send'],'text':'fixture reply'}
+        self.assertTrue(native.check_scoped_commit(control['store'],control['proof'],json.dumps(scope)))
+        self.assertFalse(native.check_scoped_commit(control['store'],control['proof'],json.dumps({**scope,'text':'different'})))
+        changed=json.loads(control['proof']);changed['action']['payload']['text']='different'
+        changed['intent_seal']=native.intent_seal(json.dumps(changed['action']))
+        self.assertFalse(native.check_commit(control['store'],json.dumps(changed)))
+        action=replace(self.action,payload={'visual_binding':{'window_id':1,'regions':{'messages':[0,0,1,1]}}})
+        self.grant(action);gid,version=self.guard.consume(action);control=self.guard.execution_proof(action,gid,version)
+        scope={'resource':asdict(self.resource),'operations':['messages.read'],'visual_binding':action.payload['visual_binding']}
+        self.assertTrue(native.check_scoped_commit(control['store'],control['proof'],json.dumps(scope)))
+        self.assertFalse(native.check_scoped_commit(control['store'],control['proof'],json.dumps({**scope,'visual_binding':{'window_id':2}})))
     def test_native_helper_commit_proof_rechecks_source_quota(self):
         self.now[0]=time.time();source_id=self.grant(max_uses=1,classes=['personal'])
         action=replace(self.action,operation='reply.prepare',sources=(Provenance(self.resource,'ref','personal'),))
         self.grant(action,classes=['personal'],max_uses=1)
         gid,version=self.guard.consume(action);control=self.guard.execution_proof(action,gid,version)
         self.assertTrue(native.check_commit(control['store'],control['proof']))
+        omitted=json.loads(control['proof']);omitted['grants'].pop()
+        self.assertFalse(native.check_commit(control['store'],json.dumps(omitted)))
+        swapped=json.loads(control['proof']);swapped['grants'].reverse()
+        self.assertFalse(native.check_commit(control['store'],json.dumps(swapped)))
         self.guard.consume(self.action)
         self.assertFalse(native.check_commit(control['store'],control['proof']))
     def test_tampered_grant(self):
@@ -292,6 +327,79 @@ class ServiceTests(unittest.TestCase):
         job=s.disclose('friend',result['result']['context_id']);self.assertEqual(job['state'],'AwaitingApproval')
         with self.assertRaises(AXRError):s.execute(job['id'])
         approve(s.store,job['id'],'agent');out=s.execute(job['id']);self.assertEqual(out['result']['messages'][0]['text'],'untrusted fixture')
+    def test_ocr_selectors_are_sealed_and_not_forwarded_as_query_filters(self):
+        from unittest.mock import patch
+        from axr.aet import digest
+        s=self.service;s.config['mode']='ui';binding=s.bindings['friend']
+        binding['read_method']='ocr';binding['visual_binding']={'pid':12,'window_id':1,'regions':{'messages':[0,0,1,1]}}
+        s.initial_policy_digest=digest(s.config)
+        original=s.adapter.search
+        def search(cid,*,query,sender,since,until,after,limit,guard_context):
+            self.assertEqual(json.loads(guard_context['proof'])['action']['payload']['visual_binding'],binding['visual_binding'])
+            return original(cid)
+        with patch.object(s.store,'config',return_value=s.config),patch.object(s.adapter,'search',side_effect=search):
+            action=s._read_action('friend',{'query':'','sender':None,'since':0,'until':2**63-1,'after':None,'limit':2})
+            self.assertEqual(action.payload['visual_binding'],binding['visual_binding'])
+            self.assertEqual(s.read('friend')['state'],'Completed')
+    def test_hybrid_readback_observation_cannot_retry_or_promote_unknown_send(self):
+        from unittest.mock import patch
+        from axr.aet import digest
+        s=self.service;s.config['mode']='hybrid';s.initial_policy_digest=digest(s.config)
+        with patch.object(s.store,'config',return_value=s.config),patch.object(s.adapter,'send',create=True,
+                side_effect=lambda action,check,epoch:{'epoch':epoch,'verified':False}) as send:
+            action=s._action('friend','messages.send',{'text':'synthetic reply'},destination='wechat:'+self.resource.key)
+            job=s.runtime.propose(action);approve(s.store,job['id'],'agent')
+            self.assertEqual(s.execute(job['id'])['state'],'Unknown')
+            message={'reference':'synthetic-record','text':'synthetic reply','created':time.time(),
+                     'sender':'account','outgoing':True,'server_id':42}
+            cases=[([message],True),([{**message,'sender':'other'}],False),([{**message,'outgoing':False}],False),
+                   ([{**message,'server_id':0}],False),([{**message,'server_id':True}],False),
+                   ([{**message,'text':'synthetic reply different'}],False),([message,message],False),
+                   ([{**message,'text_truncated':True}],False)]
+            for messages,expected in cases:
+                page={'messages':messages,'coverage':'synthetic','has_more':False,'cursor':None}
+                with self.subTest(messages=messages),patch.object(s.adapter,'search',return_value=page):
+                    result=s.observe_send_record(job['id'])
+                    self.assertEqual(result['database_record_observed'],expected)
+                    self.assertFalse(result['delivery_confirmed']);self.assertFalse(result['send_state_changed'])
+                    self.assertNotIn('synthetic reply',json.dumps(result))
+                    self.assertNotIn('context_id',result['read_job']['result'])
+                    self.assertEqual(s.journal.receipt(job['id'],'agent')['state'],'Unknown')
+            self.assertEqual(send.call_count,1)
+    def test_send_record_observation_requires_independent_read_authority(self):
+        from unittest.mock import patch
+        from axr.aet import digest
+        s=self.service;s.config['mode']='hybrid';s.initial_policy_digest=digest(s.config)
+        with patch.object(s.store,'config',return_value=s.config),patch.object(s.adapter,'send',create=True,
+                side_effect=lambda action,check,epoch:{'epoch':epoch,'verified':False}):
+            action=s._action('friend','messages.send',{'text':'synthetic reply'},destination='wechat:'+self.resource.key)
+            job=s.runtime.propose(action);approve(s.store,job['id'],'agent');s.execute(job['id'])
+            # Revoke all existing read grants; the exact send grant cannot read.
+            db=sqlite3.connect(s.guard.path)
+            read_ids=[gid for gid,body in db.execute('SELECT id,body FROM grants')
+                      if set(json.loads(body)['operations']) & {'messages.read','messages.search'}]
+            db.close()
+            for gid in read_ids:s.guard.revoke_owner(gid)
+            with patch.object(s.adapter,'search',side_effect=AssertionError('read must remain blocked')):
+                result=s.observe_send_record(job['id'])
+            self.assertEqual(result['read_job']['state'],'AwaitingApproval')
+            self.assertFalse(result['database_record_observed'])
+    def test_send_record_observation_retains_sensitive_source_class(self):
+        from unittest.mock import patch
+        from axr.aet import digest
+        s=self.service;s.config['mode']='hybrid';s.initial_policy_digest=digest(s.config)
+        s.guard._issue_owner(principal='agent',resource=self.resource,operations=['messages.read'],purpose='purpose',
+            expires_at=time.time()+100,max_uses=10,classes=['sensitive'])
+        with patch.object(s.store,'config',return_value=s.config),patch.object(s.adapter,'send',create=True,
+                side_effect=lambda action,check,epoch:{'epoch':epoch,'verified':False}):
+            action=s._action('friend','messages.send',{'text':'synthetic sensitive reply'},
+                sources=(Provenance(self.resource,'sensitive-source','sensitive'),),destination='wechat:'+self.resource.key)
+            job=s.runtime.propose(action);approve(s.store,job['id'],'agent');self.assertEqual(s.execute(job['id'])['state'],'Unknown')
+            with patch.object(s.adapter,'search',side_effect=AssertionError('personal grant cannot read sensitive reply')):
+                result=s.observe_send_record(job['id'])
+            self.assertEqual(result['read_job']['state'],'AwaitingApproval')
+            pending=s.journal.action(s.journal.get(result['read_job']['id'],'agent'))
+            self.assertIn('sensitive',{p.data_class for p in pending.sources})
     def test_personal_read_and_listener_require_personal_class_before_adapter(self):
         from unittest.mock import patch
         from axr.aet import digest
@@ -469,6 +577,35 @@ class Workers(unittest.TestCase):
                 'running':True,'accessibility':False,'pid':12}) as request:
             self.assertFalse(adapter.status()['send_available'])
             request.assert_called_once_with('status')
+        adapter.close()
+    def test_ui_visual_health_reports_protection_without_reading_pixels(self):
+        from adapters.ui import UIAdapter
+        from unittest.mock import patch
+        adapter=UIAdapter({'native_helper':'not-launched','conversations':[]})
+        with patch('adapters.ui.sys.platform','darwin'),patch.object(adapter,'_request',side_effect=[
+            {'running':True,'accessibility':True,'pid':12},
+            {'editable_nodes':0,'truncated':False},
+            {'capture_candidates':0,'screen_capture_permission':True,'content_read':False}]) as request:
+            self.assertEqual(adapter.status()['ocr_state'],'protected_windows')
+            self.assertEqual(request.call_args.args,('visual_capabilities',))
+            self.assertEqual(request.call_args.kwargs,{'expected_pid':12})
+        adapter.close()
+    def test_ocr_preview_has_no_sender_or_time_inference_and_needs_read_proof(self):
+        from adapters.ui import UIAdapter
+        from unittest.mock import patch
+        binding={'conversation_id':'fixture-chat','display_name':'fixture','read_method':'ocr',
+                 'visual_binding':{'pid':12,'window_id':1,'bounds':[0,0,100,100],'regions':{}}}
+        adapter=UIAdapter({'native_helper':'not-launched','account_id':'fixture-self','conversations':[binding]})
+        with patch('adapters.ui.sys.platform','darwin'),patch.object(adapter,'_request',return_value={
+                'pid':12,'lines':[{'text':'fixture line','confidence':0.99}],
+                'identity_assurance':'visible_exact_identifiers_ocr'}) as request:
+            with self.assertRaisesRegex(AXRError,'commit_proof'):adapter.search('fixture-chat')
+            with self.assertRaisesRegex(AXRError,'sender_time'):adapter.search('fixture-chat',sender='self',guard_context={'proof':'test'})
+            request.assert_not_called()
+            page=adapter.search('fixture-chat',guard_context={'proof':'test'})
+            self.assertTrue(page['preview_only']);self.assertFalse(page['background'])
+            self.assertIsNone(page['messages'][0]['sender']);self.assertIsNone(page['messages'][0]['outgoing'])
+            self.assertEqual(request.call_args.kwargs['visual_binding'],binding['visual_binding'])
         adapter.close()
 
     def test_timeout_and_output_limit(self):

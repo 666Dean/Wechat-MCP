@@ -89,6 +89,7 @@ std::string Decrypt(std::string_view key,std::string_view data,std::string_view 
 }
 void ValidateAction(const Json& a) {
     if(!a.is_object() || a.dump().size()>MaximumFrameBytes/2 || !a.at("payload").is_object()) Fail("invalid_action");
+    if(!a.at("sources").is_array()||a.at("sources").size()>200)Fail("provenance_budget_exhausted");
     for(auto k:{"principal","operation","purpose","destination","workflow","execution_id"}) Identity(a.at(k));
     for(auto k:{"platform","account_id","conversation_id"}) Identity(a.at("resource").at(k));
     for(const auto& source:a.at("sources")) {
@@ -206,7 +207,7 @@ Json Guard::ExecutionProof(const Json& a,const std::string& id,unsigned version,
     };
     grants.push_back(descriptor(id,false));
     for(const auto& source:impl_->Sources(a,now))grants.push_back(descriptor(source,true));
-    return {{"version",1},{"policy_version",version},{"intent_seal",IntentSeal(a)},{"grants",grants}};
+    return {{"version",1},{"policy_version",version},{"intent_seal",IntentSeal(a)},{"action",a},{"grants",grants}};
 }
 void Guard::Revalidate(const Json& a,const std::string& id,unsigned version,double now) const {
     ValidateAction(a);if(version!=Version())Fail("policy_changed_before_commit");impl_->Sources(a,now);impl_->Find(a,now,false,id);
@@ -219,16 +220,45 @@ extern "C" int axr_check_commit(const char* path,const char* encoded) {
         if(!path||!encoded||std::char_traits<char>::length(encoded)>MaximumFrameBytes)return 0;
         auto proof=Json::parse(encoded);
         if(proof.at("version")!=1||proof.at("grants").empty()||proof.at("grants").size()>401)return 0;
+        const auto& action=proof.at("action");ValidateAction(action);
+        if(proof.at("intent_seal")!=IntentSeal(action))return 0;
+        std::vector<std::pair<Json,std::string>> expected{{action,""}};
+        for(const auto& source:action.at("sources")) {
+            if(Contains(Json{"messages.read","messages.search"},action.at("operation"))&&source.at("resource")==action.at("resource"))continue;
+            auto access=action;access["resource"]=source.at("resource");access["sources"]=Json::array();
+            access["operation"]="messages.read";access["payload"]=Json::object();access["destination"]="local";
+            expected.emplace_back(access,source.at("data_class").get<std::string>());
+            if(action.at("destination")!="local") {
+                access["operation"]="disclosure.send";access["payload"]={{"output_seal",IntentSeal(action)}};
+                access["destination"]=action.at("destination");access["sources"]=Json::array({source});
+                expected.emplace_back(access,source.at("data_class").get<std::string>());
+            }
+        }
+        if(proof.at("grants").size()!=expected.size())return 0;
         if(sqlite3_open_v2(path,&db,SQLITE_OPEN_READONLY|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK){if(db)sqlite3_close(db);return 0;}
         sqlite3_busy_timeout(db,1000);
         bool valid=true;
         {
             Statement version(db,"SELECT version FROM policy");
             valid=version.Step()==SQLITE_ROW&&sqlite3_column_int(version.s,0)==proof.at("policy_version").get<int>();
+            std::size_t descriptorIndex=0;
             for(const auto& descriptor:proof.at("grants")) {
                 Statement grant(db,"SELECT body,used,revoked FROM grants WHERE id=?");grant.Text(1,descriptor.at("id").get<std::string>());
                 if(grant.Step()!=SQLITE_ROW){valid=false;break;}
                 auto body=grant.Text(0);auto parsed=Json::parse(body);
+                const auto& [requested,requiredClass]=expected[descriptorIndex];
+                {
+                    valid=valid&&descriptor.at("require_quota")==Json(descriptorIndex!=0);
+                    valid=valid&&parsed.at("policy_version")==proof.at("policy_version")&&
+                        parsed.at("principal")==requested.at("principal")&&parsed.at("resource")==requested.at("resource")&&
+                        parsed.at("purpose")==requested.at("purpose")&&parsed.at("workflow")==requested.at("workflow")&&
+                        Contains(parsed.at("operations"),requested.at("operation"))&&
+                        (parsed.at("intent").is_null()||parsed.at("intent")==IntentSeal(requested))&&
+                        (requested.at("destination")=="local"||Contains(parsed.at("destinations"),requested.at("destination")))&&
+                        (requiredClass.empty()||Contains(parsed.at("classes"),requiredClass));
+                    for(const auto& source:requested.at("sources"))valid=valid&&Contains(parsed.at("classes"),source.at("data_class"));
+                }
+                ++descriptorIndex;
                 valid=valid&&ConstantEqual(Digest(body),descriptor.at("body_sha256").get<std::string>())&&
                     !sqlite3_column_int(grant.s,2)&&parsed.at("expires_at").get<double>()>Now()&&
                     (!descriptor.at("require_quota").get<bool>()||sqlite3_column_int(grant.s,1)<parsed.at("max_uses").get<int>());
@@ -243,4 +273,19 @@ extern "C" int axr_check_commit(const char* path,const char* encoded) {
         }
         sqlite3_close(db);db=nullptr;return valid?1:0;
     }catch(...){if(db)sqlite3_close(db);return 0;}
+}
+
+extern "C" int axr_check_scoped_commit(const char* path,const char* encoded,const char* scopeEncoded) {
+    using namespace Stellaria::AXR;
+    try {
+        if(!scopeEncoded||std::char_traits<char>::length(scopeEncoded)>MaximumFrameBytes)return 0;
+        auto scope=Json::parse(scopeEncoded);
+        if(!axr_check_commit(path,encoded))return 0;
+        const auto action=Json::parse(encoded).at("action");
+        if(scope.at("resource")!=action.at("resource")||
+           !Contains(scope.at("operations"),action.at("operation")))return 0;
+        if(scope.contains("text")&&scope.at("text")!=action.at("payload").at("text"))return 0;
+        if(scope.contains("visual_binding")&&scope.at("visual_binding")!=action.at("payload").at("visual_binding"))return 0;
+        return 1;
+    }catch(...){return 0;}
 }

@@ -44,6 +44,7 @@ Mac 可明确选择临时副本内的 C++20 KDF interposition；保持已安装�
 | 内容披露 | `wechat_disclose_context` 提议精确 AET，主人另授模型目的地披露能力后 `axr_execute` 返回正文 |
 | 回复草稿 | `wechat_prepare_reply`，默认 `【自动回复 · AI 助理】`；主人签名策略可关闭展示，实际 agent 来源仍保留；来源从加密上下文及已披露的加密 scope 元数据派生，不能用空列表或正文 TTL 清洗来源 |
 | 发送 | `wechat_propose_send` → 本地批准 → `axr_execute`；稳定账号及会话证据缺失即拒绝，WCDB 不直接发送 |
+| 发送记录观察 | `wechat_observe_send_record`，独立读取权限/有界精确匹配计数；不重发、不提升 Unknown，不宣称收件人送达 |
 | 事务管理 | `axr_job_status` / `axr_cancel` / `axr_execute(dry_run=true)`；Unknown 永不自动重发 |
 | 工作区 | `axr_workspace_write` 提议受限文本写入，需 workspace authority |
 | 回放 | `axr_policy_simulate`，本地过滤规则，模型调用为 0，回放不入队/发消息 |
@@ -67,6 +68,8 @@ Runner contract：owner-pinned command 从 stdin 读取 `{version, context, inst
 截断保留来源及标记，预算拒绝负数、非整数和无效窗口，失败调用仍保留已预留的成本。
 
 ## 模式与真实范围
+
+新增显式 hybrid（WCDB 读、资格 UI 写）、Mac pid_return 和本地 OCR 预览，见 [Mac 回复说明](MAC_REPLY.md)。默认 wcdb 仍只读；OCR 不推测空草稿或允许盲发。
 
 | 项目 | WCDB | Accessibility / UIA |
 |---|---|---|
