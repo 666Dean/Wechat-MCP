@@ -5,13 +5,21 @@
 
 ## Unreleased
 
+### 2026-10-11 — 官方窗口选择器、渠道资格与新版客户端复查
+
+- AXR 新增默认关闭、不安装的 Mac 单窗口系统选择器探针：主人手动选择，核对单窗口 filter、bundle 和原 PID，取消/超时/范围变化失败关闭；只输出元数据，不启动捕获、OCR、网络或输入。Mac CI 只编译该探针。
+- 修正旧 CoreGraphics sharing=0 的诊断解释，改为 legacy_nonsharing_windows、capture_policy_candidates 和 capture_privacy=unqualified；数值不证明现代保护或捕获可用，自动 OCR 的保守拒绝检查保留。UIAdapter 兼容旧 helper 字段，状态探测不会授予发送权限。
+- 本机系统选择器由主人选择主微信窗口，单窗口/PID/bundle 元数据核验成功；未读取正文或图片，也不作为指定私聊绑定。腾讯签名标准升级至 4.1.15.54 / 270134，DMG 哈希、严格厂商签名及 Gatekeeper 校验通过，原签名应用副本保留，新版正常进入原账号。新版角色探测仍为 1 窗口/5 节点/0 编辑/0 文本，工具截图白屏，未发送。
+- 静态审查腾讯 iLink Bot、官方分享扩展及两个固定版本开源 hook 方案；没有证据满足原账号既有私聊发送，未部署机器人、插件、注入或盲发。新增 MAC_TRANSPORTS.md，修正研究、回复和验收文档中的保护状态推断。
+- 根目录原生构建（含选择器探针）、CTest 通过；本机发现 185 项回归，执行 183 项、跳过 2 项。真实发送/读回、后台写入和多日运行仍未通过，旧 WCDB 持续读取证据继续归属实际启动版本。重新 fetch 上游 main 仍为已合并的 3df0050。
+
 ### 2026-10-11 — Mac 安全输入、本地 OCR 与混合读写编排
 
 - Mac SDK 增加单次 PID Return 路径：资格身份、准备前焦点/空草稿、精确正文、提交前再次验证及新气泡见证；单行最多 200 字符，不用全局回车、剪贴板或清空草稿。旧无完整发送检查的 press/set_value 入口关闭。控件同窗口/缓存 handle epoch 复核，防止借用另一聊天窗口的身份或过期输入节点；两平台见证有界，Win 空草稿必须读取 ValuePattern，提交前复核精确正文。
 - 新增所有者明确选择的 hybrid 模式（WCDB 读/UI 写）与 wechat_observe_send_record，独立读取 AET 核对本人/完整正文/非零整数 server_id/唯一记录，保留原发送分类、不创建正文 context，无正文外传、不重发、不将 Unknown 提升成功。数据库模式仍只读。
-- ScreenCaptureKit 单窗口白名单区域 + 本地 Vision OCR 预览，策略密封 PID/窗口/几何/区域；共享保护为 0 即拒绝，身份前后复核。纯 OCR 身份须完整 ID 和高置信度，或使用真实 AX 身份路径；不推测 sender/时间/空草稿，不开放 OCR 盲发。
+- ScreenCaptureKit 单窗口白名单区域 + 本地 Vision OCR 预览，策略密封 PID/窗口/几何/区域；legacy sharing 为 0 时自动路径保守拒绝，身份前后复核。纯 OCR 身份须完整 ID 和高置信度，或使用真实 AX 身份路径；不推测 sender/时间/空草稿，不开放 OCR 盲发。
 - C++ scoped commit 绑定请求资源/操作/发送正文/OCR 布局与原始 action；来源权限 descriptor 不得省略或换序，来源预算最多 200。SDK/helper 须同步升级，旧不含 action 的 proof 拒绝。
-- 本机合成 Cocoa 失焦输入、新气泡/空草稿、篡改正文拒绝及 OCR 读回通过；纯 OCR 身份置信度 0.5 被拒绝，最小化焦点未通过。主人打开官方独立私聊仍白屏/无输入节点、窗口受保护，未修改隐私保护或发送。
+- 本机合成 Cocoa 失焦输入、新气泡/空草稿、篡改正文拒绝及 OCR 读回通过；纯 OCR 身份置信度 0.5 被拒绝，最小化焦点未通过。主人打开官方独立私聊仍白屏/无输入节点，未修改隐私保护或发送。旧共享标志的解释见后续修正。
 - 新增默认不构建/不安装的合成 fixture 与复现脚本；本机 185 项回归通过（2 项跳过），原生 CTest、Core ASan/UBSan 通过。代码 866abd6 的 macOS/Windows CI 原生构建、CTest 和 185 项回归全部通过（执行 183/178 项、跳过 2/7 项），见 [CI 38127817314](https://github.com/Aethra2007/wechat-codex-mcp/actions/runs/38127817314)。两个真实目标的发送读回、后台写入和多日运行仍未通过。
 
 ### 2026-10-11 — 合并上游数据库校验更新

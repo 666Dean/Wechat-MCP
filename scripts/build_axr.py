@@ -9,13 +9,18 @@ from pathlib import Path
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--build',default='.local-private/build')
     parser.add_argument('--openssl');parser.add_argument('--toolchain')
-    parser.add_argument('--config',choices=['Debug','Release'],default='Debug');args=parser.parse_args()
+    parser.add_argument('--config',choices=['Debug','Release'],default='Debug')
+    parser.add_argument('--mac-selection-probe',action='store_true',help='Compile metadata-only owner picker probe; never run it')
+    args=parser.parse_args()
     import pybind11
     root=Path(__file__).resolve().parents[1];build=root/args.build
     command=['cmake','-S',str(root),'-B',str(build),'-DAXR_PYTHON=ON','-DCMAKE_BUILD_TYPE='+args.config,
         '-DPython_EXECUTABLE='+sys.executable,'-Dpybind11_DIR='+pybind11.get_cmake_dir()]
     if args.openssl:command+=['-DOPENSSL_ROOT_DIR='+args.openssl]
     if args.toolchain:command+=['-DCMAKE_TOOLCHAIN_FILE='+args.toolchain]
+    if args.mac_selection_probe:
+        if sys.platform!='darwin':parser.error('--mac-selection-probe requires macOS')
+        command+=['-DAXR_MAC_SELECTION_PROBE=ON']
     subprocess.run(command,check=True);subprocess.run(['cmake','--build',str(build),'--config',args.config,'--parallel','4'],check=True)
     products=list((build/'AXR').rglob('_axr_native*'))
     for p in products:

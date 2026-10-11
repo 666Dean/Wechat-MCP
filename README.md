@@ -10,7 +10,8 @@
 
 ## Stellaria AXR SDK Gen1 合作开发
 
-新增 [Mac 回复与本地 OCR](docs/MAC_REPLY.md)：WCDB + UI 混合模式、进程定向输入及独立发送记录观察。合成窗口失焦发送/OCR 读回已验证；本机微信聊天控件与受保护画面仍阻塞真实发送，保持实验状态。
+新增 [Mac 回复与本地 OCR](docs/MAC_REPLY.md)：WCDB + UI 混合模式、进程定向输入及独立发送记录观察。合成窗口失焦发送/OCR 读回已验证；本机微信聊天控件缺失、窗口截图白屏，真实发送仍未通过。腾讯签名客户端标准升级至 4.1.15.54 / 270134 后现象仍在。
+新增 [替代渠道资格研究](docs/MAC_TRANSPORTS.md) 和默认关闭的 Apple 系统窗口选择器探针。主人单窗口选择的元数据核验已通过；没有启动捕获、OCR 或发送。旧共享标志不能证明现代捕获保护或可用性，官方机器人渠道也未证明能操作原账号既有私聊。
 
 根目录 [AXR/](AXR/README.md) 是应用无关的 **C++20 SDK**，提供 Guard / Host / Journal
 授权执行能力及 Python 绑定；Mac 通用 adapter 使用 Swift，Win 使用 C++。
