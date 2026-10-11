@@ -5,6 +5,41 @@
 
 ## Unreleased
 
+### 2026-10-11 — 合并上游数据库校验更新
+
+- 合并实际默认分支 main 的 98e8a2a / 3df0050，保留原项目缓存导入、首页面密钥模式诊断和 0.6.2 有限实机记录；它们不替代 AXR 的所有者认证或账号资格。
+- 对外说明、源码注释和 SDK 安装包仅描述 AXR 自身能力，保留版权及第三方许可证；内部来源清单退出公开发行。
+- 解决 CLI、状态说明和更新日志冲突，禁止 AXR 模式混用所有旧数据库/联系人管理操作，新增互斥回归。合并后本机 176 项回归通过（2 项平台跳过）；微信真实发送尚未通过。
+
+### 2026-10-11 — 显式导入开源工具本机密钥缓存
+
+- 新增 --import-keeper-key CACHE_FILE：交互终端显式选择一个 chatlog-keeper 64-hex 缓存，使用现有 raw/password 首页面 HMAC 校验，全部会话/消息库匹配且至少有一个消息库后才原子保存原始候选到账号/路径绑定的 DPAPI 凭据。校验失败不覆盖旧凭据。
+- 缓存读取限制 128 字节，拒绝符号链接、硬链接、reparse 标记、非普通文件和读中身份变化；不修改源缓存。输出只含计数与导入状态，错误屏蔽私人细节；没有 MCP 取钥接口或新增运行后端。
+- 新增 docs/KEY_ACQUISITION.md，固定 chatlog-keeper 参考 revision，说明已有凭据复核、独立环境 passive 尝试和缓存导入；没有执行上游提取程序、自动调试或微信发送。新增 *.key 忽略规则。
+- Linux / Python 3.12.14 / mcp 1.30.0：unittest discover 共 106 项，105 项通过、1 项 Windows DPAPI 测试跳过。新增 8 项覆盖格式/边界、错误账号、部分匹配与旧凭据保护、文件类型、CLI 互斥及输出隐私；原有首页面测试支持单独运行。
+- 新导入流程中的 DPAPI 保存为 mock；尚无 Windows 新 CLI、上游取钥、junction 或真实缓存导入验收。本轮没有获取实际密钥、读取真实正文或修复 DLL -100。0.6.2 的有限实机证据保持独立。
+
+### 2026-10-10 — 开源数据库读取路线评估
+
+- 新增 docs/OPEN_SOURCE_READERS.md：固定提交核对 chatlog-keeper、wxq、wechat-cli-local 的许可证、页解密、WAL 和分页实现；首选评估 chatlog-keeper 的密钥模式判别与校验逻辑。
+- 记录候选的逐页校验/提交边界差异、Windows 快照锁及整库重新解密开销；更新下一步验证顺序，不将开源 README 的兼容声明作为本机证据。
+- 本项目 91 项回归测试通过。仅静态阅读候选源码，未安装或执行候选，未新增真实数据库读取、发送或可用后端；0.6.1 消息 -100 阻塞仍存在。
+
+## 0.6.2 — 2026-10-11
+
+### 新增
+
+- 新增 --probe-database-key 本机 CLI：使用现有 DPAPI 凭据，只校验绑定账号会话库与最多 64 个数字编号消息库的首页面 HMAC；识别 raw/password 模式，不加载 DLL，不输出密钥/路径/标识/正文，不创建状态库或入队。
+- 拒绝消息目录/文件链接及读取期间的文件变化；缺少消息库、不匹配或文件错误返回非零状态；异常输出抑制私人细节。没有添加 MCP 密钥接口或新的运行后端。
+
+### 验证与限制
+
+- Windows / Python 3.14.7：98 项回归测试通过（新增 7 项），覆盖模式、篡改、错误密钥、截断、范围上限、计数与隐私、无消息库、CLI 冲突及不初始化原生连接/状态。
+- 真实 CLI：首页面 checked=4/password=4/raw=0/unmatched=0/error=0（会话库 + 3 个数字编号消息库）。首页面匹配不证明整库、账号身份或实时读取。
+- 独立实验使用 apsw-sqlite3mc 3.53.4.0，在一个稳定加密副本上只读查询已绑定私聊 20 条文本：严格解码 20/20，对方 9/本人 11、未知发送者 0；连接及临时副本已清理。正文未输出/存档，没有发送、基线或队列。
+- 新依赖仅安装在忽略的实验目录，没有修改产品依赖或提交第三方二进制。样本没有 zstd；没有全局最新页、实时增量、性能、跨分库、显示名重验、Python 3.12 或远程 CI 证据。原生 DLL -100/关闭故障仍未修复，MCP 后端尚未接入开源引擎。
+
+
 ### 2026-10-11 — 控件正文隔离的双平台验证记录
 
 - bf25e9c macOS/Windows CI 均通过原生构建、CTest 和 160 项回归，分别执行 158/154 项、跳过 2/6 项。
@@ -72,7 +107,7 @@
 #### 新增
 
 - 根目录 AXR/ 应用无关 SDK：C++20 Guard、AET intent seal、OpenSSL AES-GCM/HMAC、持久链、进程 API、Python 薄绑定；Swift 通用 AX helper；Win C++ Hello 与 AppContainer。
-- 从主人 GitHub 的 BasicX-Hub/BasicX/Connector 实际抽取固定提交的预算、append-only triggers、耐久日志、进程管理与沙箱原语；REUSE.json 记录源文件 SHA-256/符号。没有导出计算 DAG、SOF/SPX、渲染、模型 Provider 或 DCC 源码。
+- AXR 提供预算、append-only triggers、耐久日志、进程管理与沙箱原语。
 - SDK AGPL v3 only，项目其他源码保留 MIT，README/LICENSE/LICENSES/NOTICE 明确边界与第三方义务。
 - 独立 owner CLI / 本地 Tk policy/审批/telemetry 面板 + Keychain/Windows Credential Manager；代理不能发放 capability；principal/account/conversation/purpose/workflow/TTL/quota 全部绑定，外部发送与披露逐动作确认。
 - AXR MCP、AET 执行与取消、加密 context/result TTL、会话来源传播、dry-run/模拟、metadata-only 审计和计数；legacy 兼容名称在 AXR 模式走 AET。

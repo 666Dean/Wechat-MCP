@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Adapted from BasicXDurableJournal Commit/Load/Write/Sync. Qt removed;
+// AXR authenticated commit, load, write and sync;
 // no compute jobs, scheduler, Provider, project format or runtime dependencies.
 #include "axr/Core.hpp"
 #include <fstream>

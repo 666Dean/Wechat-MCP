@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Adapted from BasicXWindowsSandbox Initialize/Grant and SECURITY_CAPABILITIES.
+// AXR Windows sandbox initialization and SECURITY_CAPABILITIES.
 // Qt removed. Grants touch only an owner-staged runtime, never live project/data paths.
 #define NOMINMAX
 #include <windows.h>

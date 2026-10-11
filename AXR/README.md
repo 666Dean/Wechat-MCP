@@ -5,14 +5,12 @@ AXR 是与应用无关的授权执行 SDK。C++20 核心负责 Guard、密封意
 Windows 所有者验证与沙箱使用 C++。微信选择器、数据库解析、MCP 和监听器位于仓库
 `adapters/`、`axr_integration/`，不属于 AXR SDK。
 
-通用基础设施实际抽取自 BasicX-Hub、BasicX、Connector，见
-[REUSE.json](REUSE.json)。没有导出内部计算 DAG、SOF/SPX、渲染或模型实现。
 许可证为 [AGPL v3 only](LICENSE)。商业许可须另行书面约定。
 
 ## C++20 独立构建
 
 需要 CMake ≥ 3.24、OpenSSL ≥ 3、SQLite3；nlohmann/json 3.12 可由包管理器提供，
-否则构建下载并校验固定 SHA-256 的官方单头文件。无需 BasicX、Qt 或微信。
+否则构建下载并校验固定 SHA-256 的官方单头文件。SDK 可独立构建和使用。
 
 ```sh
 cmake -S AXR -B build-axr -DCMAKE_BUILD_TYPE=Debug
@@ -70,7 +68,7 @@ Journal 的持久 execution claim 在正文 TTL/重启后仍拒绝原 ID 重放�
   来源访问授权须覆盖实际分类。自身读取的分类查询由主授权校验，单次精确读取及最后一页的预留额度可完成；派生操作仍复核其他来源访问额度。
   P3 默认逐动作确认；敏感/凭据/财务分类要求精确意图。没有金融或凭据操作 handler。
 * Job、context、result 的正文使用原生 AES-256-GCM，带绑定及 TTL；审计保存元数据，
-  BasicX 日志链加 HMAC，Hub append-only triggers，SQLite WAL + FULL durability。
+  AXR 日志链加 HMAC，append-only triggers，SQLite WAL + FULL durability。
   不提供完整聊天归档、全局个人知识库或遥测上传。
 * 每账号执行租约、每 journal 生命周期租约；幂等来自本地记录，不是假定微信有 idempotency key。
 * 一次性 helper 使用私有继承管道、有界 JSON、固定 owner command 和超时；持久 worker

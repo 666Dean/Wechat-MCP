@@ -74,7 +74,7 @@ class Journal:
         return action
 
     def _audit(self, jid, state):
-        # Native BasicX Commit record, with Hub append-only SQL enforcement.
+        # AXR native commit record with append-only SQL enforcement.
         row = self.db.execute("SELECT record FROM audit_records ORDER BY seq DESC LIMIT 1").fetchone()
         previous = row[0] if row else "{}"
         record = native.commit_record(previous, canonical({"id":jid,"state":state}).decode(),

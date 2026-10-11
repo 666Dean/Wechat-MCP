@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Adapted from Stellaria Connector sdk/src/connector/WorkerTransport.cpp:
-// QuoteWindowsArgument and WorkerSupervisor Start/Poll/Stop (see REUSE.json).
+// AXR process argument encoding and bounded worker lifecycle.
 #include "axr/Core.hpp"
 #include <chrono>
 #include <thread>
@@ -29,7 +28,7 @@ WorkerSupervisor::WorkerSupervisor():impl_(std::make_unique<Impl>()){}
 WorkerSupervisor::~WorkerSupervisor(){Stop();}
 #if defined(_WIN32)
 static std::wstring QuoteWindowsArgument(const std::wstring& value) {
-    // Original Connector quoting algorithm, with empty argument fixed.
+    // Preserve empty arguments and Windows command-line quoting.
     if(!value.empty() && value.find_first_of(L" \t\"")==std::wstring::npos)return value;
     std::wstring result=L"\"";size_t slashes=0;
     for(wchar_t character:value) {

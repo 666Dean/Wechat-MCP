@@ -43,12 +43,12 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-// Native durable record algorithm adapted from BasicXDurableJournal.
+// AXR authenticated durable records.
 Json CommitRecord(const Json& previous, const Json& snapshot, std::string_view kind, double now);
 bool VerifyRecord(const Json& record, const Json& previous);
 bool DurableWrite(const std::filesystem::path& path, std::string_view bytes);
 
-// Process primitives extracted from Connector WorkerSupervisor. No DCC protocol.
+// AXR bounded process primitives.
 enum class WorkerProcessState { Stopped, Starting, Running, Canceling, Exited, Crashed, TimedOut };
 class WorkerSupervisor {
 public:
