@@ -120,11 +120,13 @@ class NativeImageTests(unittest.TestCase):
             return [{'text': 'Req2Buf' if start == functions[2][1] else 'MMStartTask'}] * (3 if start == functions[2][1] else 2 if start == functions[0][1] else 1)
         image = SimpleNamespace(uuid=qualification.UUID, file_sha256=qualification.CORE_SHA256,
             function=function, adjacent_string_refs=refs, direct_calls=lambda _: [{'target': functions[1][1]}])
-        with patch.object(qualification, 'NativeImage', return_value=image):
+        with patch.object(qualification, 'NativeImage', return_value=image), \
+                patch.object(qualification, 'verify_contract', return_value={'native_request_abi_verified': False}):
             result = qualification.qualify_image(b'not-loaded')
             self.assertFalse(result['native_send_available'])
             self.assertFalse(result['runtime_identity_verified'])
-            self.assertEqual(result['evidence'], 'offline_code_identity_only')
+            self.assertEqual(result['evidence'], 'offline_layout_and_ownership_only')
+            self.assertFalse(result['contract']['native_request_abi_verified'])
             for field in ('uuid', 'file_sha256'):
                 original = getattr(image, field)
                 setattr(image, field, 'different-image')
