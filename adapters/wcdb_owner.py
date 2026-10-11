@@ -70,61 +70,70 @@ def observe_mac(store, root, rows, keys, observer, *, timeout=120):
     before=installed_signature(app)
     if subprocess.run(['pgrep','-x','WeChat'],capture_output=True).returncode==0:
         raise AXRError('quit_installed_wechat_normally_before_owner_capture')
-    observer=Path(observer).absolute()
-    if observer.is_symlink() or not observer.is_file():raise AXRError('owner_built_observer_required')
-    child=None
-    # Temporary directory is private, copy never becomes the installed application.
-    with tempfile.TemporaryDirectory(prefix='wcdb-owner-',dir=store.directory) as temporary:
-        stage=Path(temporary);stage.chmod(0o700);copy=stage/'WeChat-owner-copy.app'
-        fifo=stage/'keys.fifo';fd=None
-        try:
-            subprocess.run(['ditto',str(app),str(copy)],check=True,capture_output=True,timeout=180)
-            entitlements=stage/'entitlements.plist'
-            entitlements.write_text('<?xml version="1.0"?><plist version="1.0"><dict>'
-                '<key>com.apple.security.cs.disable-library-validation</key><true/>'
-                '<key>com.apple.security.cs.allow-dyld-environment-variables</key><true/>'
-                '</dict></plist>');entitlements.chmod(0o600)
-            subprocess.run(['codesign','--force','--deep','--sign','-','--entitlements',str(entitlements),str(copy)],
-                           check=True,capture_output=True,timeout=180)
-            os.mkfifo(fifo,0o600);fd=os.open(fifo,os.O_RDONLY|os.O_NONBLOCK|os.O_NOFOLLOW)
-            env={k:v for k,v in os.environ.items() if not k.startswith(('DYLD_','AXR_OWNER_'))}
-            env.update(DYLD_INSERT_LIBRARIES=str(observer),AXR_OWNER_KEY_FIFO=str(fifo))
-            child=subprocess.Popen([str(copy/'Contents/MacOS/WeChat')],env=env,cwd=stage,
-                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
-            deadline=time.monotonic()+timeout;buffer=b'';frames=0
-            while time.monotonic()<deadline and child.poll() is None:
-                select.select([fd],[],[],.2)
-                try:chunk=os.read(fd,4096)
-                except BlockingIOError:chunk=b''
-                if not chunk:time.sleep(.05);continue
-                buffer+=chunk
-                if len(buffer)>8192:raise AXRError('owner_key_channel_budget')
-                while len(buffer)>=52:
-                    frame,buffer=buffer[:52],buffer[52:];frames+=1
-                    if frames>128 or frame[:4]!=b'AXK1':raise AXRError('owner_key_channel_invalid')
-                    salt,key=frame[4:20],frame[20:52]
-                    for rel,row in rows.items():
-                        if rel not in keys and row['page'][:16]==salt:
-                            try:item=provision_verified(root,rel,key,store.secrets,row['salt'])
-                            except AXRError as exc:
-                                if str(exc)=='candidate_key_hmac_rejected':continue
-                                raise
-                            keys[rel]=item;save_index(store,root,keys)
-                    del key,frame
-                if required<=keys.keys():break
-            if not required<=keys.keys():raise AXRError('startup_capture_incomplete_keys_preserved')
-        finally:
-            if fd is not None:os.close(fd)
-            if child is not None and child.poll() is None:
-                child.terminate()
-                try:child.wait(timeout=10)
-                except subprocess.TimeoutExpired:child.kill();child.wait(timeout=5)
-            if installed_signature(app)!=before:raise AXRError('installed_application_signature_changed')
-            # Never restore an observer environment into the installed program.
-            if child is not None:
+    # Once the original is verified and confirmed quit, restore it even if
+    # preparing/signing the disposable copy fails before Popen returns a child.
+    try:
+        observer=Path(observer).absolute()
+        if observer.is_symlink() or not observer.is_file():raise AXRError('owner_built_observer_required')
+        child=None
+        # Temporary directory is private, copy never becomes the installed application.
+        with tempfile.TemporaryDirectory(prefix='wcdb-owner-',dir=store.directory) as temporary:
+            stage=Path(temporary);stage.chmod(0o700);copy=stage/'WeChat-owner-copy.app'
+            fifo=stage/'keys.fifo';fd=None
+            try:
+                subprocess.run(['ditto',str(app),str(copy)],check=True,capture_output=True,timeout=180)
+                entitlements=stage/'entitlements.plist'
+                entitlements.write_text('<?xml version="1.0"?><plist version="1.0"><dict>'
+                    '<key>com.apple.security.cs.disable-library-validation</key><true/>'
+                    '<key>com.apple.security.cs.allow-dyld-environment-variables</key><true/>'
+                    '</dict></plist>');entitlements.chmod(0o600)
+                subprocess.run(['codesign','--force','--deep','--sign','-','--entitlements',str(entitlements),str(copy)],
+                               check=True,capture_output=True,timeout=180)
+                os.mkfifo(fifo,0o600);fd=os.open(fifo,os.O_RDONLY|os.O_NONBLOCK|os.O_NOFOLLOW)
                 env={k:v for k,v in os.environ.items() if not k.startswith(('DYLD_','AXR_OWNER_'))}
-                subprocess.Popen([str(app/'Contents/MacOS/WeChat')],env=env,stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,start_new_session=True)
+                env.update(DYLD_INSERT_LIBRARIES=str(observer),AXR_OWNER_KEY_FIFO=str(fifo))
+                child=subprocess.Popen([str(copy/'Contents/MacOS/WeChat')],env=env,cwd=stage,
+                    stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+                deadline=time.monotonic()+timeout;buffer=b'';frames=0
+                while time.monotonic()<deadline and child.poll() is None:
+                    select.select([fd],[],[],.2)
+                    try:chunk=os.read(fd,4096)
+                    except BlockingIOError:chunk=b''
+                    if not chunk:time.sleep(.05);continue
+                    buffer+=chunk
+                    if len(buffer)>8192:raise AXRError('owner_key_channel_budget')
+                    while len(buffer)>=52:
+                        frame,buffer=buffer[:52],buffer[52:];frames+=1
+                        if frames>128 or frame[:4]!=b'AXK1':raise AXRError('owner_key_channel_invalid')
+                        salt,key=frame[4:20],frame[20:52]
+                        for rel,row in rows.items():
+                            if rel not in keys and row['page'][:16]==salt:
+                                try:item=provision_verified(root,rel,key,store.secrets,row['salt'])
+                                except AXRError as exc:
+                                    if str(exc)=='candidate_key_hmac_rejected':continue
+                                    raise
+                                keys[rel]=item;save_index(store,root,keys)
+                        del key,frame
+                    if required<=keys.keys():break
+                if not required<=keys.keys():raise AXRError('startup_capture_incomplete_keys_preserved')
+            finally:
+                try:
+                    if child is not None and child.poll() is None:
+                        child.terminate()
+                        try:child.wait(timeout=10)
+                        except subprocess.TimeoutExpired:child.kill();child.wait(timeout=5)
+                finally:
+                    # Retain the reader until its writer exits, avoiding a cleanup
+                    # race that could deliver SIGPIPE inside the temporary client.
+                    if fd is not None:os.close(fd)
+    finally:
+        if installed_signature(app)!=before:raise AXRError('installed_application_signature_changed')
+        # A person may have restarted the original during setup. Never spawn a
+        # duplicate or restore an observer environment into the installed program.
+        if subprocess.run(['pgrep','-x','WeChat'],capture_output=True).returncode!=0:
+            env={k:v for k,v in os.environ.items() if not k.startswith(('DYLD_','AXR_OWNER_'))}
+            subprocess.Popen([str(app/'Contents/MacOS/WeChat')],env=env,stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,start_new_session=True)
     return keys
 
 
@@ -160,7 +169,9 @@ def main():
                     keys[args.database]=provision_verified(root,args.database,key,store.secrets,rows[args.database]['salt'])
                     del raw,key;save_index(store,root,keys)
                 elif args.command=='observe-mac':
-                    keys=observe_mac(store,root,rows,keys,args.observer)
+                    # The installed client is shared across account roots.
+                    with Lease(Path.home()/'.stellaria-axr'/'leases',['owner-wcdb-macos-client']):
+                        keys=observe_mac(store,root,rows,keys,args.observer)
                 else:
                     item=keys.get('contact/contact.db')
                     if not item:raise AXRError('verified_contact_key_required')

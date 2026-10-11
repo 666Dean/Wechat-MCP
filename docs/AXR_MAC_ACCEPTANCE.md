@@ -15,7 +15,8 @@
 | OS 认证 + AET | 主人完成 LocalAuthentication；精确 300 秒、每会话最多 12 页的本地只读授权；两个 AET Completed，审计有效 |
 | 实际 MCP | 真实 server.py stdio 握手与两个 wechat_read_context 调用 Completed；代理只收到加密 context handle，无正文；无 key/issuer 工具 |
 | 授权收尾 | 试验访问授权撤销，未发放披露或发送权限；监听/模型/自动执行开关关闭 |
-| 正式 CLI 组合流程 | 代码中的 HMAC/缓存/目录/contact 资格函数在实机使用；observer 原结果与 FIFO 权限合成验证通过；再次运行正式 observe-mac 时 OS 认证未完成，未进入 capture，不能称该组合流程已通过实机 |
+| 正式取钥 CLI | 本次独立 OS 认证成功；observe-mac 完整运行，临时副本启动取得 21 个 HMAC 校验 key，Keychain/私有引用索引落地；目录及副本进程最终为 0，原版签名有效、恢复登录 |
+| 正式身份绑定 CLI | 再次独立 OS 认证后 qualify 成功，两个私聊 ID 与先前绑定一致，三个消息分库只读验证通过；缓存 salt/HMAC 复核保留 20 项，只生成本地配置片段，未启用 policy 或授予权限 |
 | UI 发送 | AX 主窗口与 14 个关联进程没有可用编辑节点；Computer Use 主聊天捕获白屏。单微信窗口 ScreenCaptureKit 无 frame，同代码合成窗口可产生正常 frame。稳定 UI 目标/输入/提交/送达见证缺失，未发送 |
 
 持续读取使用原生 SQLCipher 只读适配器，两会话每轮各一页、5 秒间隔、限额 6 条，
