@@ -64,8 +64,18 @@ func main() throws -> [String:Any] {
     guard let bundle = req["bundle"] as? String, !bundle.isEmpty else { throw Failure("bundle_required") }
     let apps = NSRunningApplication.runningApplications(withBundleIdentifier: bundle)
     if op == "status" {
-        return ["accessibility":AXIsProcessTrusted(), "running":apps.count == 1,
-                "ambiguous_process":apps.count > 1, "pid":apps.first?.processIdentifier ?? 0]
+        var result: [String:Any] = ["accessibility":AXIsProcessTrusted(), "running":apps.count == 1,
+                "ambiguous_process":apps.count > 1, "pid":apps.first?.processIdentifier ?? 0,
+                "foreground":apps.count == 1 && apps[0].isActive]
+        if apps.count == 1 && AXIsProcessTrusted() {
+            let root = AXUIElementCreateApplication(apps[0].processIdentifier)
+            AXUIElementSetMessagingTimeout(root, 3)
+            if let windows=attr(root,kAXWindowsAttribute) as? [AXUIElement], !windows.isEmpty {
+                let flags=windows.compactMap { attr($0,kAXMinimizedAttribute) as? Bool }
+                if flags.count==windows.count { result["all_windows_minimized"]=flags.allSatisfy {$0} }
+            }
+        }
+        return result
     }
     guard AXIsProcessTrusted() else { throw Failure("accessibility_permission_required") }
     guard apps.count == 1 else { throw Failure("application_missing_or_ambiguous") }
