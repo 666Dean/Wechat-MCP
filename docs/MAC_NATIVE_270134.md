@@ -1,6 +1,6 @@
 # Mac 270134 原生发送适配记录
 
-2026-10-11。本轮直接分析原版程序代码，停止实际微信 OCR 路线。**还没有可安全调用的私聊发送 ABI，也没有真实发送。**
+2026-10-12。本轮直接分析原版程序代码，停止实际微信 OCR 路线。**还没有可安全调用的私聊发送 ABI，也没有真实发送。**
 
 ## 本机样本与已定位代码
 
@@ -60,6 +60,33 @@ SDK 的 `axr.native_image.NativeImage` 是独立编写的通用离线工具，�
 账号 getter 的结果有借用生命周期：代码在返回前释放局部 account context 引用。未来运行适配必须持有对应强引用，并在同一执行租约内重验账号、上下文和精确收件人；不能只调用 getter 后跨线程保存裸指针，更不能把当前聊天对象、显示名或 WCDB 配置当作运行账号。本轮没有解读或输出实际账号/收件人。
 
 `native_contract.py` 固定当前函数完整哈希、普通分支调用位置，并独立解码 MOVZ/ADD 的大小、正文位置、shared allocation 和目标 kind。拒绝旧布局、错寄存器、错位宽、移位立即数、不同调用分支或析构字段；报告仍明确 `native_request_abi_verified=false`、`runtime_recipient_verified=false`。它不是发送后端，也不把这些地址转换成可执行函数指针。
+
+## 执行闭包、目标数据流和 outgoing Message
+
+2026-10-12，沿普通微信分支继续追到执行阶段。`0x4123510` 所创建闭包的虚表 +0x30 指向 `0x414ecf0`；后者复制消息 shared_ptr 向量，取得 session 强引用，构造 0xa8 所有权闭包并调用 `0x453a2d0`。新闭包执行入口为 `0x414f258`，进一步调用发送服务 `0x317ba00`；释放入口 `0x414f22c` 清理向量并释放 0xa8 分配。这些仍是静态执行/释放关系，不能证明调用所在线程、取消句柄或成功投递。
+
+虚表引用不再用低位掩码猜测。SDK `NativeImage.chained_rebase` 独立实现 [Apple 的 format-6 磁盘格式](https://github.com/apple-oss-distributions/dyld/blob/main/include/mach-o/fixup-chains.h)：核对 segment、page 和实际链成员，再返回未加 slide 的地址；只走目标所在一页，拒绝未列入链的字、导入、标签、保留位、越界和其他格式。不是 dyld loader、运行进程指针或调用权限。当前固定样本新增 8 条虚表引用、16 个完整函数及 9 条直接调用边共同校验，原 15 函数/7 边保持。
+
+| 阶段 | 当前函数/数据流 | 所有权证据与限制 |
+| --- | --- | --- |
+| session 获取与调度 | `0x46681d4`、`0x453a2d0` → `0x45397f4` | getter 复制 shared_ptr 并增加计数；调度存在不同路径，未取得运行线程/取消资格 |
+| 发送服务逐条处理 | `0x414f258` → `0x317ba00` → `0x317b554` | 保留消息引用；服务循环处理向量，不能把函数返回值视为逐条送达 |
+| 队列包装 | `0x317b554` → `0x30ef24c` → `0x30ecfd0` | 0xf8 shared allocation、+0x18 payload；独立队列包装持有输入和 outgoing Message 引用 |
+| outgoing Message 构造 | `0x30ecfd0` → `0x30ed2d4` → `0xac4188` | payload 0x278、shared allocation 0x290，与 0x350 转换对象分开；不是已资格的最终 wire request |
+| 账号/目标/正文来源 | `0x30ed2d4` 与 `0x4cb86d0` | AppContext 账号 getter string → outgoing +0x18；逐目标消息 +0x90 → outgoing +0x30；正文 helper → outgoing +0x48 |
+| 队列包装销毁 | 虚表 `0x9dd6ba8` → `0x2ebc708`；payload 虚表 → `0x30f1644` → `0x30f0ae8` | 控制块调用 payload 析构，后者释放持有的 shared_ptr/strings；不能原样 memcpy 或先释放异步输入 |
+
+收件人数据流另在 `0x418b078` 核对：目标集合节点 +0x20 的 string 写至新逐目标消息 +0x90，之后由上述 outgoing 构造消费。这说明发送路径消费的是目标字符串，而非当前窗口标题；它 **没有**核对真实运行目标是否为本人私聊或另一个授权私聊。必须在实际执行租约中重验原账号、账号切换、联系人私聊类型和精确内部 ID。借用的账号 string 仍需要 account context 强引用与有效期，不能把静态 getter 或 WCDB 配置当作运行见证。
+
+后续 `0x317f674` 队列调度、`0x31cb65c`/`0x31cc994` 状态处理、`0x318ac70` 类型化 sender 查询、`0x30cfe94` 虚调用分发仍有不同类型/状态分支；这里只记录分析位置，没有升级为稳定调用 ABI 或最终网络序列化资格。新报告明确 `final_wire_request_verified=false`、`thread_and_cancellation_verified=false`，运行身份与可发送状态继续 false。
+
+## 保持原版保护的入口核查
+
+本机 270134 bundle 未声明 `NSAppleScriptEnabled`、`OSAScriptingDefinition` 或 `NSServices`，没有 sdef 文件；系统 `sdef` 查询返回 -192。仅注册 xweixin/weixin/wechat URL scheme；这些注册信息不能证明支持指定 wxid、正文、精确账号或后台回执。此项核查不能排除全部未公开 Apple Event，但没有据此执行未知 URL、debug helper RPC 或发送测试。
+
+本机原版没有 get-task-allow、disable-library-validation 或 allow-dyld-environment-variables entitlement。按 [Apple 的调试权限说明](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.cs.debugger)，仅给调用方增加 debugger entitlement 不能获得缺少 get-task-allow 的受保护目标 task port。没有把 Full Disk Access、OS 所有者认证或以前仅限 KDF 的副本实验升级成原账号运行读取/发送资格；未重签原版或副本来改变发送实验的保护条件。
+
+继续原账号原生运行资格需要一个可验证、受现有权限允许的执行入口，以及当前账号/精确收件人和模块生命周期证据。现有离线工具不会提供绕过这些条件的注入、任意地址或序列化补丁。当前调查尚未找到符合这些条件的原版调用入口，不能将无正文诊断或静态消息构造记作真实收发闭环。
 
 ## 运行中原版资格探针
 
