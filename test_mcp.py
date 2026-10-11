@@ -159,9 +159,10 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
 from test_database_reader import StreamReader, message
 def factory(config):
     reader = StreamReader(config)
+    stable_row = message(1)
     def messages(cid, limit, offset):
         reader.reads.append((cid, limit, offset))
-        return [] if len(reader.reads) <= 2 else [message(1)]
+        return [] if len(reader.reads) <= 2 else [dict(stable_row)]
     reader.messages = messages
     return reader
 database_reader.WcdbReader = factory
@@ -189,6 +190,9 @@ server.main()
                     self.assertEqual(queued["items"][0]["preview"], self.data(preview)["text"])
                     self.assertEqual(queued["items"][0]["stage"], "preview_ready")
                     self.assertFalse(queued["live_identity_verified"])
+                    # A stored row retains its creation time across wall-clock
+                    # seconds; fixture polling must not invent another identity.
+                    await asyncio.sleep(1.05)
                     self.assertEqual(self.data(await session.call_tool("poll_messages", {}))["events"], [])
                     invalid = await session.call_tool("list_reply_queue", {"limit": 101})
                     self.assertTrue(invalid.is_error)
