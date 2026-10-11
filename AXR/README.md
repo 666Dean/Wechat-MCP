@@ -7,6 +7,8 @@ Windows 所有者验证与沙箱使用 C++。微信选择器、数据库解析�
 
 许可证为 [AGPL v3 only](LICENSE)。商业许可须另行书面约定。
 
+Python 支持层新增通用 `axr.native_image.NativeImage` 离线 Mach-O 代码身份工具：有界切片、UUID、函数边界/哈希和直接调用/字符串引用；不加载程序或授权内部函数调用。微信 build 与候选指纹在 SDK 外的适配器中，见 [应用侧资格记录](../docs/MAC_NATIVE_270134.md)。
+
 ## C++20 独立构建
 
 需要 CMake ≥ 3.24、OpenSSL ≥ 3、SQLite3；nlohmann/json 3.12 可由包管理器提供，
