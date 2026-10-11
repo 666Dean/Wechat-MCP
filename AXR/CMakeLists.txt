@@ -77,16 +77,17 @@ if(APPLE)
       MACOSX_BUNDLE_BUNDLE_NAME AXRInputFixture)
   endif()
   find_program(AXR_SWIFTC swiftc REQUIRED)
-  option(AXR_MAC_SELECTION_PROBE "Build the owner-operated metadata-only system picker probe (never installed)" OFF)
+  option(AXR_MAC_SELECTION_PROBE "Build the owner-operated system picker qualification tool (never installed)" OFF)
   if(AXR_MAC_SELECTION_PROBE AND BUILD_TESTING)
     set(AXR_PICKER_APP "${CMAKE_CURRENT_BINARY_DIR}/axr-mac-selection-probe.app")
     file(GENERATE OUTPUT "${AXR_PICKER_APP}/Contents/Info.plist" CONTENT
       "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>dev.axr.selection-probe</string><key>CFBundleExecutable</key><string>axr-selection-probe</string><key>CFBundleName</key><string>AXR Window Selection Probe</string><key>CFBundlePackageType</key><string>APPL</string><key>LSUIElement</key><true/></dict></plist>")
     add_custom_command(OUTPUT "${AXR_PICKER_APP}/Contents/MacOS/axr-selection-probe"
       COMMAND "${CMAKE_COMMAND}" -E make_directory "${AXR_PICKER_APP}/Contents/MacOS"
-      COMMAND "${AXR_SWIFTC}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/MacSelectionProbe.swift"
+      COMMAND "${AXR_SWIFTC}" -I "${CMAKE_CURRENT_SOURCE_DIR}/native/bridge" "${CMAKE_CURRENT_SOURCE_DIR}/tests/MacSelectionProbe.swift"
+        -Xlinker "$<TARGET_FILE:axr>" -Xlinker "$<TARGET_FILE:OpenSSL::Crypto>" -lsqlite3 -lc++
         -o "${AXR_PICKER_APP}/Contents/MacOS/axr-selection-probe"
-      DEPENDS tests/MacSelectionProbe.swift VERBATIM)
+      DEPENDS axr tests/MacSelectionProbe.swift native/bridge/module.modulemap include/axr/Commit.h VERBATIM)
     add_custom_target(axr-mac-selection-probe-build ALL
       DEPENDS "${AXR_PICKER_APP}/Contents/MacOS/axr-selection-probe")
   endif()

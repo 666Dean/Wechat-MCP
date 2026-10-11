@@ -93,18 +93,64 @@ python scripts/probe_mac_input_fixture.py --helper build/AXR/axr-helper
 本轮没有改变微信隐私设置或窗口共享属性。完成腾讯签名的标准客户端升级后，新版主窗口仍无聊天/输入树、截图白屏，没有真实发送。
 已完成的 WCDB 30 分钟读取属于之前实际启动版本；本轮的合成失焦输入/OCR 不是两个真实目标的读写验收。
 
-## 所有者系统选择器：仅元数据
+## 所有者系统选择器与精确单帧 OCR
 
-macOS 15.2+ 可选择构建独立探针；默认不构建、不安装，CI 只编译，不打开选择器：
+macOS 15.2+ 可选择构建独立探针；默认不构建、不安装。CI 只编译，不打开选择器：
 
 ```sh
 python scripts/build_axr.py --mac-selection-probe
 .local-private/build/AXR/axr-mac-selection-probe.app/Contents/MacOS/axr-selection-probe com.example.authorized-app 120
 ```
 
-bundle ID 为占位。探针要求唯一运行实例，由主人在 Apple 原生选择器中手动选择单窗口；
-返回时核对 filter 类型、窗口数、bundle 和原 PID，再关闭选择器。取消、超时、进程或范围不匹配均失败关闭。
-只输出窗口/PID 数值与 legacy sharing；不读取标题、正文、图片或凭据，不启动 stream，不执行 OCR 或输入。
-成功仅表示过滤器元数据符合范围，不代表会话身份绑定、捕获可用或发送资格。
-本机主人选择的是微信主窗口，此结果不能作为指定私聊的绑定证明；新客户端进程也不能复用旧 PID。
+上述默认模式仅返回元数据。显式读取用交互式本地所有者入口：
+
+```sh
+python -m axr.owner_window_ocr --state /private/owner/state \
+  --helper /path/to/axr-helper \
+  --picker /path/to/axr-mac-selection-probe.app/Contents/MacOS/axr-selection-probe \
+  --request /private/window-request.json
+```
+
+请求文件须当前用户独占、权限 0600、普通文件、无软/硬链接，最多 16 KiB；以下均为占位：
+
+```json
+{"resource":{"platform":"example","account_id":"owner-account","conversation_id":"authorized-chat"},
+ "visual_binding":{"bundle":"com.example.authorized-app","pid":12345,"window_id":123,
+ "title":"Owner selected conversation","bounds":[100,100,800,600]}}
+```
+
+这不是配置向导，实际绑定必须由所有者资格流程提供，不能把显示名当作内部 ID。
+本地终端先 OS 认证，再发放资源和完整窗口绑定密封的精确读取能力，最长 240 秒、一次使用。
+系统选择器必须由主人手动选定；窗口/PID/bundle/标题/几何在捕获前后及 OCR 后再次核验。
+只使用选择器返回的原始单窗口 filter，排除其他应用和同应用其他窗口，不构造桌面过滤器或切换捕获路线。
+[Apple WWDC23](https://developer.apple.com/videos/play/wwdc2023/10136/?time=276) 明确说明选择器 filter 可直接供截图 API 使用。
+
+仅一帧、最大 2048×2048；Vision 本地识别最多 100 行/64000 UTF-8 字节。选择等待最多 180 秒，
+捕获/OCR 最多 15 秒，父进程最多 200 秒。图片仅存内存，无音频/麦克风、网络或输入操作。
+正文只经私有管道进入加密短期结果；对外只返回计数、尺寸、粗略像素统计和审计状态。
+结束时撤权并逻辑删除结果正文，不承诺 SQLite/存储介质物理擦除。
+窗口变化、取消、空帧、权限变化、超时均 FailedSafe；收到图像对象不代表聊天读取通过。
+此入口不注册 MCP、不授权披露/监听/发送；`owner_selected_window_unqualified_for_send` 不证明平台账号或会话 ID。
+
+### 270134 本机对照
+
+主人分别完成新的 OS 认证并选定两个已经打开的独立私聊。指定合作私聊和本人内部微信 ID 私聊
+返回 598×640 图像对象，均为 0 行 OCR；像素统计均为 0 个不透明采样、无有效变化。
+旧试验的 Completed 只代表捕获事务返回，不能作为内容读取成功；当前实现将空帧判为 FailedSafe。
+当时微信失焦，但空帧不能作为后台聊天读取资格。本人窗口由主人明确选择，仍不把窗口标题提升为内部 ID 见证。
+未获得可用聊天画面或正文，没有保存图像、披露正文或真实发送；每次能力撤销，结果逻辑清理。
+
+相同 filter/截图/Vision 路径在纯合成 Cocoa 窗口失焦时通过：1280×1024、4 行/67 字节、
+4072 个不透明采样，审计有效，无图像落盘或模型正文披露。前两次合成选择未收到回调而超时，不算成功。
+这验证了该实现可以取得合成内容，不能据此确定微信返回空帧的内部原因或绕过其隐私保护。
+合成脚本固定 app/resource/title，不访问 Keychain 或生产策略；最多等待 260 秒、单次能力最长 299 秒，
+仍受 SDK 五分钟精确能力上限约束，实际捕获/OCR 仍限 15 秒。复现须先手动打开 Cocoa fixture：
+
+```sh
+python scripts/probe_mac_picker_fixture.py --picker /path/to/axr-selection-probe \
+  --request /private/synthetic-window-request.json
+```
+
+独立窗口适合固定、明确授权的会话范围；当前需要主人打开窗口并逐次选择，不能作为所有好友自动切换或无人值守方案。
+真实发送需要可验证的会话身份、空输入框、精确草稿及提交后见证。当前两目标没有这些证据，不投递盲回车或坐标点击。
 替代渠道及客户端升级证据见 [MAC_TRANSPORTS.md](MAC_TRANSPORTS.md)。

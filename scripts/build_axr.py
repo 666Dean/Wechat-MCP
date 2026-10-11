@@ -10,7 +10,7 @@ def main():
     parser=argparse.ArgumentParser();parser.add_argument('--build',default='.local-private/build')
     parser.add_argument('--openssl');parser.add_argument('--toolchain')
     parser.add_argument('--config',choices=['Debug','Release'],default='Debug')
-    parser.add_argument('--mac-selection-probe',action='store_true',help='Compile metadata-only owner picker probe; never run it')
+    parser.add_argument('--mac-selection-probe',action='store_true',help='Compile owner picker qualification tool; never run it')
     args=parser.parse_args()
     import pybind11
     root=Path(__file__).resolve().parents[1];build=root/args.build

@@ -498,6 +498,61 @@ class ServiceTests(unittest.TestCase):
         asyncio.run(check())
 
 class Workers(unittest.TestCase):
+    def test_owner_picker_rejects_unsealed_or_nonfinite_window_bindings(self):
+        from axr.owner_window_ocr import validate_request
+        value={'resource':asdict(Resource('fixture','fixture-account','fixture-chat')),
+               'visual_binding':{'bundle':'dev.axr.input-fixture','pid':12,'window_id':9,
+                                 'title':'synthetic','bounds':[0,0,640,480]}}
+        self.assertEqual(validate_request(value)[0].platform,'fixture')
+        from axr.owner_window_ocr import capture
+        with self.assertRaisesRegex(AXRError,'synthetic_fixture_scope_required'):
+            capture(None,'unused',Resource('fixture','fixture-account','fixture-chat'),
+                    value['visual_binding'],synthetic_control=True)
+        for patch in ({'pid':True},{'window_id':2**32},{'bounds':[0,0,float('nan'),480]},
+                      {'bounds':[0,0,10000,480]},{'desktop':True}):
+            with self.subTest(patch=patch),self.assertRaises((AXRError,ValueError)):
+                validate_request({**value,'visual_binding':{**value['visual_binding'],**patch}})
+
+    @unittest.skipIf(os.name=='nt','Owner picker request files are macOS only')
+    def test_owner_picker_request_refuses_links_and_public_files(self):
+        from axr.owner_window_ocr import read_private_request
+        with tempfile.TemporaryDirectory() as folder:
+            p=Path(folder)/'request.json'
+            p.write_text(json.dumps({'resource':asdict(Resource('fixture','fixture-account','fixture-chat')),
+               'visual_binding':{'bundle':'dev.axr.input-fixture','pid':12,'window_id':9,
+                                 'title':'synthetic','bounds':[0,0,640,480]}}))
+            p.chmod(0o644)
+            with self.assertRaisesRegex(AXRError,'private_request'):read_private_request(p)
+            p.chmod(0o600);self.assertEqual(read_private_request(p)[0].platform,'fixture')
+            link=Path(folder)/'link';link.symlink_to(p)
+            with self.assertRaises(OSError):read_private_request(link)
+            os.link(p,Path(folder)/'hardlink')
+            with self.assertRaisesRegex(AXRError,'private_request'):read_private_request(p)
+
+    def test_owner_picker_blank_frames_fail_and_all_results_remain_local(self):
+        from axr.owner_window_ocr import capture
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        for blank in (True,False):
+            with self.subTest(blank=blank),tempfile.TemporaryDirectory() as folder:
+                guard=Guard(Path(folder)/'guard.db',b'g'*32)
+                journal=Journal(Path(folder)/'journal.db',Vault(b'v'*32))
+                store=SimpleNamespace(directory=Path(folder),guard=guard,journal=journal)
+                try:
+                    binding={'bundle':'dev.axr.input-fixture','pid':12,'window_id':9,'title':'synthetic','bounds':[0,0,640,480]}
+                    response={'verified':True,'frame_received':True,'frame_has_variation':not blank,
+                        'images_persisted':False,'network_used':False,'width':640,'height':480,
+                        'lines':[] if blank else [{'text':'synthetic private text','confidence':0.99}]}
+                    with patch('axr.owner_window_ocr.Supervisor.invoke',return_value={'result':response}) as invoke:
+                        result=capture(store,'fixture-only',Resource('fixture','fixture-account','fixture-chat'),binding)
+                    self.assertEqual(result['state'],'FailedSafe' if blank else 'Completed')
+                    self.assertFalse(result['send_available']);self.assertFalse(result['body_disclosed'])
+                    self.assertNotIn('synthetic private text',json.dumps(result))
+                    self.assertEqual(journal.db.execute('SELECT COUNT(*) FROM results').fetchone()[0],0)
+                    proof=invoke.call_args.args[1]['guard_context']
+                    self.assertEqual(native.check_commit(proof['store'],proof['proof']),0)
+                    self.assertTrue(journal.verify_audit())
+                finally:journal.close();guard.close()
     @unittest.skipUnless(sys.platform=='win32','Windows native AppContainer')
     def test_native_windows_sandbox_staged_file_private_denial_and_loopback(self):
         import shutil,socket
