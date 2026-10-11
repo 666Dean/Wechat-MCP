@@ -65,3 +65,7 @@ Windows 执行 146 项、跳过 4 项（含 Mac observer/lifecycle）。这些�
 
 任务计数原始累计 718，包含此前 4 次读取；上表 714 由该测试 principal 的任务记录单独计数。
 没有证明新增消息到达延迟、完整历史、恒定内存、多日运行、真实发送或模型 runner。
+
+[30a2797 双平台 CI](https://github.com/Aethra2007/wechat-codex-mcp/actions/runs/38113604780)
+进一步通过 TTL 维护回归：发现 157 项，Mac/Win 分别执行 155/151 项、跳过 2/6 项，
+原生构建与 CTest 均通过。新增维护回归仍是合成验证，不改变 1a16221 的设备测试归属。
