@@ -38,6 +38,18 @@
 后续原生发送适配需当前版本/架构/厂商签名/模块身份与 ABI 匹配、独立账户/收件人见证、
 精确正文授权、单次提交和本地记录观察；未知结果不得盲重发。不把历史 hook、机器人身份或数据库写入当作发送成功。
 
+## 继续排除表面可用的替代方案
+
+静态审查 [macOS WeChat local toolkit](https://gist.github.com/acmerfight/0a01249ef72970d07a2603dbb629e80f/c98dbb10cf23c30e83d5d744905101b0880887a0)（MIT，revision c98dbb1）：
+文档报告微信 4.1.15，但发送依赖 ScreenCaptureKit/OCR、人工选定聊天与正文/草稿核验。
+其捕获流程先包含应用、再更新为窗口过滤器；没有运行该代码或采用其捕获路线。
+它不提供按原账号稳定收件人 ID 调用的非 OCR 发送接口，不能覆盖本机当前的空画面问题。
+
+本机只读检查当前安装包：核心位于 Resources 下的 universal wechat.dylib，Frameworks 下同名文件是较小的加载层。
+核心导出符号检查未找到可直接使用的 SendMsg/Req2Buf/openChat 入口；内部 Req2Buf 字符串不能证明 ABI 或正确地址。
+针对聊天 URL 的静态检查没有得到可验证契约，没有向未知 URL 传递联系人或调用内部函数。
+这些检查只读取已安装程序代码，没有访问进程消息、会话正文或凭据，也没有给 Agent 发放新的数据权限。
+
 ## 标准升级与系统选择器
 
 [Homebrew cask 元数据](https://formulae.brew.sh/cask/wechat) 对应腾讯官方下载的 4.1.15.54 / 270134。下载包 SHA256 匹配，腾讯 Developer ID/Team 签名严格校验及 Gatekeeper 评估通过。

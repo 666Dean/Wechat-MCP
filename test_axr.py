@@ -146,15 +146,17 @@ class Foundation(unittest.TestCase):
         # A validly signed grant from an older issuer must not bypass the new
         # policy at either broker or helper commit boundary.
         import hmac
+        from contextlib import closing
         for changed in ({'intent':None},{'max_uses':2},{'expires_at':self.now[0]+1000}):
             with self.subTest(legacy_grant=changed):
                 self.grant(action,intent=action.seal,max_uses=1)
                 gid,version=self.guard.consume(action);control=self.guard.execution_proof(action,gid,version)
-                with sqlite3.connect(self.root/'guard.db') as db:
+                with closing(sqlite3.connect(self.root/'guard.db')) as db:
                     body=json.loads(db.execute('SELECT body FROM grants WHERE id=?',(gid,)).fetchone()[0])
                     encoded=canonical({**body,**changed}).decode()
                     db.execute('UPDATE grants SET body=?,signature=? WHERE id=?',
                         (encoded,hmac.new(b'g'*32,encoded.encode(),'sha256').hexdigest(),gid))
+                    db.commit()
                 proof=json.loads(control['proof']);proof['grants'][0]['body_sha256']=hashlib.sha256(encoded.encode()).hexdigest()
                 with self.assertRaisesRegex(AXRError,'authority_missing'):self.guard.revalidate(action,gid,version)
                 self.assertFalse(native.check_scoped_commit(control['store'],json.dumps(proof),
