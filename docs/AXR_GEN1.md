@@ -23,8 +23,10 @@ python server.py --axr-state STATE --listener
 ```
 
 WCDB 密钥：`axr-owner ... secret wcdb.test-account`，本地隐藏输入 32 字节 hex。
-可读数据库导出亦须授权来源；程序不自动导出全部聊天，不关闭 SIP，不注入客户端。
-目前没有通过本机微信密钥自动取得验收，不能宣称已完成“无需密钥配置”。
+可读数据库导出亦须授权来源；读取程序不导出全部聊天、不关闭 SIP。
+[独立 WCDB 所有者工具](WCDB_OWNER.md) 提供隐藏导入、首个页 HMAC 验证、缓存复核和私聊身份绑定。
+Mac 可明确选择临时副本内的 C++20 KDF interposition；保持已安装客户端与 SIP，密钥仅进 OS 凭据库。
+该路径已在授权本机取得所需数据库 key；不承诺其他版本、Windows 自动初始化或无主人参与。
 
 本地配置面板：在主人终端运行 `python -m axr_integration.owner_panel --state STATE --helper HELPER`，提供 policy JSON、三个开关、精确审批/拒绝和实际 telemetry。Python 需有 Tk；所有写入仍需系统认证，按钮本身不授予权限。界面尚未实机验证。
 
@@ -78,22 +80,30 @@ Mac layout 复用 MIT 开源 wechat-mcp 的标识与标题规则，保留完整�
 ## 本轮证据与未关闭验收
 
 * 原项目 91 个回归测试：通过，1 个原有平台跳过；已迁移 MCP 2.3.0 snake_case API。
-* 新增 50 个安全/事务/worker/集成测试：本机 49 项执行通过，Windows AppContainer 项在 CI 通过，包含真实 SQLCipher 加密合成库、WAL、拒写/错钥，
+* 新增安全/事务/worker/集成测试：本轮本机合计 150 项通过（2 项平台跳过）；上一代码轮双平台 CI 141 项通过。包含真实 SQLCipher 加密合成库、WAL、拒写/错钥，
   原生 helper 提交前撤权/过期/摘要及来源额度检查，以及监听正文/模型输入预算。
   每次提案的 execution_id 纳入 intent seal，取消后旧审批不能授权相同内容的新提案；持久 claim 拒绝同一 execution_id 重放。
 * C++20 Core / Swift helper：本机编译及 CTest 通过；SDK 独立安装、外部 CMake consumer 构建通过。
 * Mac 沙箱：允许指定 worker/只读 runtime，拒绝白名单外文件；监听中的 loopback socket 在沙箱外可连接、沙箱内拒绝。
-* Mac 微信 4.1.15：进程与 Accessibility 权限检测成功，但聊天树未暴露；增强 AX 失败，
-  debug capability 被系统拒绝（没有读取进程内存），数据库目录被系统权限拒绝。
-  指定会话正文、发送、账号稳定映射与后台行为 **未通过实机验收**。
-* 后续 GUI 实测遇到 Mac 锁定；需要主人解锁及目录读取权限后继续。私有账号、联系人、正文、
-  密钥、截图、实际数据库路径不进入仓库或 CI。
+* Mac 微信 4.1.15：解锁与 Full Disk Access 后定位 v4 账户目录。临时副本启动观察取得 21 个
+  首个页 HMAC 校验 key 并进入 Keychain，覆盖 contact/session 与三个消息分库；24 个候选并未全部覆盖。
+  重新校验会排除 salt 已变化的缓存，本轮一次复核保留 20 条。原版 Tencent 安装签名验证通过并恢复运行。
+* v4 目录候选与 contact 表唯一匹配账户；指定私聊与本人各绑定唯一 username，排除同名群聊。
+  指定私聊近 14 天首个限额页扫描 6 条、解码 2 条文本，方向明确；本人同时间窗口为空。
+  在客户端失焦、foreground=false 时重复读取成功，查询结束无保留连接。
+* 主人完成 LocalAuthentication 后，短时精确本地只读授权的两个 AET 均 Completed；真实 MCP stdio
+  的两个读取也 Completed，审计链有效，返回不含正文，测试访问权限随后撤销。
+  无模型披露/发送授权。该证据不代表发送审批或配置面板已完成设备验收。
+* 聊天 AX 树仍未暴露；Computer Use 捕获白屏，而主人可见正常聊天列表。
+  单微信窗口 ScreenCaptureKit app-to-window 探测也未取得 frame。稳定 UI 身份、输入/提交/送达见证
+  不足时拒绝发送；没有盲坐标或全局 Return 兜底，**实际发送未通过**。
+  私有账号、联系人、正文、密钥、截图、实际数据库路径不进入仓库或 CI。
 * Windows：C++ UIA/Hello（HWND desktop interop，Windows 11 Build 22000+）/AppContainer + 自动化构建路径；本轮按主人要求 **不做微信实机测试**。
   macOS / Windows CI 均完成原生编译、CTest 和 141 项回归（各跳过 2 项平台测试）。
   AppContainer 的合成进程 witness 验证 staged 文件读取、私有文件及 loopback 隔离；
   Hello 所有者认证全过程和微信 UIA/后台行为尚无设备资格证明。
-* 本地所有者 OS 弹窗、人类批准全过程、任意外部模型 runner、长期稳定监听尚未端到端验证。
-* 未提供成熟安装包签名、经过验收的跨平台原生配置 GUI、硬件反回滚、自动合法获取 WCDB 密钥，
+* 所有者 OS 认证与真实读取已验证；发送/披露审批全过程、任意外部模型 runner、多日稳定监听尚未端到端验证。
+* 未提供成熟安装包签名、经过验收的跨平台原生配置 GUI、硬件反回滚、通用跨平台自动取得 WCDB 密钥，
   也未把全部复杂微信版本 schema 或媒体解析声明为支持。
 
 这些限制意味着这是可评审的 Gen1 开发 PR，不能标为完整方案端到端交付。

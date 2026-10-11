@@ -467,4 +467,22 @@ class CipherTests(unittest.TestCase):
         self.assertEqual(decode_text(zstandard.ZstdCompressor().compress('fixture'.encode()),1),'fixture')
         with self.assertRaises(AXRError):decode_text(b'x',99)
 
+    def test_wcdb_modern_compression_flags_and_complete_frame(self):
+        import zstandard
+        encoded=zstandard.ZstdCompressor().compress('modern fixture'.encode())
+        for flag in (4,5):self.assertEqual(decode_text(encoded,flag),'modern fixture')
+        for flag in (2,3):
+            with self.assertRaisesRegex(AXRError,'dictionary_required'):decode_text(encoded,flag)
+        for invalid in (encoded[:-1],encoded+b'garbage',encoded+encoded):
+            with self.assertRaises(AXRError):decode_text(invalid,4)
+        self.assertEqual(decode_text(b'plain blob',1),'plain blob')
+
+    def test_wcdb_compression_output_and_window_budget(self):
+        import zstandard
+        payload=b'x'*(1024*1024+1)
+        for known in (True,False):
+            encoded=zstandard.ZstdCompressor(write_content_size=known).compress(payload)
+            with self.assertRaises(AXRError):decode_text(encoded,4)
+        with self.assertRaises(AXRError):decode_text('x'*(1024*1024+1),0)
+
 if __name__=='__main__':unittest.main()

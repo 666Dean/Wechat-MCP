@@ -134,15 +134,30 @@ class CipherConnection:
 
 
 def decode_text(value, compression):
-    if type(compression) is not int or compression not in (0,1,2):
+    # WCDB CompressionConst.hpp encodes compressed-kind << 1 | original-blob.
+    # 4/5 are ordinary Zstd; 2/3 require a separately qualified dictionary.
+    if type(compression) is not int or compression not in (0,1,2,3,4,5):
         raise AXRError("unknown_wcdb_compression")
+    if compression in (2,3):raise AXRError("wcdb_compression_dictionary_required")
     if isinstance(value,str) and compression==0:
+        if len(value.encode('utf8'))>1024*1024:raise AXRError('message_body_budget_exceeded')
         return value
     if isinstance(value,bytes):
-        if compression==0 and not value.startswith(b"\x28\xb5\x2f\xfd"):
+        if len(value)>1024*1024:raise AXRError('message_body_budget_exceeded')
+        if compression in (0,1) and not value.startswith(b"\x28\xb5\x2f\xfd"):
             return value.decode("utf-8",errors="strict")
         import zstandard
-        return zstandard.ZstdDecompressor().decompress(value,max_output_size=1024*1024).decode("utf-8",errors="strict")
+        try:
+            params=zstandard.get_frame_parameters(value)
+            if params.dict_id:raise AXRError('wcdb_compression_dictionary_required')
+            if params.content_size not in (zstandard.CONTENTSIZE_UNKNOWN,zstandard.CONTENTSIZE_ERROR) and params.content_size>1024*1024:
+                raise AXRError('message_body_budget_exceeded')
+            # Known sizes were capped above; unknown sizes use a capped buffer.
+            # Require one complete frame: streaming reads can accept truncation.
+            decoded=zstandard.ZstdDecompressor(max_window_size=1024).decompress(
+                value,max_output_size=1024*1024,allow_extra_data=False)
+            return decoded.decode('utf8',errors='strict')
+        except zstandard.ZstdError as exc:raise AXRError('message_compression_invalid') from exc
     raise AXRError("message_body_type_invalid")
 
 

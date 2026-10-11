@@ -60,6 +60,8 @@ jobs:
         run: |
           echo "AXR_TEST_WORKER=$PWD/.local-private/build/AXR/axr-worker-probe" >> "$GITHUB_ENV"
           echo "AXR_TEST_RUNTIME_ROOTS=$OPENSSL_ROOT_DIR/lib" >> "$GITHUB_ENV"
+          echo "AXR_TEST_KEY_OBSERVER=$PWD/.local-private/build/libwechat-key-observer.dylib" >> "$GITHUB_ENV"
+          echo "AXR_TEST_KEY_FIXTURE=$PWD/.local-private/build/wechat-key-fixture" >> "$GITHUB_ENV"
       - name: Native sandbox witness paths (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
