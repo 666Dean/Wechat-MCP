@@ -21,10 +21,31 @@ def main():
     parser.add_argument("--probe-database-messages", metavar="CONVERSATION_ID",
                         help="只读验证一个已绑定会话的一页消息；仅输出统计，不输出正文、不建立基线")
     parser.add_argument("--probe-limit", type=int, default=20, help="验证页大小（1 到 50，默认 20）")
+    parser.add_argument("--probe-database-key", action="store_true",
+                        help="本机只读校验会话库及最多 64 个消息分库首页面；不加载 DLL、不输出密钥或正文")
     contacts = parser.add_mutually_exclusive_group()
     contacts.add_argument("--set-contacts", nargs="*", metavar="REMARK")
     contacts.add_argument("--list-contacts", action="store_true")
     args = parser.parse_args()
+    if args.probe_database_key:
+        if (args.demo or args.doctor or args.store_database_key or args.list_database_sessions
+                or args.probe_database_messages is not None or args.set_contacts is not None
+                or args.list_contacts or args.allow_contact_management):
+            parser.error("密钥验证不能与其他操作混用")
+        try:
+            from database_key_probe import probe_database_key
+            config = ConfigStore(args.config).load()
+            if config["backend"] != "wcdb":
+                raise ValueError("backend 无效")
+            result = probe_database_key(config["database_reader"])
+        except Exception:
+            print(json.dumps({"key_matches_all": False,
+                              "error": "本机首页面校验失败；请核对配置、凭据和文件范围"}, ensure_ascii=False))
+            sys.exit(1)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if not result["message_key_verified"]:
+            sys.exit(1)
+        return
     if args.list_database_sessions or args.probe_database_messages is not None:
         if args.list_database_sessions and args.probe_database_messages is not None:
             parser.error("会话查询与消息验证不能混用")
