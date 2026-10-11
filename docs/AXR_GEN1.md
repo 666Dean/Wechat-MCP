@@ -31,7 +31,8 @@ Mac 可明确选择临时副本内的 C++20 KDF interposition；保持已安装�
 本地配置面板：在主人终端运行 `python -m axr_integration.owner_panel --state STATE --helper HELPER`，提供 policy JSON、三个开关、精确审批/拒绝和实际 telemetry。Python 需有 Tk；所有写入仍需系统认证，按钮本身不授予权限。界面尚未实机验证。
 
 所有者 `configure` 会使旧能力失效，并要求重启 broker，防止热改账号/数据源产生身份混用。
-监听授权的 workflow 必须与 grant 一致。`approve JOB --principal PRINCIPAL` 必须针对当前
+监听授权的 workflow 必须与 grant 一致；个人会话读取需 `--class personal`，workspace-normal 不覆盖个人分类。
+所有 listener/runner 开关必须为 JSON 布尔值，字符串 false 不代表关闭，会被拒绝。`approve JOB --principal PRINCIPAL` 必须针对当前
 密封意图完成系统认证；MCP 返回 AwaitingApproval 只代表待办，绝不是审批。
 
 ## 工具与数据流

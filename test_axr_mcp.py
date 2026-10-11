@@ -40,7 +40,7 @@ class Adapter:
     def search(self,cid,**kwargs):return {'messages':[{'reference':'fixture-ref','text':'synthetic untrusted content','created':time.time(),'outgoing':False}],'coverage':'synthetic','cursor':None,'has_more':False}
     def close(self):pass
 store=Store();service=Service(root,store=store,adapter=Adapter(),leases=root/'leases')
-store.guard._issue_owner(principal='fixture-agent',resource=service.resource('fixture-chat'),operations=['messages.read'],purpose='fixture',expires_at=time.time()+120,max_uses=10)
+store.guard._issue_owner(principal='fixture-agent',resource=service.resource('fixture-chat'),operations=['messages.read'],purpose='fixture',expires_at=time.time()+120,max_uses=10,classes=['personal'])
 mcp=MCPServer('AXR fixture');register(mcp,service)
 try:mcp.run(transport='stdio')
 finally:service.close()

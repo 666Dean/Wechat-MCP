@@ -67,6 +67,7 @@ Journal 的持久 execution claim 在正文 TTL/重启后仍拒绝原 ID 重放�
   Prepared 恢复 → FailedSafe；不承诺外部服务 exactly-once 或收件人已收到。
 * 访问与披露独立。来源保留账号、会话、引用、分类和 `untrusted-external`。
   已披露来源的加密 scope/class 元数据跨正文 TTL/重启保留，防止把 TTL 当作来源清洗；不留聊天历史。
+  来源访问授权须覆盖实际分类。自身读取的分类查询由主授权校验，单次精确读取及最后一页的预留额度可完成；派生操作仍复核其他来源访问额度。
   P3 默认逐动作确认；敏感/凭据/财务分类要求精确意图。没有金融或凭据操作 handler。
 * Job、context、result 的正文使用原生 AES-256-GCM，带绑定及 TTL；审计保存元数据，
   BasicX 日志链加 HMAC，Hub append-only triggers，SQLite WAL + FULL durability。
