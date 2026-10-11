@@ -17,6 +17,8 @@ except ModuleNotFoundError as exc:
 from axr.aet import AXRError, digest
 from adapters.wcdb_keys import inventory, private_database_path, provision_verified, qualify_contacts, verified_raw_key
 
+VENDOR_SIGNATURE=b'Identifier=com.tencent.xinWeChat\nTeamIdentifier=5A4RE8SF68\nCDHash=fixture-identity\n'
+
 
 def encrypted_page(key=b'k'*32, salt=b's'*16):
     page=salt+b'p'*(4032-16)
@@ -49,6 +51,14 @@ class KeyTests(unittest.TestCase):
             with self.assertRaisesRegex(AXRError,'reference_mismatch'):verified_cached(Store(),root,rows)
             value['namespace']='another-owner';index.write_text(json.dumps(value))
             with self.assertRaisesRegex(AXRError,'owner_mismatch'):verified_cached(Store(),root,rows)
+            value['namespace']='fixture-owner'
+            for invalid in (None,[],True,{'encrypted.db':'invalid'},{'encrypted.db':{}},
+                            {str(i):{} for i in range(129)}):
+                value['keys']=invalid;index.write_text(json.dumps(value))
+                with self.assertRaisesRegex(AXRError,'index_invalid'):verified_cached(Store(),root,rows)
+            for invalid in ([],None,{'version':True}):
+                index.write_text(json.dumps(invalid))
+                with self.assertRaisesRegex(AXRError,'index_invalid'):verified_cached(Store(),root,rows)
 
     def test_owner_tool_rejects_noninteractive_secret_provision(self):
         from adapters.wcdb_owner import main
@@ -99,7 +109,7 @@ class KeyTests(unittest.TestCase):
             root=Path(tmp).resolve();observer=root/'fixture.dylib';observer.write_bytes(b'fixture-not-loaded')
             store=SimpleNamespace(directory=root)
             rows={'contact/contact.db':{},'session/session.db':{},'message/message_0.db':{}}
-            with patch('adapters.wcdb_owner.installed_signature',return_value=b'fixture-vendor-signature'),\
+            with patch('adapters.wcdb_owner.installed_signature',return_value=VENDOR_SIGNATURE),\
                  patch('adapters.wcdb_owner.subprocess.run',side_effect=run),\
                  patch('adapters.wcdb_owner.subprocess.Popen',side_effect=launch),\
                  patch.dict(os.environ,{'DYLD_INJECTED_TEST':'must-not-restore','AXR_OWNER_TEST':'must-not-restore'}):
@@ -129,7 +139,7 @@ class KeyTests(unittest.TestCase):
                         self.assertEqual(failure,'launch');raise OSError('fixture startup failed')
                     self.assertEqual(list(root.glob('wcdb-owner-*')),[])
                     launched.append((command,options));return SimpleNamespace()
-                with patch('adapters.wcdb_owner.installed_signature',return_value=b'fixture-vendor-signature'),\
+                with patch('adapters.wcdb_owner.installed_signature',return_value=VENDOR_SIGNATURE),\
                      patch('adapters.wcdb_owner.subprocess.run',side_effect=run),\
                      patch('adapters.wcdb_owner.subprocess.Popen',side_effect=launch),\
                      patch.dict(os.environ,{'DYLD_INJECTED_TEST':'must-not-restore','AXR_OWNER_TEST':'must-not-restore'}):
@@ -148,6 +158,30 @@ class KeyTests(unittest.TestCase):
                     with self.assertRaisesRegex(AXRError,{'restarted':'observer_required','signature-changed':'signature_changed','already-running':'quit_installed'}[case]):
                         observe_mac(store,root,rows,{},observer)
                     launch.assert_not_called()
+
+    @unittest.skipUnless(sys.platform=='darwin','macOS vendor copy qualification')
+    def test_vendor_copy_must_match_before_adhoc_sign_or_launch(self):
+        from adapters.wcdb_owner import observe_mac,signature_identity
+        from types import SimpleNamespace
+        original=b'Executable=/original\n'+VENDOR_SIGNATURE
+        copy=b'Executable=/private-copy\n'+VENDOR_SIGNATURE
+        self.assertEqual(signature_identity(original),signature_identity(copy))
+        for invalid in (b'',VENDOR_SIGNATURE+b'CDHash=duplicate\n'):
+            with self.assertRaises(AXRError):signature_identity(invalid)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp).resolve();observer=root/'fixture.dylib';observer.write_bytes(b'fixture-not-loaded')
+            store=SimpleNamespace(directory=root);rows={'contact/contact.db':{},'session/session.db':{}}
+            commands=[];launched=[]
+            def run(command,**options):
+                commands.append(command);return SimpleNamespace(returncode=1 if command[0]=='pgrep' else 0)
+            def launch(command,**options):
+                launched.append(command);self.assertEqual(list(root.glob('wcdb-owner-*')),[])
+            with patch('adapters.wcdb_owner.installed_signature',side_effect=[original,copy.replace(b'fixture-identity',b'changed'),original]),\
+                 patch('adapters.wcdb_owner.subprocess.run',side_effect=run),\
+                 patch('adapters.wcdb_owner.subprocess.Popen',side_effect=launch):
+                with self.assertRaisesRegex(AXRError,'copy_signature_mismatch'):observe_mac(store,root,rows,{},observer)
+            self.assertFalse(any(command[0]=='codesign' for command in commands))
+            self.assertEqual(launched,[['/Applications/WeChat.app/Contents/MacOS/WeChat']])
 
     def test_wrong_key_tamper_and_generation_rejected_before_storage(self):
         page=encrypted_page()
