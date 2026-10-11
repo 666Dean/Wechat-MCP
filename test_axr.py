@@ -433,6 +433,44 @@ class Workers(unittest.TestCase):
             with self.assertRaisesRegex(AXRError,'stable_account'):adapter.search('fixture-chat')
         adapter.close()
 
+    def test_ui_health_never_qualifies_send_and_does_not_request_labels(self):
+        from adapters.ui import UIAdapter
+        from unittest.mock import patch
+        adapter=UIAdapter({'native_helper':'not-launched','conversations':[]})
+        calls=[]
+        def request(op,**args):
+            calls.append((op,args))
+            if op=='status':return {'running':True,'accessibility':True,'pid':12}
+            if op=='capabilities':
+                return {'pid':12,'editable_nodes':1,'truncated':False,'content_read':False}
+            if op=='structure':return {'nodes':[],'pid':12}
+            self.fail('content operation during health check')
+        with patch('adapters.ui.sys.platform','darwin'),patch.object(adapter,'_request',side_effect=request):
+            status=adapter.status();adapter.structure()
+        self.assertFalse(status['send_available'])
+        self.assertEqual(status['ui_structure_state'],'candidate_controls_unqualified')
+        self.assertEqual(calls,[('status',{}),('capabilities',{'expected_pid':12}),('structure',{})])
+        adapter.close()
+
+    def test_ui_health_fails_on_process_epoch_change(self):
+        from adapters.ui import UIAdapter
+        from unittest.mock import patch
+        adapter=UIAdapter({'native_helper':'not-launched','conversations':[]})
+        with patch('adapters.ui.sys.platform','darwin'),patch.object(adapter,'_request',side_effect=[
+                {'running':True,'accessibility':True,'pid':12},AXRError('application_epoch_changed')]):
+            with self.assertRaisesRegex(AXRError,'epoch_changed'):adapter.status()
+        adapter.close()
+
+    def test_ui_health_permission_missing_does_not_traverse(self):
+        from adapters.ui import UIAdapter
+        from unittest.mock import patch
+        adapter=UIAdapter({'native_helper':'not-launched','conversations':[]})
+        with patch('adapters.ui.sys.platform','darwin'),patch.object(adapter,'_request',return_value={
+                'running':True,'accessibility':False,'pid':12}) as request:
+            self.assertFalse(adapter.status()['send_available'])
+            request.assert_called_once_with('status')
+        adapter.close()
+
     def test_timeout_and_output_limit(self):
         with self.assertRaisesRegex(AXRError,'timed_out'):
             Supervisor(timeout=.1).invoke([sys.executable,'-c','import time;time.sleep(5)'],{})

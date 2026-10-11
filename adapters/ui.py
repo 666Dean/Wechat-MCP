@@ -26,12 +26,18 @@ class UIAdapter:
 
     def status(self):
         native=self._request("status")
+        if sys.platform=="darwin" and native.get("running") and native.get("accessibility"):
+            # Bind both probes to one process epoch. Counts do not qualify a send.
+            capability=self._request("capabilities",expected_pid=native["pid"])
+            native["capabilities"]=capability
+            native["ui_structure_state"]=("inspection_incomplete" if capability["truncated"] else
+                "no_editable_controls" if capability["editable_nodes"]==0 else "candidate_controls_unqualified")
         return {**native,"mode":"ui","coverage":"current_visible_authorized_chat",
                 "background_read":"client_dependent","send_available":False,
                 "identity_assurance":"stable_owner_witness_required"}
 
     def structure(self):
-        return self._request("structure",allow_labels=[b["display_name"] for b in self.bindings.values()])
+        return self._request("structure")
 
     def search(self, conversation_id, *, query="",sender=None,since=0,until=2**63-1,after=None,limit=20,guard_context=None):
         binding=self.bindings.get(conversation_id)

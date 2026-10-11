@@ -96,16 +96,40 @@ func main() throws -> [String:Any] {
         if code == KERN_SUCCESS { mach_port_deallocate(mach_task_self_,task) }
         return ["debug_access":code == KERN_SUCCESS,"kernel_result":code,"memory_read":false]
     }
+    if op == "capabilities" {
+        // Window health excludes menu search fields; never ask for content.
+        var visited = 0, editable = 0, text = 0, truncated = false
+        var errors: [String:Int] = [:]
+        func metadata(_ node: AXUIElement, _ key: String) -> CFTypeRef? {
+            var result: CFTypeRef?
+            let code = AXUIElementCopyAttributeValue(node,key as CFString,&result)
+            if code != .success { errors[String(code.rawValue),default:0] += 1; return nil }
+            return result
+        }
+        func walk(_ node: AXUIElement, _ depth: Int) {
+            guard visited < 1500, depth <= 16 else { truncated = true; return }
+            visited += 1
+            let role = metadata(node,kAXRoleAttribute) as? String ?? ""
+            if ["AXTextArea","AXTextField","AXComboBox"].contains(role) { editable += 1 }
+            if role == "AXStaticText" { text += 1 }
+            let descendants = metadata(node,kAXChildrenAttribute) as? [AXUIElement] ?? []
+            for child in descendants { walk(child,depth+1) }
+        }
+        let windows = metadata(root,kAXWindowsAttribute) as? [AXUIElement]
+        if let windows { for window in windows { walk(window,0) } }
+        else { truncated = true }
+        return ["pid":app.processIdentifier,"nodes_visited":visited,"editable_nodes":editable,
+            "text_nodes":text,"window_count":windows?.count ?? 0,"scope":"application_windows",
+            "truncated":truncated,"attribute_errors":errors,"content_read":false]
+    }
     if op == "structure" {
-        // No general UI text dump: exact owner-authorized labels only.
-        let labels = Set(req["allow_labels"] as? [String] ?? [])
+        // Selector metadata only. Redacting after fetching text is insufficient.
         var records: [[String:Any]] = []
         func walk(_ n: AXUIElement, _ p: [Int], _ depth: Int) {
             guard records.count < 1500, depth <= 16 else { return }
-            let c = children(n), v = value(n)
-            var item: [String:Any] = ["path":p, "role":string(n,kAXRoleAttribute), "children":c.count,
+            let c = children(n)
+            let item: [String:Any] = ["path":p, "role":string(n,kAXRoleAttribute), "children":c.count,
                 "identifier":string(n,kAXIdentifierAttribute)]
-            if labels.contains(v) { item["authorized_label"] = v }
             records.append(item)
             for (i,ch) in c.enumerated() { walk(ch,p+[i],depth+1) }
         }
