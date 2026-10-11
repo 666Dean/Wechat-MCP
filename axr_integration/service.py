@@ -233,6 +233,9 @@ class Service:
             if self.guard.version!=self.active_policy_version:
                 self.admission.clear();self.pending_drafts.clear();self.baselines.clear()
                 self.active_policy_version=self.guard.version
+            # Privacy maintenance continues while all business controls are off.
+            # Purge never reads WeChat or deletes an active commit's payload.
+            self.journal.purge()
             policy=self.config.get("listener",{})
             if not policy.get("listen",False):self.admission.clear();return {"state":"listener_off"}
             if policy.get("auto_execute",False):
