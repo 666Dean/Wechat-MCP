@@ -62,6 +62,7 @@ Runner contract：owner-pinned command 从 stdin 读取 `{version, context, inst
 不得把整个用户目录、策略目录、Keychain/credential store 放入 runtime roots。
 `auto_execute` 允许已批准事务继续执行，绝不创造发送 authority；Gen1 runner 当前只输出草稿，
 需要单独发送提议和精确批准，不提供 blanket 自动发送。
+`--listener` 维护线程在业务监听关闭时仍清理过期本地上下文与待审批正文，不读取微信；逻辑删除不等同磁盘物理擦除。
 监听 pending 最多 50 个事件、每条正文 4000 字符，模型 batch 总正文最多 24000 字符；
 截断保留来源及标记，预算拒绝负数、非整数和无效窗口，失败调用仍保留已预留的成本。
 
@@ -103,11 +104,13 @@ Mac layout 复用 MIT 开源 wechat-mcp 的标识与标题规则，保留完整�
   macOS / Windows CI 均完成原生编译、CTest 和 141 项回归（各跳过 2 项平台测试）。
   AppContainer 的合成进程 witness 验证 staged 文件读取、私有文件及 loopback 隔离；
   Hello 所有者认证全过程和微信 UIA/后台行为尚无设备资格证明。
+* 1a16221 启动的实际 AET 监听线程另完成 1800.01 秒/714 个新增 Completed 读取，零失败/保留连接/活动 context，结束撤权并恢复关闭；锁屏提示后继续 286 个事务，未连续验证锁屏状态。
 * 所有者 OS 认证与真实读取已验证；发送/披露审批全过程、任意外部模型 runner、多日稳定监听尚未端到端验证。
 * 原生只读适配器已完成 1800 秒、714 次后台查询，零错误/保留连接；经历原版退出和恢复登录。
   P95 27.91 ms，RSS 高水位 42.73 → 54.09 MiB，不能外推多日稳定/恒定内存或长期 AET 监听。
-  [匿名实机记录](AXR_MAC_ACCEPTANCE.md) 区分私有 bootstrap 成功与正式 CLI 组合流程认证未完成。
-* 本轮代码 b4c9cca 的 macOS / Windows CI 均通过；各发现 150 项，分别跳过 2 / 4 项。
+  [匿名实机记录](AXR_MAC_ACCEPTANCE.md) 记录正式 observe-mac 与 qualify 分别通过 OS 认证、取钥/唯一绑定、清理与原版恢复；全流程实机版本为 1a16221。
+* 最新代码 1898980 的 macOS / Windows CI 均通过原生构建/CTest 和 156 项回归，分别跳过 2 / 6 项。
+  新增个人读取/来源分类、精确单次敏感读取、最后一页额度与布尔控制校验；Core ASan/UBSan CTest、独立 SDK 安装与外部 consumer 通过。
 * 未提供成熟安装包签名、经过验收的跨平台原生配置 GUI、硬件反回滚、通用跨平台自动取得 WCDB 密钥，
   也未把全部复杂微信版本 schema 或媒体解析声明为支持。
 

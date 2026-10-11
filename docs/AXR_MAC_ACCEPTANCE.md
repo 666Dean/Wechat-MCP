@@ -40,3 +40,28 @@ UI 发送、发送/披露审批全过程、模型 runner、配置 GUI、锁屏/�
 通过原生构建与 CTest；各发现 150 项 unittest，Mac 执行 148 项、跳过 2 项，
 Windows 执行 146 项、跳过 4 项（含 Mac observer/lifecycle）。这些是 CI 证据，
 不能代替 Windows 微信硬件或 Hello 人类认证资格。
+
+最新 [1898980 双平台 CI](https://github.com/Aethra2007/wechat-codex-mcp/actions/runs/38112802182)
+均通过构建与 CTest；各发现 156 项，Mac 执行 154 项、跳过 2 项，Windows 执行
+150 项、跳过 6 项。新增分类/单次额度与控制校验不改变上述实机版本归属；私有副本
+厂商身份/CDHash 预检使用未重签名/未启动的本机复制样本独立验证。
+
+## 实际 AET 监听线程：另一次 30 分钟
+
+在主人新的 OS 认证下，仅为同一两个稳定 ID 发放 messages.read：每会话最多 400 页、
+每页 6 条、35 分钟 TTL；listen 开启 30 分钟，wake_agent / auto_execute / runner 关闭。
+这是实际 Service.start_listener 线程、Guard/账号租约/额度、Journal 和原生 WCDB 的组合，
+不是绕开 AET 的数据库循环。启动版本为 **1a16221**，不归为后续分类/TTL 修正的长期证据。
+
+| 检查 | 实测 |
+| --- | --- |
+| 持续时间 / 本次 Completed 读取 | 1800.01 秒 / 714 |
+| listener_failures / 非 Completed 读取 | 0 / 0 |
+| 查询后保留连接 / 活动正文 context | 0 / 0 |
+| 首次 / 最终 RSS 高水位 | 39.95 / 60.58 MiB |
+| 模型调用 / 披露 / 发送 | 0 / 0 / 0 |
+| 收尾 | 线程停止；审计有效；测试权限撤销后两个目标再次检查均拒绝；三个开关恢复关闭 |
+| 锁屏观察 | Computer Use 在约 1080.69 秒处报告 Mac 已锁屏；此后又完成 286 个事务，无失败。未连续监测锁屏状态，不声称持续锁屏 12 分钟或锁屏 UI 可用 |
+
+任务计数原始累计 718，包含此前 4 次读取；上表 714 由该测试 principal 的任务记录单独计数。
+没有证明新增消息到达延迟、完整历史、恒定内存、多日运行、真实发送或模型 runner。

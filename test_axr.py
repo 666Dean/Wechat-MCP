@@ -326,6 +326,20 @@ class ServiceTests(unittest.TestCase):
                     validate_controls({section:value})
         valid=validate_controls({'listener':{'listen':False,'wake_agent':False,'auto_execute':False},'runner':{'enabled':False}})
         self.assertFalse(valid['listener']['listen']);self.assertFalse(valid['runner']['enabled'])
+    def test_listener_off_still_expires_body_without_adapter_access(self):
+        from unittest.mock import patch
+        s=self.service;s.read('friend')
+        action=s._action('friend','messages.send',{'text':'synthetic expired approval'})
+        job=s.runtime.propose(action)
+        self.assertEqual(job['state'],'AwaitingApproval')
+        s.journal.db.execute('UPDATE contexts SET expires=0')
+        s.journal.db.execute('UPDATE jobs SET expires=0 WHERE id=?',(job['id'],))
+        with patch.object(s.adapter,'search',side_effect=AssertionError('disabled listener cannot access data')):
+            self.assertEqual(s.tick()['state'],'listener_off')
+        self.assertEqual(s.journal.db.execute('SELECT count(*) FROM contexts').fetchone()[0],0)
+        expired=s.journal.get(job['id'],s.principal)
+        self.assertEqual(expired['state'],'Expired');self.assertIsNone(expired['payload'])
+        self.assertTrue(s.journal.verify_audit());self.assertEqual(s.journal.metrics()['pages_read'],1)
     def test_taint_cannot_be_omitted_in_send_draft(self):
         s=self.service;s.read('friend');draft=s.prepare('friend','generated summary',[])
         self.assertEqual(draft['state'],'Completed');job=s.propose_send('friend',draft['result']['draft_id'])
