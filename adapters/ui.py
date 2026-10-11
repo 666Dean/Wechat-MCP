@@ -35,9 +35,13 @@ class UIAdapter:
             if capability["editable_nodes"]==0:
                 visual=self._request("visual_capabilities",expected_pid=native["pid"])
                 native["visual_capabilities"]=visual
-                native["ocr_state"]=("protected_windows" if visual["capture_candidates"]==0 else
-                    "protected_windows_present" if visual.get("protected_windows",0)>0 else
-                    "permission_required" if not visual["screen_capture_permission"] else "visible_identity_qualification_required")
+                # Old helpers' field names remain readable, but these legacy
+                # flags cannot prove modern screen protection or capture success.
+                candidates=visual.get("capture_policy_candidates",visual.get("capture_candidates",0))
+                legacy=visual.get("legacy_nonsharing_windows",visual.get("protected_windows",0))
+                native["ocr_state"]=("permission_required" if not visual["screen_capture_permission"] else
+                    "capture_policy_unqualified" if candidates==0 else
+                    "legacy_window_sharing_unqualified" if legacy>0 else "visible_identity_qualification_required")
         return {**native,"mode":"ui","coverage":"current_visible_authorized_chat",
                 "background_read":"client_dependent","send_available":False,
                 "identity_assurance":"stable_owner_witness_required"}

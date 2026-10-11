@@ -58,7 +58,8 @@ PID、窗口 ID、几何与坐标均为占位，需要实机资格，不能直�
 `identity_paths: {account:[…], identity:[…], header:[…]}`，此时可只配置 messages 区域。
 没有 AX 路径时，三个身份区域都必须识别出完整精确字符串且置信度至少 0.98；名称匹配不能替代内部 ID。
 
-仅预检已有 Screen Recording 权限，不自动弹窗申请；保护状态为 0、隐藏、PID/几何改变、跨屏或身份不足即拒绝。
+仅预检已有 Screen Recording 权限，不自动弹窗申请；legacy sharing 为 0 时，自动捕获路径保守拒绝并报告 `legacy_window_sharing_unqualified`。隐藏、PID/几何改变、跨屏或身份不足也拒绝。
+Apple 已将 [NSWindow.SharingType.none](https://developer.apple.com/documentation/appkit/nswindow/sharingtype-swift.enum/none) 描述为不再使用的旧常量；该数值不能单独证明现代捕获保护或可用性。状态探测只报告 `capture_privacy: unqualified`，不会因此发放读取或发送权限。
 ScreenCaptureKit 过滤器只包含一个指定窗口，按 region 裁取；不会扩展到桌面、其他应用或应用全部窗口。
 Apple 文档说明 [单独窗口过滤器会忽略 sourceRect](https://developer.apple.com/documentation/screencapturekit/scstreamconfiguration/sourcerect)，
 所以实现使用单窗口白名单的 display filter 保持区域有效；不会尝试过滤器切换去规避窗口保护。
@@ -88,6 +89,22 @@ python scripts/probe_mac_input_fixture.py --helper build/AXR/axr-helper
 ## 当前实机边界
 
 主人打开指定私聊的官方独立窗口后，AX 仍只有窗口/菜单/系统按钮，截图白屏；
-主聊天与独立私聊窗口处于不共享状态。其他可截图窗口不是已授权聊天输入证据。
-本轮没有改变微信隐私设置、窗口共享属性或厂商安装，没有真实发送。
+主聊天与独立私聊窗口的 legacy sharing 元数据为 0。其他可截图窗口不是已授权聊天输入证据。
+本轮没有改变微信隐私设置或窗口共享属性。完成腾讯签名的标准客户端升级后，新版主窗口仍无聊天/输入树、截图白屏，没有真实发送。
 已完成的 WCDB 30 分钟读取属于之前实际启动版本；本轮的合成失焦输入/OCR 不是两个真实目标的读写验收。
+
+## 所有者系统选择器：仅元数据
+
+macOS 15.2+ 可选择构建独立探针；默认不构建、不安装，CI 只编译，不打开选择器：
+
+```sh
+python scripts/build_axr.py --mac-selection-probe
+.local-private/build/AXR/axr-mac-selection-probe.app/Contents/MacOS/axr-selection-probe com.example.authorized-app 120
+```
+
+bundle ID 为占位。探针要求唯一运行实例，由主人在 Apple 原生选择器中手动选择单窗口；
+返回时核对 filter 类型、窗口数、bundle 和原 PID，再关闭选择器。取消、超时、进程或范围不匹配均失败关闭。
+只输出窗口/PID 数值与 legacy sharing；不读取标题、正文、图片或凭据，不启动 stream，不执行 OCR 或输入。
+成功仅表示过滤器元数据符合范围，不代表会话身份绑定、捕获可用或发送资格。
+本机主人选择的是微信主窗口，此结果不能作为指定私聊的绑定证明；新客户端进程也不能复用旧 PID。
+替代渠道及客户端升级证据见 [MAC_TRANSPORTS.md](MAC_TRANSPORTS.md)。

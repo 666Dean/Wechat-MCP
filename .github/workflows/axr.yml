@@ -50,7 +50,7 @@ jobs:
         run: python -m pip install -r requirements.axr.txt pybind11==3.0.1
       - name: Root helpers and native tests (macOS)
         if: runner.os == 'macOS'
-        run: python scripts/build_axr.py --openssl "$OPENSSL_ROOT_DIR"
+        run: python scripts/build_axr.py --openssl "$OPENSSL_ROOT_DIR" --mac-selection-probe
       - name: Root helpers and native tests (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

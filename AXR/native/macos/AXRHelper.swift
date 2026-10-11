@@ -308,13 +308,16 @@ func main() throws -> [String:Any] {
     throw Failure("unknown_operation")
 }
 
-// Local, region-limited Vision observation. Protected windows are never captured.
+// Local Vision observation. Legacy sharing metadata is not a modern capture
+// protection guarantee. The automatic route conservatively requires >0 until
+// an independent capture policy has been qualified; no filter fallback.
 func visualCapabilities(pid: pid_t) -> [String:Any] {
     let rows=CGWindowListCopyWindowInfo(.optionOnScreenOnly,kCGNullWindowID) as? [[String:Any]] ?? []
     let windows=rows.filter { ($0[kCGWindowOwnerPID as String] as? Int) == Int(pid) && ($0[kCGWindowLayer as String] as? Int) == 0 }
-    let protected=windows.filter { ($0[kCGWindowSharingState as String] as? Int ?? 0) == 0 }.count
-    return ["pid":pid,"visible_windows":windows.count,"protected_windows":protected,
-        "capture_candidates":windows.count-protected,"screen_capture_permission":CGPreflightScreenCaptureAccess(),
+    let legacyNonsharing=windows.filter { ($0[kCGWindowSharingState as String] as? Int ?? 0) == 0 }.count
+    return ["pid":pid,"visible_windows":windows.count,"legacy_nonsharing_windows":legacyNonsharing,
+        "capture_policy_candidates":windows.count-legacyNonsharing,"sharing_state_is_legacy":true,
+        "capture_privacy":"unqualified","screen_capture_permission":CGPreflightScreenCaptureAccess(),
         "content_read":false,"ocr_local":true,"send_available":false]
 }
 
@@ -353,7 +356,7 @@ func localOCR(_ req: [String:Any],app: NSRunningApplication) throws -> [String:A
               (row[kCGWindowOwnerPID as String] as? Int)==Int(app.processIdentifier),
               (row[kCGWindowIsOnscreen as String] as? Bool)==true,
               (row[kCGWindowLayer as String] as? Int)==0 else { throw Failure("visual_window_changed") }
-        guard (row[kCGWindowSharingState as String] as? Int ?? 0)>0 else { throw Failure("protected_window_capture_denied") }
+        guard (row[kCGWindowSharingState as String] as? Int ?? 0)>0 else { throw Failure("legacy_window_sharing_unqualified") }
         guard let raw=row[kCGWindowBounds as String] as? [String:Any], let bounds=CGRect(dictionaryRepresentation:raw as CFDictionary),
               [bounds.minX,bounds.minY,bounds.width,bounds.height].map({Double($0)})==expectedBounds,
               bounds.width>=100,bounds.height>=100,bounds.width<=4096,bounds.height<=4096 else { throw Failure("visual_geometry_changed") }

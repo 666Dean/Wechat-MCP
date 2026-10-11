@@ -578,17 +578,23 @@ class Workers(unittest.TestCase):
             self.assertFalse(adapter.status()['send_available'])
             request.assert_called_once_with('status')
         adapter.close()
-    def test_ui_visual_health_reports_protection_without_reading_pixels(self):
+    def test_ui_visual_health_does_not_infer_protection_or_read_pixels(self):
         from adapters.ui import UIAdapter
         from unittest.mock import patch
         adapter=UIAdapter({'native_helper':'not-launched','conversations':[]})
-        with patch('adapters.ui.sys.platform','darwin'),patch.object(adapter,'_request',side_effect=[
-            {'running':True,'accessibility':True,'pid':12},
-            {'editable_nodes':0,'truncated':False},
-            {'capture_candidates':0,'screen_capture_permission':True,'content_read':False}]) as request:
-            self.assertEqual(adapter.status()['ocr_state'],'protected_windows')
-            self.assertEqual(request.call_args.args,('visual_capabilities',))
-            self.assertEqual(request.call_args.kwargs,{'expected_pid':12})
+        for fields,expected in [
+                ({'capture_candidates':0},'capture_policy_unqualified'),
+                ({'capture_policy_candidates':0,'legacy_nonsharing_windows':1},'capture_policy_unqualified'),
+                ({'capture_policy_candidates':1,'legacy_nonsharing_windows':1},'legacy_window_sharing_unqualified')]:
+            with self.subTest(fields=fields),patch('adapters.ui.sys.platform','darwin'),patch.object(adapter,'_request',side_effect=[
+                {'running':True,'accessibility':True,'pid':12},
+                {'editable_nodes':0,'truncated':False},
+                {**fields,'screen_capture_permission':True,'content_read':False}]) as request:
+                status=adapter.status()
+                self.assertEqual(status['ocr_state'],expected)
+                self.assertFalse(status['send_available'])
+                self.assertEqual(request.call_args.args,('visual_capabilities',))
+                self.assertEqual(request.call_args.kwargs,{'expected_pid':12})
         adapter.close()
     def test_ocr_preview_has_no_sender_or_time_inference_and_needs_read_proof(self):
         from adapters.ui import UIAdapter

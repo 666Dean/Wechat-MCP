@@ -31,7 +31,7 @@
   `kCGWindowSharingState=0`（`kCGWindowSharingNone`）。这与白屏同时出现，但不是已证明的全部原因；
   不通过注入或过滤器漏洞改变/规避客户端共享属性。
 - 只角色的备用子项数组及 AX 命中探测没有找到聊天/编辑节点，未产生点击或输入事件。
-  微信自身“版本更新”检查返回“已经是最新版本”，未安装更新或替换客户端。
+  当时微信自身“版本更新”检查返回“已经是最新版本”；后续标准厂商升级结果单独记录如下。
 
 ## 代码与隐私修正
 
@@ -65,4 +65,15 @@ Windows 同类修正已通过 CI 原生编译与回归，未做微信硬件验�
 - [WeChatBridge](https://github.com/freestylefly/WeChatBridge/tree/0b00e3f89ace0e8f5d9c17478b2c966d0e2b890e)，MIT：官方 Share Extension 合并转发可作为主人主动导出的读取候选；需要手动选择，标题不能证明内部 ID，不解决回复输入。没有安装或运行其应用/转发器，也未接入自动 AI/剪贴板转发。
 - [wechat-controller](https://github.com/dragonking-T/wechat-controller)：其坐标、Vision/provider 路线不能自动取得本项目所需稳定身份和草稿证据；未运行其云端/坐标发送器。
 
-已接入的本地 OCR 与 PID 输入及真实/合成证据见 [MAC_REPLY.md](MAC_REPLY.md)。本轮新源码审查结论不等于第三方版本的兼容承诺；官方独立聊天窗口实测仍受保护且无输入节点，真实发送未执行。
+已接入的本地 OCR 与 PID 输入及真实/合成证据见 [MAC_REPLY.md](MAC_REPLY.md)。本轮新源码审查结论不等于第三方版本的兼容承诺；官方独立聊天窗口实测白屏且无输入节点，真实发送未执行。
+
+## 旧共享标志与标准升级复查
+
+Apple 对 [NSWindow.SharingType.none](https://developer.apple.com/documentation/appkit/nswindow/sharingtype-swift.enum/none) 的当前说明是旧常量；不能把 CoreGraphics 数值 0 单独解释成现代捕获保护，也不能由此判断微信有意拦截自动化。
+SDK 将相关健康状态改为捕获策略尚未资格验证，保留自动捕获的保守拒绝检查，不修改共享属性或通过过滤器切换规避排除。
+
+主人在 Apple SCContentSharingPicker 选择单个微信主窗口，探针核对原 PID/bundle、单窗口 filter 成功；只返回元数据，没有 stream、截图、OCR 或消息操作。该主窗口不是指定私聊的稳定绑定证据。
+
+随后主人正常退出旧客户端；腾讯官方 DMG 的 SHA256、Developer ID/Team 和 Gatekeeper 评估均通过，标准替换至 4.1.15.54 / 270134，并保留原签名应用副本。没有重签名或注入新版，也没有手动改动账号数据。
+新版正常进入既有账号后，AX 仍只有窗口与系统按钮、工具截图仍白屏。登录页的按钮可通过 AX 操作，不能外推聊天页控件可用。
+新渠道和开源版本适配审查见 [MAC_TRANSPORTS.md](MAC_TRANSPORTS.md)。
