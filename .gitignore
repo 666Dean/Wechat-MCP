@@ -17,6 +17,7 @@ codex-mcp.toml
 .contacts-*.tmp
 .credential-*.tmp
 *.dpapi
+*.key
 config.database.json
 *.dll
 dist/

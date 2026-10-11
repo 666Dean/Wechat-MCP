@@ -27,6 +27,7 @@ def synthetic_page(key, password=False):
 class KeyProbeTests(unittest.TestCase):
     def setUp(self):
         root = Path(__file__).resolve().parent
+        (root / ".test-work").mkdir(exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=root / ".test-work")
         self.base = Path(self.temp.name)
         storage = self.base / "wxid_owner" / "db_storage"

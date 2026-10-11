@@ -7,6 +7,14 @@
 
 后续每次完成更新，都在这里说明新增、修复、测试及仍未解决的限制；发布版本时归档。
 
+### 2026-10-11 — 显式导入开源工具本机密钥缓存
+
+- 新增 --import-keeper-key CACHE_FILE：交互终端显式选择一个 chatlog-keeper 64-hex 缓存，使用现有 raw/password 首页面 HMAC 校验，全部会话/消息库匹配且至少有一个消息库后才原子保存原始候选到账号/路径绑定的 DPAPI 凭据。校验失败不覆盖旧凭据。
+- 缓存读取限制 128 字节，拒绝符号链接、硬链接、reparse 标记、非普通文件和读中身份变化；不修改源缓存。输出只含计数与导入状态，错误屏蔽私人细节；没有 MCP 取钥接口或新增运行后端。
+- 新增 docs/KEY_ACQUISITION.md，固定 chatlog-keeper 参考 revision，说明已有凭据复核、独立环境 passive 尝试和缓存导入；没有执行上游提取程序、自动调试或微信发送。新增 *.key 忽略规则。
+- Linux / Python 3.12.14 / mcp 1.30.0：unittest discover 共 106 项，105 项通过、1 项 Windows DPAPI 测试跳过。新增 8 项覆盖格式/边界、错误账号、部分匹配与旧凭据保护、文件类型、CLI 互斥及输出隐私；原有首页面测试支持单独运行。
+- 新导入流程中的 DPAPI 保存为 mock；尚无 Windows 新 CLI、上游取钥、junction 或真实缓存导入验收。本轮没有获取实际密钥、读取真实正文或修复 DLL -100。0.6.2 的有限实机证据保持独立。
+
 ### 2026-10-10 — 开源数据库读取路线评估
 
 - 新增 docs/OPEN_SOURCE_READERS.md：固定提交核对 chatlog-keeper、wxq、wechat-cli-local 的许可证、页解密、WAL 和分页实现；首选评估 chatlog-keeper 的密钥模式判别与校验逻辑。

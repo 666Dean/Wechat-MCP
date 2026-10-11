@@ -32,7 +32,7 @@ def page_key_mode(page, key):
     return "password" if matches(derived) else "unmatched"
 
 
-def probe_database_key(config):
+def probe_database_key(config, *, key_loader=None):
     """Read only first pages in the bound account; never output paths or keys."""
     from database_reader import account_binding, validate_database_config
     from local_credentials import load_key
@@ -54,7 +54,7 @@ def probe_database_key(config):
         files.append(path)
         if len(files) > 65:
             raise ValueError("消息分库超出诊断上限（64）")
-    key_text = load_key(config)
+    key_text = (key_loader or load_key)(config)
     if not re.fullmatch(r"[0-9a-fA-F]{64}", key_text):
         raise ValueError("本机密钥格式无效")
     key = bytes.fromhex(key_text)
