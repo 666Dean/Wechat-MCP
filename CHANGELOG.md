@@ -1,5 +1,13 @@
 # 更新日志
 
+### 2026-10-12 — 270134 执行闭包、目标数据流与排队生命周期
+
+- 更新内容：沿普通微信执行链追到 session dispatch、发送服务、逐条队列包装和 outgoing Message；固定样本新增 16 个完整函数、9 条直接调用边、8 条 dyld page-chain 虚表引用。独立解码 0xa8 所有权闭包、0xf8 队列 shared allocation、0x278 outgoing Message / 0x290 shared allocation，并核对构造/持有/释放路径。
+- 目的与设计意图：区分 0x350 转换对象、排队包装、outgoing Message 和最终网络请求，避免裸内存构造、过早释放异步对象或把任务创建当成发送成功。目标节点 string → 逐目标消息 +0x90 → outgoing +0x30 的静态数据流单独核对；账号来源为 AppContext、outgoing +0x18，正文 helper 使用 +0x48。这些不等于运行中账号/收件人见证或完整私有 ABI。
+- SDK 安全建设：新增应用无关的离线 format-6 chained rebase，按 segment/page 和实际链成员验证，返回未加 slide 的地址；拒绝原始字掩码猜指针、导入、标签、保留位、跨页/文件越界及不支持格式。微信知识留在 SDK 外，未加载映像、附加/调用原版、改写序列化、读取正文/凭据或新增聊天权限。
+- 验证：新增 7 项安全回归，覆盖 fat/非零 vm base、未列入链的伪函数指针、导入/标签/畸形链，以及账号/目标虚表与消息字段/析构尾调用替换。16 项相关回归通过；本机全量 211 项发现、209 执行通过、2 项平台跳过，固定原版离线 CLI 实测通过。前一提交 31e007c 双平台 CI 通过（Mac 204/202/2，Win 204/196/8）；当前提交双平台 CI 随同一 PR 验证，Windows 无微信实机。
+- 原版入口核查与剩余：本机没有声明 AppleScript 字典或 NSServices，sdef 返回 -192；URL scheme 注册不能证明指定私聊发送。原版没有 get-task-allow，不能把调用方 debugger entitlement 当作原版运行访问许可。当前没有找到符合现有保护条件的运行入口；最终 wire request、线程/取消、运行账号及两个收件人仍未资格，两个真实私聊发送、读回、后台写入未完成。README/STATUS/详细证据更新，重新 fetch 上游 main 仍为已合并的 3df0050；继续同一 Draft PR，验收前不合并。
+
 ### 2026-10-11 — 文件身份复核统一句柄快照
 
 - 更新与目的：6554f76 的 macOS 原生构建/CTest/204 项回归和 Swift 探针编译通过；Windows 原生构建/CTest 通过，合成普通文件在 read_regular 的 stat/fstat 复核处失败。改为保持原句柄存活、只读重新打开精确路径，用同一 fstat API 复核；保留设备/inode/大小/mtime/ctime/mode/nlink 全部七字段和链接拒绝，不采用时间容差或跳过。

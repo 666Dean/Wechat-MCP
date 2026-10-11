@@ -58,6 +58,9 @@ class NativeImage:
         self.uuid = None
         self.starts = ()
         segments = []
+        self._file_segments = []
+        self._fixups = None
+        self.image_base = None
         starts_data = None
         cur, limit = 32, 32 + command_bytes
         for _ in range(count):
@@ -80,6 +83,11 @@ class NativeImage:
                 if any(va < end and start < va + vs for start, end in segments):
                     raise AXRError('native_segment_overlap')
                 segments.append((va, va + vs))
+                self._file_segments.append((va, vs, off, size))
+                if name == '__TEXT':
+                    if self.image_base is not None:
+                        raise AXRError('native_text_segment_duplicate')
+                    self.image_base = va
                 for j in range(nsect):
                     at = cur + 72 + j * 80
                     section_name = self._name(data[at:at + 16])
@@ -106,6 +114,13 @@ class NativeImage:
                 if off + size > len(data) or size > 8 * 1024 * 1024:
                     raise AXRError('native_function_starts_invalid')
                 starts_data = data[off:off + size]
+            elif cmd == 0x80000034:
+                if length != 16 or self._fixups is not None:
+                    raise AXRError('native_fixups_invalid')
+                off, size = struct.unpack_from('<II', data, cur + 8)
+                if size < 28 or size > 4 * 1024 * 1024 or off + size > len(data):
+                    raise AXRError('native_fixups_invalid')
+                self._fixups = data[off:off + size]
             cur += length
         if cur != limit or not self.uuid or ('__TEXT', '__text') not in self.sections or starts_data is None:
             raise AXRError('native_image_metadata_missing')
@@ -140,6 +155,81 @@ class NativeImage:
         if not terminated or not values:
             raise AXRError('native_function_starts_invalid')
         self.starts = tuple(values)
+
+    def chained_rebase(self, address):
+        """Prove an on-disk format-6 rebase by walking its page chain.
+
+        Returns an unslid image address, never a process pointer. Unsupported
+        formats, imports, tagged pointers and unlisted words fail closed. The
+        bit layout follows Apple's mach-o/fixup-chains.h; no loader is invoked.
+        """
+        if type(address) is not int or address % 4 or self._fixups is None:
+            raise AXRError('native_rebase_request_invalid')
+        data = self._fixups
+
+        def unpack(fmt, at, limit=len(data)):
+            size = struct.calcsize(fmt)
+            if at < 0 or at + size > limit:
+                raise AXRError('native_fixups_invalid')
+            return struct.unpack_from(fmt, data, at)
+
+        version, starts, _, _, _, _, _ = unpack('<7I', 0)
+        if version != 0 or starts < 28:
+            raise AXRError('native_fixups_invalid')
+        count, = unpack('<I', starts)
+        if count != len(self._file_segments):
+            raise AXRError('native_fixups_invalid')
+        offsets = unpack('<' + 'I' * count, starts + 4)
+        index = next((i for i, (va, _, _, size) in enumerate(self._file_segments)
+                      if va <= address and address + 8 <= va + size), None)
+        if index is None or offsets[index] == 0:
+            raise AXRError('native_rebase_not_listed')
+        rel = offsets[index]
+        if rel < 4 + count * 4:
+            raise AXRError('native_fixups_invalid')
+        at = starts + rel
+        length, page_size, kind, segment_offset, maximum, pages = unpack('<IHHQIH', at)
+        va, _, file_offset, file_size = self._file_segments[index]
+        if (length < 22 + pages * 2 or at + length > len(data) or
+                page_size not in (4096, 16384) or maximum != 0 or
+                va != self.image_base + segment_offset or
+                pages > (file_size + page_size - 1) // page_size):
+            raise AXRError('native_fixups_invalid')
+        if kind != 6:
+            raise AXRError('native_fixup_format_unsupported')
+        page = (address - va) // page_size
+        if page >= pages:
+            raise AXRError('native_rebase_not_listed')
+        start, = unpack('<H', at + 22 + page * 2, at + length)
+        if start == 0xffff:
+            raise AXRError('native_rebase_not_listed')
+        if start & 0x8000:
+            raise AXRError('native_fixup_multistart_unsupported')
+        cursor = page * page_size + start
+        page_end = min((page + 1) * page_size, file_size)
+        # At most one page is walked; next offsets are forward, four-byte units.
+        for _ in range(page_size // 4):
+            if cursor % 4 or cursor < page * page_size or cursor + 8 > page_end:
+                raise AXRError('native_fixup_chain_invalid')
+            word, = struct.unpack_from('<Q', self.data, file_offset + cursor)
+            if not word >> 63 and (word >> 44) & 0x7f:
+                raise AXRError('native_fixup_chain_invalid')
+            if va + cursor == address:
+                if word >> 63:
+                    raise AXRError('native_rebase_import_denied')
+                if (word >> 36) & 0xff:
+                    raise AXRError('native_rebase_tagged_denied')
+                target = self.image_base + (word & ((1 << 36) - 1))
+                if not any(a <= target < a + size for a, _, _, size in self._file_segments):
+                    raise AXRError('native_rebase_target_outside_image')
+                return target
+            step = ((word >> 51) & 0xfff) * 4
+            if not step or va + cursor > address:
+                raise AXRError('native_rebase_not_listed')
+            if step < 8:
+                raise AXRError('native_fixup_chain_invalid')
+            cursor += step
+        raise AXRError('native_fixup_chain_budget')
 
     @staticmethod
     def _name(raw):
