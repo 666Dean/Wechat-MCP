@@ -4,7 +4,7 @@
 
 ## AXR 本轮状态
 
-本轮已合并上游 main（3df0050），合并提交 2189d38 双平台 CI 176 项通过。新增 [Mac 回复/混合模式/本地 OCR](MAC_REPLY.md)、独立发送记录观察和 scoped commit。合成 Cocoa 失焦输入与本地 OCR 读回通过；纯 OCR 身份低置信度拒绝，最小化焦点未通过。官方独立私聊窗口仍白屏/无输入树，未发送，两个真实目标的发送读回/后台发送仍未验收。本机 185 项回归通过（2 项跳过），原生及 Core ASan/UBSan CTest 通过；本轮双平台 CI 随同一 PR 更新。
+本轮已合并上游 main（3df0050），合并提交 2189d38 双平台 CI 176 项通过。新增 [Mac 回复/混合模式/本地 OCR](MAC_REPLY.md)、独立发送记录观察和 scoped commit。合成 Cocoa 失焦输入与本地 OCR 读回通过；纯 OCR 身份低置信度拒绝，最小化焦点未通过。官方独立私聊窗口仍白屏/无输入树，未发送，两个真实目标的发送读回/后台发送仍未验收。本机 185 项回归通过（2 项跳过），原生及 Core ASan/UBSan CTest 通过；代码 866abd6 的 [双平台 CI](https://github.com/Aethra2007/wechat-codex-mcp/actions/runs/38127817314) 原生构建、CTest 和 185 项回归通过（Mac/Win 执行 183/178 项、跳过 2/7 项）。
 
 新增 SDK 与独立 AXR 模式的能力、测试和未完成验收见 [AXR_GEN1.md](AXR_GEN1.md)。
 SDK C++20、Mac Swift、Win C++，微信业务全部在 SDK 外。旧模式继续保留原有边界。

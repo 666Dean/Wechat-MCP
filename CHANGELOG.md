@@ -12,7 +12,7 @@
 - ScreenCaptureKit 单窗口白名单区域 + 本地 Vision OCR 预览，策略密封 PID/窗口/几何/区域；共享保护为 0 即拒绝，身份前后复核。纯 OCR 身份须完整 ID 和高置信度，或使用真实 AX 身份路径；不推测 sender/时间/空草稿，不开放 OCR 盲发。
 - C++ scoped commit 绑定请求资源/操作/发送正文/OCR 布局与原始 action；来源权限 descriptor 不得省略或换序，来源预算最多 200。SDK/helper 须同步升级，旧不含 action 的 proof 拒绝。
 - 本机合成 Cocoa 失焦输入、新气泡/空草稿、篡改正文拒绝及 OCR 读回通过；纯 OCR 身份置信度 0.5 被拒绝，最小化焦点未通过。主人打开官方独立私聊仍白屏/无输入节点、窗口受保护，未修改隐私保护或发送。
-- 新增默认不构建/不安装的合成 fixture 与复现脚本；本机 185 项回归通过（2 项跳过），原生 CTest、Core ASan/UBSan 通过。双平台 CI 随同一 PR 更新；两个真实目标的发送读回、后台写入和多日运行仍未通过。
+- 新增默认不构建/不安装的合成 fixture 与复现脚本；本机 185 项回归通过（2 项跳过），原生 CTest、Core ASan/UBSan 通过。代码 866abd6 的 macOS/Windows CI 原生构建、CTest 和 185 项回归全部通过（执行 183/178 项、跳过 2/7 项），见 [CI 38127817314](https://github.com/Aethra2007/wechat-codex-mcp/actions/runs/38127817314)。两个真实目标的发送读回、后台写入和多日运行仍未通过。
 
 ### 2026-10-11 — 合并上游数据库校验更新
 
