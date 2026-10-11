@@ -23,12 +23,19 @@ def main():
     parser.add_argument("--probe-database-messages", metavar="CONVERSATION_ID",
                         help="只读验证一个已绑定会话的一页消息；仅输出统计，不输出正文、不建立基线")
     parser.add_argument("--probe-limit", type=int, default=20, help="验证页大小（1 到 50，默认 20）")
+    parser.add_argument("--probe-database-key", action="store_true",
+                        help="本机只读校验会话库及最多 64 个消息分库首页面；不加载 DLL、不输出密钥或正文")
+    parser.add_argument("--import-keeper-key", metavar="CACHE_FILE",
+                        help="本机交互导入一个 chatlog-keeper 密钥缓存；全部首页面匹配后才保存 DPAPI")
     contacts = parser.add_mutually_exclusive_group()
     contacts.add_argument("--set-contacts", nargs="*", metavar="REMARK")
     contacts.add_argument("--list-contacts", action="store_true")
     args = parser.parse_args()
     if args.axr_state:
-        if args.demo or args.allow_contact_management or args.store_database_key or args.set_contacts is not None:
+        if (args.demo or args.allow_contact_management or args.store_database_key
+                or args.set_contacts is not None or args.list_contacts or args.list_database_sessions
+                or args.probe_database_messages is not None or args.probe_database_key
+                or args.import_keeper_key is not None):
             parser.error("AXR mode cannot mix legacy/demo/owner-management switches")
         from axr_integration.service import Service,register
         from mcp.server import MCPServer
@@ -43,6 +50,47 @@ def main():
         finally:service.close()
         return
     if args.listener:parser.error("--listener requires --axr-state")
+    if args.import_keeper_key is not None:
+        if (args.demo or args.doctor or args.store_database_key or args.probe_database_key
+                or args.list_database_sessions or args.probe_database_messages is not None
+                or args.set_contacts is not None or args.list_contacts or args.allow_contact_management):
+            parser.error("缓存导入不能与其他操作混用")
+        if not sys.stdin.isatty():
+            parser.error("缓存导入需要本机交互终端")
+        try:
+            from database_key_import import import_key_cache
+            config = ConfigStore(args.config).load()
+            if config["backend"] != "wcdb":
+                raise ValueError("backend 无效")
+            result = import_key_cache(config["database_reader"], args.import_keeper_key)
+        except Exception:
+            print(json.dumps({"key_imported": False,
+                              "error": "缓存导入失败；请在 Windows 本机核对缓存格式、数据库绑定及 DPAPI 存储"},
+                             ensure_ascii=False))
+            sys.exit(1)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if not result["key_imported"]:
+            sys.exit(1)
+        return
+    if args.probe_database_key:
+        if (args.demo or args.doctor or args.store_database_key or args.list_database_sessions
+                or args.probe_database_messages is not None or args.set_contacts is not None
+                or args.list_contacts or args.allow_contact_management):
+            parser.error("密钥验证不能与其他操作混用")
+        try:
+            from database_key_probe import probe_database_key
+            config = ConfigStore(args.config).load()
+            if config["backend"] != "wcdb":
+                raise ValueError("backend 无效")
+            result = probe_database_key(config["database_reader"])
+        except Exception:
+            print(json.dumps({"key_matches_all": False,
+                              "error": "本机首页面校验失败；请核对配置、凭据和文件范围"}, ensure_ascii=False))
+            sys.exit(1)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if not result["message_key_verified"]:
+            sys.exit(1)
+        return
     if args.list_database_sessions or args.probe_database_messages is not None:
         if args.list_database_sessions and args.probe_database_messages is not None:
             parser.error("会话查询与消息验证不能混用")

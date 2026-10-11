@@ -1,7 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Persistent admission budgets extracted from BasicX-Hub hub_security.allow.
-
-Only generic fixed-window accounting is reused. No accounts, Flask or compute API.
+"""AXR persistent admission budgets with fixed-window accounting.
 """
 import hashlib
 import time

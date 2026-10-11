@@ -1,12 +1,28 @@
-# WCDB 实时数据库读取原型（0.6.1）
+# WCDB 数据库读取原型（0.6.2）
 
 2026-10-10：真实账号打开与会话/显示名查询成功；**单私聊消息查询返回 -100，正文读取未通过**。
 ABI 对照 [EchoTrace v3.0.2 FFI 源码](https://github.com/ycccccccy/echotrace/blob/98280f0d0d7b764b2f2027fc4d103024e8ed30fd/lib/services/wechat_wcdb_native.dart)
 与 [原生接口文档](https://github.com/ycccccccy/echotrace/blob/98280f0d0d7b764b2f2027fc4d103024e8ed30fd/docs/wcdb_realtime.md)。
 不打包 DLL、不自动搜索账号、不提供自动提取现有软件密钥或发送接口。
 
-已对替代开源路线进行静态源码评估，见 [OPEN_SOURCE_READERS.md](OPEN_SOURCE_READERS.md)。
-推荐优先验证密钥模式与校验逻辑；候选尚未安装、运行或接入，本页配置仍只适用于原生 DLL 后端。
+2026-10-11：已有凭据首页面 HMAC 通过，需要 password 模式派生；独立开源引擎的加密副本
+实验读取绑定私聊 20 条文本成功。该实验没有接入运行后端，原生 DLL 故障仍存在。
+详情见 [OPEN_SOURCE_READERS.md](OPEN_SOURCE_READERS.md)；本页运行配置仍适用于原生 DLL 后端。
+
+## 不加载 DLL 的首页面密钥验证
+
+```powershell
+.\.venv\Scripts\python.exe .\server.py --config .\config.database.json --probe-database-key
+```
+
+仅本机 CLI；使用已存 DPAPI 凭据，校验标准 session/session.db 和同账号 message/message_<数字>.db，
+最多 64 个消息分库。每个文件仅读取并复核 4096 字节首页面；拒绝消息目录/文件重定向，
+读取期间检测到文件变化即失败。不读取正文或 WAL，不创建状态库、不入队、不提供 MCP 工具。
+支持直接页密钥 raw 与 PBKDF2-HMAC-SHA512（256000 次）派生的 password 模式；仅输出计数，
+不输出账号、会话 ID、路径、密钥、salt 或派生密钥。没有消息分库、校验不匹配、文件错误均非零退出。
+
+首页面匹配不证明账号身份、其他页面完整性、WAL 一致性、消息方向、解码或实时读取。
+当前模式诊断没有改变传给 DLL 的凭据，也不会自动切换后端。
 
 ## 本机配置
 
