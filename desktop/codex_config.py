@@ -16,7 +16,7 @@ NAME='wechat_axr'
 def snippet(python,server,state):
     args=[str(Path(server).resolve()),'--axr-state',str(Path(state).resolve()),'--broker']
     quote=lambda x:json.dumps(str(x),ensure_ascii=False)
-    return '\n'.join(['[mcp_servers.wechat_axr]','command = '+quote(Path(python).resolve()),
+    return '\n'.join(['[mcp_servers.wechat_axr]','command = '+quote(Path(python).absolute()),
         'args = '+json.dumps(args,ensure_ascii=False),'enabled = true','required = false',
         'startup_timeout_sec = 15','tool_timeout_sec = 90',''])
 

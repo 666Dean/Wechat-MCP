@@ -76,9 +76,12 @@ class CompoundFileMessages(unittest.TestCase):
         fixture=test_axr.DatabasePages();fixture.setUp()
         try:
             fixture.adapter.config['attachments_enabled']=True
-            with sqlite3.connect(fixture.paths[0]) as db:
-                db.execute(f'INSERT INTO "{fixture.table}" VALUES(?,?,?,?,?,?)',
-                    (31,41,(6<<32)|49,105,19,xml('agenda.txt')))
+            db=sqlite3.connect(fixture.paths[0])
+            try:
+                with db:
+                    db.execute(f'INSERT INTO "{fixture.table}" VALUES(?,?,?,?,?,?)',
+                        (31,41,(6<<32)|49,105,19,xml('agenda.txt')))
+            finally:db.close()
             page=fixture.adapter.search(fixture.chat,attachments_only=True,limit=6)
             self.assertEqual(len(page['messages']),1)
             message=page['messages'][0]
