@@ -1,11 +1,37 @@
 # Stellaria AXR SDK Gen1
 
-AXR 是与应用无关的授权执行 SDK。C++20 核心负责 Guard、密封意图、AES-GCM、
-日志链及进程原语；Python 是薄绑定和编排层。macOS 通用 Adapter 使用 Swift，
-Windows 所有者验证与沙箱使用 C++。微信选择器、数据库解析、MCP 和监听器位于仓库
-`adapters/`、`axr_integration/`，不属于 AXR SDK。
+**面向 Agent 应用的授权执行基础设施。**
 
-许可证为 [AGPL v3 only](LICENSE)。商业许可须另行书面约定。
+Stellaria AXR 为产品开发团队提供统一的权限校验、执行事务、来源追踪与审计能力，
+将模型提出的行动转换为可核验、可撤销、可追溯的执行流程。SDK 不依赖特定模型、
+MCP 客户端或业务应用，可独立集成到桌面软件与本地 Agent 系统。
+
+## 产品能力
+
+| 能力 | 集成价值 |
+| --- | --- |
+| Guard | 按身份、资源、目的、操作、有效期和额度验证授权 |
+| Authorized Execution Transaction | 密封意图、执行前复核、明确的成功与未知状态 |
+| Journal | 加密短期结果、执行凭据、完整性可验证的审计链 |
+| Provenance | 保留数据来源与分类，分别约束访问和外部披露 |
+| Host | 平台辅助进程、执行租约、有界通信与运行限制 |
+| Owner Control | 结合系统身份认证，独立于模型管理权限 |
+
+核心采用 C++20；Python 提供绑定和编排。macOS 平台支持层采用 Swift，
+Windows 采用 C++。具体应用的数据库、内容解析、模型调度、界面和业务适配器
+由集成方维护。微信集成位于本仓库 `adapters/`、`axr_integration/` 与 `desktop/`，
+不属于 AXR SDK。
+
+## 许可与交付
+
+`AXR/` 采用 [GNU AGPL v3 only](LICENSE)。商业使用仍须遵守该许可证；
+需要不同许可条款的合作应另行取得书面协议。本仓库不自动授予商业例外，
+也不包含服务等级、托管服务或生产可用性保证。仓库其他源代码的许可见
+[许可边界](../LICENSES.md)，第三方组件遵循各自许可证。
+
+Gen1 当前为开发版本。支持范围以构建、回归与具体设备验收为准：SDK 编译成功
+不代表任意应用的控制接口已经可用。详见下方安全边界与
+[应用验收矩阵](../docs/AXR_GEN1.md)。
 
 Python 支持层新增通用 `axr.native_image.NativeImage` 离线 Mach-O 代码身份工具：有界切片、UUID、函数边界/哈希和直接调用/字符串引用；不加载程序或授权内部函数调用。微信 build 与候选指纹在 SDK 外的适配器中，见 [应用侧资格记录](../docs/MAC_NATIVE_270134.md)。
 

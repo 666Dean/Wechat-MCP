@@ -1,5 +1,22 @@
 # wechat-codex-mcp
 
+
+## WeChat MCP Desktop · 工作与日常助手
+
+![Qt Desktop light theme — synthetic preview](docs/assets/desktop-light.png)
+
+[深色主题设计预览](docs/assets/desktop-dark.png) · 图中仅为合成界面，无真实微信数据。
+
+新增 Qt 6 / QML 本地 App：[运行与权限中心](docs/DESKTOP.md)。连接 Codex、
+查看真实回执、核对精确意图、管理限时授权和已批准摘要，共享一个本地执行 Broker。
+[缓存附件读取](docs/ATTACHMENTS.md)支持有界文本、Word 与 PDF；解析结果与聊天正文
+一样保留来源并单独批准模型披露。第一阶段不包含支付、朋友圈、小程序和账号管理。
+
+`wechat_submit_reply_task` 可通过已资格、精确授权的 Adapter 提交任务草稿，
+不依赖人工复制；当前原版 macOS 微信发送后端仍未通过设备验收，默认禁止发送。
+合成流程测试不能替代真实私聊发送证明。App 为需要本机 Python/Qt 的开发交付，
+不是已签名、免运行时安装包。SDK 正式说明见 [Stellaria AXR](AXR/README.md)。
+
 **实验性原型 · 小范围读取、入站回信草稿与人工提交读回已验证 · Agent 主动发送未验证**
 
 把 macOS / Windows 个人微信客户端的当前可见私人聊天，或显式绑定的 WCDB 数据库会话，包装为 MCP 工具。

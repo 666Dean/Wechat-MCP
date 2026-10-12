@@ -204,7 +204,8 @@ class DatabaseAdapter:
                 "conversations":len(self.bindings), "shards":len(self.config.get("shards",[]))}
 
     def search(self, conversation_id, *, query="", sender=None, since=0, until=2**63-1,
-               after=None, limit=20):
+               after=None, limit=20, attachments_only=False):
+        if type(attachments_only) is not bool:raise AXRError('attachment_filter_requires_boolean')
         if conversation_id not in self.bindings or type(limit) is not int or not 1<=limit<=100:
             raise AXRError("conversation_or_limit_not_authorized")
         if len(query)>256 or since<0 or until<since:
@@ -233,21 +234,34 @@ class DatabaseAdapter:
                     self_rows=db.query("SELECT rowid FROM Name2Id WHERE user_name=? LIMIT 2",(self.config["account_id"],))
                     if len(self_rows)!=1:raise AXRError("account_identity_not_present_in_shard")
                 boundary=after.get(generation,[-1,-1]) if after else [-1,-1]
+                body_kind=f'{c["type"]}=1' + (f' OR ({c["type"]} & 65535)=49' if self.config.get('attachments_enabled',False) else '')
+                filter_sql=f' AND ({c["type"]} & 65535)=49' if attachments_only else ''
                 sql=(f'SELECT {c["id"]} AS local_id,{c["server"]} AS server_id,{c["time"]} AS created,'
-                     f'{c["type"]} AS type,CASE WHEN {c["type"]}=1 THEN {c["body"]} ELSE NULL END AS body,{c["direction"]} AS direction,'
+                     f'{c["type"]} AS type,CASE WHEN {body_kind} THEN {c["body"]} ELSE NULL END AS body,{c["direction"]} AS direction,'
                      f'{compression} AS compression,{sender_column} AS sender FROM "{table}" '
                      f'WHERE {c["time"]}>=? AND {c["time"]}<=? AND ({c["time"]},{c["id"]})>(?,?) '
-                     f'ORDER BY {c["time"]},{c["id"]} LIMIT ?')
+                     f'{filter_sql} ORDER BY {c["time"]},{c["id"]} LIMIT ?')
                 for row in db.query(sql,(since,until,int(boundary[0]),int(boundary[1]),limit+1)):
                     # Do not advance beyond unreadable/unsupported records silently.
                     raw_type=row["type"]
-                    if raw_type!=1:
-                        text=None
-                    else:
+                    attachment=None
+                    if type(raw_type) is int and raw_type & 65535==49 and self.config.get('attachments_enabled',False):
+                        from .attachments import file_metadata
+                        body=decode_text(row['body'],row['compression'])
+                        if conversation_id.endswith('@chatroom') and not body.lstrip().startswith('<') and ':\n' in body:
+                            resolved=db.query('SELECT user_name FROM Name2Id WHERE rowid=? LIMIT 2',(int(row['direction']),))
+                            if len(resolved)!=1 or not body.startswith(resolved[0]['user_name']+':\n'):
+                                raise AXRError('group_sender_not_resolved')
+                            body=body.split(':\n',1)[1]
+                        attachment=file_metadata(body)
+                        text='附件：'+attachment['filename'] if attachment else None
+                    elif raw_type==1:
                         text=decode_text(row["body"],row["compression"])
+                    else:
+                        text=None
                     # Schema-specific direction must be explicitly known, never inferred from content.
                     direction=row["direction"]
-                    if raw_type!=1:
+                    if text is None:
                         # Unsupported/system records advance the scan cursor only.
                         # No body, sender or direction is inferred or disclosed.
                         actual_sender=None;outgoing=None
@@ -264,7 +278,7 @@ class DatabaseAdapter:
                         outgoing=(direction==1) if binding["schema"]=="v4-is-send" else (direction==0)
                         actual_sender=row["sender"] or (self.config["account_id"] if outgoing else
                             conversation_id if not conversation_id.endswith("@chatroom") else None)
-                    if conversation_id.endswith("@chatroom") and raw_type==1 and actual_sender is None:
+                    if conversation_id.endswith("@chatroom") and text is not None and actual_sender is None:
                         # Legacy group bodies carry an explicit sender prefix. Reject ambiguous data.
                         if text and ":\n" in text:
                             actual_sender,text=text.split(":\n",1)
@@ -275,6 +289,7 @@ class DatabaseAdapter:
                     ref=digest([self.config["account_id"],conversation_id,generation,row["local_id"],row["created"]])
                     incoming.append({"reference":ref,"created":row["created"],"local_id":row["local_id"],"server_id":row["server_id"],
                         "generation":generation,"text":text,"sender":actual_sender,"outgoing":outgoing,
+                        **({'attachment':attachment} if attachment else {}),
                         "matches":bool(text is not None and query in text and (sender is None or sender==actual_sender))})
             finally:
                 # Release the page handle, especially FILE_SHARE_DELETE constraints on Windows.

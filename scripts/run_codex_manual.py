@@ -23,11 +23,11 @@ REVIEW_TOOLS=['wechat_status','wechat_find_conversations','wechat_request_task',
               'wechat_get_task_context','wechat_acknowledge_review']
 
 
-def command(root,state,duration,model=None,*,review=False):
+def command(root,state,duration,model=None,*,review=False,broker=False):
     binary=shutil.which('codex')
     if binary is None:raise ValueError('codex_cli_required')
     server={'command':sys.executable,'args':[str(root/'server.py'),'--axr-state',str(state),
-            *([] if review else ['--listener']),'--manual-replies'],'cwd':str(root),'required':True,
+            *(['--broker'] if broker else ([] if review else ['--listener'])),'--manual-replies'],'cwd':str(root),'required':True,
             'startup_timeout_sec':20,'tool_timeout_sec':60,'enabled_tools':REVIEW_TOOLS if review else TOOLS,
             'default_tools_approval_mode':'approve'}
     args=[binary,'exec','--ignore-user-config','--ephemeral','--skip-git-repo-check',
@@ -40,9 +40,9 @@ def command(root,state,duration,model=None,*,review=False):
     return args
 
 
-def run(root,state,duration,model=None,*,review=False,overview=False):
+def run(root,state,duration,model=None,*,review=False,overview=False,broker=False):
     if overview and not review:raise ValueError('review_overview_requires_review')
-    args=command(root,state,duration,model,**({'review':True} if review else {}))
+    args=command(root,state,duration,model,**({'review':True} if review else {}),**({'broker':True} if broker else {}))
     allowed=REVIEW_TOOLS if review else TOOLS
     prompt=f'''Owner-approved WeChat assistant for at most {duration} seconds.
 Use only wechat_axr MCP tools. Never use shell, files, web, send, navigation,
@@ -172,12 +172,17 @@ Final output is counts/completion only; no private text or IDs.'''
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--state',required=True)
     p.add_argument('--duration',type=int,default=1800);p.add_argument('--model')
+    p.add_argument('--broker',action='store_true',help='Use the Desktop single-authority broker')
     p.add_argument('--review',action='store_true',help='Only catalog/read/exact disclosure/encrypted summaries; no reply tools')
     p.add_argument('--overview',action='store_true',help='Review-only: first recent page per conversation; not full history')
     args=p.parse_args()
     if not 60<=args.duration<=3600:p.error('duration must be between 60 and 3600 seconds')
     if args.overview and not args.review:p.error('--overview requires --review')
-    try:print(json.dumps(run(Path(__file__).resolve().parents[1],Path(args.state).resolve(),args.duration,args.model,review=args.review,overview=args.overview)))
+    if os.name!='nt':
+        def stop_signal(signum,frame):raise KeyboardInterrupt()
+        signal.signal(signal.SIGTERM,stop_signal)
+    try:print(json.dumps(run(Path(__file__).resolve().parents[1],Path(args.state).resolve(),args.duration,args.model,review=args.review,overview=args.overview,broker=args.broker)))
+    except KeyboardInterrupt:print(json.dumps({'worker_stopped':True,'agent_sent':False}))
     except (ValueError,OSError,subprocess.TimeoutExpired):p.exit(1,'Codex manual worker failed; no raw diagnostic or chat body is printed.\n')
 
 
