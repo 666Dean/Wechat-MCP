@@ -1,5 +1,13 @@
 # 更新日志
 
+### 2026-10-12 — Windows AXR 安装与逐库口令兼容
+
+- 同步已合并的 Mac AXR 方案，Windows 沿用有界只读、加密任务、精确披露、草稿及人工提交流程。
+- `setup.ps1 -AXR` 支持私有 state、vcpkg toolchain/OpenSSL 参数，构建 helper/UIA 并运行 CTest，成功才生成独立 `codex-axr.toml`。不创建 legacy 配置、不修改 Codex 全局设置、不授予权限；生成配置加入 gitignore。
+- 本地 WCDB 导入增加显式 `--key-mode password`：每库 salt/256000 次 PBKDF2-HMAC-SHA512 派生，首页面 HMAC 通过后只保存页密钥；默认 raw、缓存复核及 Mac observer 行为保留，legacy DPAPI 不变。
+- 新增错误语义/错误口令/篡改页/salt 绑定、凭据存储 mock 和真实 SQLCipher 合成口令库只读重开/拒写回归；配置测试实际执行安装器输出块并解析 TOML，覆盖特殊路径。修复可选 AXR 缺失时 native_contract 测试未明确跳过的问题。
+- 本地 Python 3.14 发现 120 项、112 执行通过、8 项因可选 AXR 缺失跳过；PowerShell 语法及配置生成验证通过。原生构建和 SQLCipher 测试交由双平台 CI，未验收 Hello、Windows 微信正文/发送或 Python 3.12 实机安装。新增 Windows 指南并更新 README/STATUS。
+
 ### 2026-10-12 — 更换联系人时隔离模型身份与来源
 
 - 修复：实测更换目标后，旧模型 principal 保留的披露 taint 引用已撤权联系人，导致新草稿停在 AwaitingApproval。更换联系人现在创建独立的 Agent principal，并要求停止旧客户端、启动全新临时 Codex 会话；旧身份的来源记录保留，不删除 taint、不补发旧联系人权限。

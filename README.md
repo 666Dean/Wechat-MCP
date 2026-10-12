@@ -10,6 +10,8 @@
 
 ## Stellaria AXR SDK Gen1 合作开发
 
+Windows 更新见 [Windows AXR 安装与人工回信](docs/WINDOWS_UPDATE.md)：`setup.ps1 -AXR` 构建原生 helper、运行 CTest 并生成独立人工提交 MCP 配置；本地 WCDB 导入支持显式 `--key-mode password`，逐库派生并验证后只保存页密钥。复用 Mac 的读取/任务/草稿流程，Windows 设备验收另行记录。
+
 新增 [Codex 读取、回信任务与人工提交](docs/CODEX_MANUAL_REPLY.md)：有界 WCDB 读取、加密持久化任务收件箱、MCP 状态等待、获准正文披露、回复草稿及本地人工复制。没有外部 runner 时也保留回信任务。支持一次 OS 认证建立最多一小时/12 批的本地所有者工作会话，每批仍使用精确单次披露批准；人工模式在执行前拒绝所有微信发送。实际 Codex 读取/新回信草稿、本地核对复制及人工提交后的唯一数据库记录观察已通过小范围实机验收，详见 [实机记录](docs/AXR_MAC_ACCEPTANCE.md)；不代表对方送达、全天运行或 Windows 微信硬件。
 
 继续保留 [Mac 270134 原生适配](docs/MAC_NATIVE_270134.md)：执行闭包、发送服务、逐条队列包装和 outgoing Message 的静态数据流/生命周期分析。0x350 转换对象与 0x278 outgoing Message 是不同对象，后者仍不是已验证的最终网络请求。运行账号、收件人、线程/取消和最终发送请求仍缺实际证据，主动发送原型随项目保留，未资格路径保持关闭。

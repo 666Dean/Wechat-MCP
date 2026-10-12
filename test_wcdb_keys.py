@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: MIT
 import hashlib
+import ctypes as C
 import hmac
 import tempfile
 import unittest
@@ -27,6 +28,61 @@ def encrypted_page(key=b'k'*32, salt=b's'*16):
 
 
 class KeyTests(unittest.TestCase):
+    def test_native_sqlcipher_password_import_reopens_readonly_with_normalized_key(self):
+        from adapters.wcdb import CipherConnection
+        library=os.environ.get('AXR_SQLCIPHER_LIBRARY')
+        if not library:self.skipTest('native SQLCipher library not provided')
+        password=bytes(range(32))
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp).resolve();path=root/'password.db'
+            writer=object.__new__(CipherConnection)
+            writer.lib=C.CDLL(library);writer.handle=C.c_void_p();writer._declare()
+            self.assertEqual(writer.lib.sqlite3_open_v2(str(path).encode(),C.byref(writer.handle),6,None),0)
+            try:
+                writer.lib.sqlite3_key.argtypes=[C.c_void_p,C.c_char_p,C.c_int]
+                writer.lib.sqlite3_key.restype=C.c_int
+                self.assertEqual(writer.lib.sqlite3_key(writer.handle,password,len(password)),0)
+                writer.query('PRAGMA cipher_compatibility=4')
+                writer.query('CREATE TABLE fixture(text TEXT)')
+                writer.query('INSERT INTO fixture VALUES(?)',('synthetic password fixture',))
+            finally:writer.close()
+            page=path.read_bytes()[:4096]
+            class Secrets:
+                def provision(self,ref,key):self.key=key
+            secrets=Secrets()
+            item=provision_verified(root,'password.db',password,secrets,page[:16].hex(),key_mode='password')
+            self.assertNotEqual(secrets.key,password)
+            reader=CipherConnection(path,library,secrets.key.hex(),item['cipher_profile'])
+            try:
+                self.assertEqual(reader.query('SELECT text FROM fixture')[0]['text'],'synthetic password fixture')
+                with self.assertRaises(AXRError):reader.query('DELETE FROM fixture')
+            finally:reader.close()
+
+    def test_password_import_stores_only_verified_per_database_page_key(self):
+        password=b'w'*32; salt=b's'*16
+        effective=hashlib.pbkdf2_hmac('sha512',password,salt,256000,32)
+        page=encrypted_page(effective,salt)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp).resolve();path=root/'encrypted.db';path.write_bytes(page)
+            class Secrets:
+                calls=[]
+                def provision(self,ref,key):self.calls.append((ref,key))
+            secrets=Secrets()
+            for key,mode in ((password,'raw'),(b'x'*32,'password')):
+                with self.assertRaisesRegex(AXRError,'candidate_key_hmac_rejected'):
+                    provision_verified(root,'encrypted.db',key,secrets,salt.hex(),key_mode=mode)
+            self.assertEqual(secrets.calls,[])
+            item=provision_verified(root,'encrypted.db',password,secrets,salt.hex(),key_mode='password')
+            self.assertEqual(secrets.calls,[(item['key_reference'],effective)])
+            self.assertEqual(item['cipher_profile'],'wcdb4-raw')
+            self.assertTrue(verified_raw_key(secrets.calls[0][1],page))
+            self.assertEqual(path.read_bytes(),page)
+            with self.assertRaisesRegex(AXRError,'generation_changed'):
+                provision_verified(root,'encrypted.db',password,secrets,('00'*16),key_mode='password')
+            with self.assertRaisesRegex(AXRError,'unsupported_database_key_mode'):
+                provision_verified(root,'encrypted.db',password,secrets,salt.hex(),key_mode='auto')
+            self.assertEqual(len(secrets.calls),1)
+
     def test_cached_index_never_substitutes_account_or_key_reference(self):
         from adapters.wcdb_owner import verified_cached
         with tempfile.TemporaryDirectory() as tmp:
