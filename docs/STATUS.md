@@ -4,6 +4,12 @@
 
 ## AXR 本轮状态
 
+本轮验收转为 [Codex 读取 → 回信任务 → 人工提交](CODEX_MANUAL_REPLY.md)。新增加密、限时、容量 50 的持久化收件箱，没有外部 runner 也不会丢弃准入消息；元数据 long-poll 区分显式读取和新入站回信。Codex 读取获准正文后生成带来源的草稿，本地面板核对目标并显式复制，由人提交。`--manual-replies` 在执行前阻断发送，主动发送原型单独保留。一次所有者工作会话限账号/私聊、目的/分类/目标、时间/读取额度和最多 12 批，每批精确批准保持；MCP 没有会话或 issuer 管理工具。
+
+当前实机证据：真实 stdio MCP 读取两个既有绑定私聊，近 14 天文本数量为 2 和 0，未将空本人私聊换成文件传输助手。真正 Codex Agent 经 MCP 读取两份获准上下文、生成两份 Completed 草稿并完成两个 DraftReadyForHuman；本地密封草稿复核与审计通过，无 shell 执行或 Agent 发送。正式有限时 worker 又捕获 1 条真实入站消息，events_seen/admitted 与 reply_tasks_created 各为 1；其精确披露 Completed，生成 1 份 DraftReadyForHuman，审计有效。随后停止 worker/所有者会话并撤权、关闭三个控制开关；人工微信提交/记录观察尚未验收，不能用草稿完成替代。
+
+新增 19 项安全/流程/worker 回归，本机全量 230 项发现/228 执行通过/2 平台跳过。双平台 CI 随提交核验；Windows 无微信实机。Codex 本机 MCP 配置已写入并通过真实调用验证；配置本身不代表当前桌面聊天已刷新。原生主动发送资格仍未通过，和本轮人工流程分别记录。
+
 270134 继续追踪执行闭包 → session dispatch → 发送服务 → 逐条队列包装 → outgoing Message：新增 16 个完整函数、9 条直接调用边、8 条实际 dyld page-chain 虚表引用。确认目标集合 string 写至逐目标消息 +0x90，再流入 outgoing Message +0x30；账号 string 来自 AppContext，写至 +0x18；正文经 helper 写至 +0x48。outgoing Message 大小 0x278（shared allocation 0x290），独立于前轮 0x350 转换对象，仍不是最终 wire request。排队包装、消息 shared_ptr 与闭包释放成组核对；不证明运行账号/收件人、线程、取消或提交成功，保持不可发送。
 
 SDK 新增有界、只读 format-6 chained rebase 解析，按声明的 segment/page/链位置验证，拒绝导入、标签、未列入链的原始字、越界与不支持的格式。固定本机原版离线 CLI 通过，新增 7 项安全回归、16 项相关回归及全量 211 项发现/209 执行/2 跳过通过；当前提交双平台 CI 随提交记录。没有修改原版、重签客户端或新增读取/发送权限。两个真实私聊的发送、读回及后台写入仍未验收，同一 PR 不合并。原版未声明 AppleScript 字典/NSServices，sdef 查询返回 -192；URL scheme 仅是注册信息，没有指定私聊发送资格。

@@ -1,0 +1,12 @@
+# AXR owner setup is separate. Replace paths with your local installation.
+# Windows: use .venv/Scripts/python.exe and the corresponding absolute paths.
+[mcp_servers.wechat_axr]
+command = "/path/to/wechat-codex-mcp/.venv/bin/python"
+args = ["/path/to/wechat-codex-mcp/server.py", "--axr-state", "/private/axr-owner-state", "--listener", "--manual-replies"]
+cwd = "/path/to/wechat-codex-mcp"
+required = true
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+# Client permits only the tools below. AXR still validates owner authority.
+default_tools_approval_mode = "approve"
+enabled_tools = ["wechat_status", "wechat_find_conversations", "wechat_read_context", "wechat_disclose_context", "wechat_request_task", "wechat_poll_tasks", "wechat_wait_for_tasks", "wechat_get_task_context", "wechat_prepare_reply", "wechat_finish_task", "wechat_observe_manual_reply", "axr_execute", "axr_job_status", "axr_cancel"]

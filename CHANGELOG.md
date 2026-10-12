@@ -1,5 +1,13 @@
 # 更新日志
 
+### 2026-10-12 — Codex 读取、回信任务与人工提交
+
+- 更新内容：新增加密持久化任务收件箱、元数据长轮询、显式读取与新入站回信区分、精确批准后获取上下文、带来源草稿及 DraftReadyForHuman 完成状态。没有外部 runner 时不再丢弃已准入的消息。新增本地 Manual replies 面板与人工提交记录观察、有限时 Codex worker、MCP 配置示例和使用文档。
+- 目的与设计意图：按主人本轮要求，让 Codex 读取已授权私聊并完成整理/草稿任务，由人核对目标并提交。人工模式在 broker 执行前禁止所有 messages.send，包括已批准动作；主动发送原型继续随项目保留，270134 未资格路径仍关闭。旧消息、出站消息及显式读取不能冒充新回信触发。
+- 安全边界：任务容量 50、加密正文限时；撤权、策略变化和过期拒绝缓存访问。本地所有者会话一次 OS 认证，最长 60 分钟、既有账号/私聊和分类/目的、每目标最多 400 额度、最多 12 批，每批最多 6 条/24KB；仍由原生 Guard 签发精确单次披露批准。owner/issuer/key/session 管理不注册 MCP，聊天不能更改权限。worker 仅允许任务/读取/草稿工具，禁用 shell/web/其他 apps/plugins，不打印或保存原始 JSONL 正文。SDK 保持应用无关的 AXR 能力与 AGPL v3 许可证边界。
+- 实机验证：真实 stdio MCP 读取两个既有私聊，近 14 天文本为 2 和 0；真正 Codex Agent 获准读取两份上下文、完成两份草稿和两个 DraftReadyForHuman，本地密封草稿与审计复核通过，无 shell 执行或 Agent 发送。本人目标保持本人微信 ID，未替换为文件传输助手。正式 worker 另捕获 1 条真实入站消息，准入/任务计数均为 1，经精确披露 Completed 生成 1 份 DraftReadyForHuman，审计有效。结束后停止 worker/会话、撤权并关闭控制开关；人工微信提交及精确记录观察尚未验收，不能用草稿完成代替发送。
+- 回归与交付：新增 19 项流程、安全和 worker 回归，本机全量 230 项发现、228 执行通过、2 平台跳过。Mac/Windows CI 随本轮同一 PR 推送核验，Windows 无微信实机。README/STATUS 及人工流程文档已更新；完成新的人工流程验收后才合并。
+
 ### 2026-10-12 — 270134 执行闭包、目标数据流与排队生命周期
 
 - 更新内容：沿普通微信执行链追到 session dispatch、发送服务、逐条队列包装和 outgoing Message；固定样本新增 16 个完整函数、9 条直接调用边、8 条 dyld page-chain 虚表引用。独立解码 0xa8 所有权闭包、0xf8 队列 shared allocation、0x278 outgoing Message / 0x290 shared allocation，并核对构造/持有/释放路径。

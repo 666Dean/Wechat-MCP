@@ -1,3 +1,19 @@
+# 2026-10-12 Codex 人工回复流程实机记录
+
+公开记录只含角色、状态和计数，不包含账号/联系人 ID、正文、数据库路径或凭据。
+
+| 检查 | 本轮实测与边界 |
+| --- | --- |
+| 真实 stdio MCP | 读取既有指定私聊与本人微信 ID 私聊，近 14 天文本 2/0；没有替换为文件传输助手 |
+| 真正 Codex Agent | 经 MCP 读取 2 份精确获准上下文，完成 2 份回复草稿和 2 个 DraftReadyForHuman；无 shell 或 Agent 微信发送 |
+| 新入站回信 | 正式有时限 worker 捕获 1 条真实入站消息；events_seen、events_admitted、reply_tasks_created 各 1，origin=incoming_reply；没有用出站或显式读取冒充 |
+| 草稿完成 | 该入站任务披露 Completed、draft_job 非空；正式 worker 输出 1 次 draft_ready_for_human；本地审计有效 |
+| 所有者会话 | 一次 OS 认证、两个既有绑定、限 60 分钟/400 次额度/12 批，每批最多 6 条/24KB；实际批准 3 批，未签发微信发送权限 |
+| 收尾 | worker、broker、所有者面板已停止；会话输出 authority_revoked=true，当前版本任务 0；listen/wake_agent/auto_execute 均 false，审计有效 |
+| 待验收 | 人工核对/复制、微信手动提交及唯一数据库记录观察尚未验证；不将 DraftReadyForHuman 称为发送或送达 |
+
+这些是小范围真实读取/新回信草稿证据，不是长期运行、Windows 微信硬件、任意任务执行或 Mac 原生主动发送资格。人工流程验收完成后才合并同一 PR。
+
 # 2026-10-11 Mac 实机读取记录
 
 范围仅为主人指定的一个私聊用户与本人账户会话。公开记录使用角色与计数，

@@ -13,6 +13,7 @@ def main():
     parser.add_argument("--demo", action="store_true")
     parser.add_argument("--axr-state", help="Use independently owner-sealed AXR policy and journal")
     parser.add_argument("--listener", action="store_true",help="Run the local listener; owner policy switches still apply")
+    parser.add_argument("--manual-replies", action="store_true",help="AXR mode: forbid all adapter sends; replies are human-submitted drafts")
     parser.add_argument("--doctor", action="store_true")
     parser.add_argument("--allow-contact-management", action="store_true",
                         help="显式开放 MCP 联系人写入工具；仅用于可信本机客户端，不提供所有者认证")
@@ -39,7 +40,7 @@ def main():
             parser.error("AXR mode cannot mix legacy/demo/owner-management switches")
         from axr_integration.service import Service,register
         from mcp.server import MCPServer
-        service=Service(args.axr_state)
+        service=Service(args.axr_state,manual_replies=args.manual_replies)
         try:
             if args.doctor:
                 print(json.dumps(service.status(),ensure_ascii=False,indent=2));return
@@ -50,6 +51,7 @@ def main():
         finally:service.close()
         return
     if args.listener:parser.error("--listener requires --axr-state")
+    if args.manual_replies:parser.error("--manual-replies requires --axr-state")
     if args.import_keeper_key is not None:
         if (args.demo or args.doctor or args.store_database_key or args.probe_database_key
                 or args.list_database_sessions or args.probe_database_messages is not None
