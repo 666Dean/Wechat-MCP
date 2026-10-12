@@ -8,7 +8,9 @@
 
 当前实机证据：真实 stdio MCP 读取两个既有绑定私聊，近 14 天文本数量为 2 和 0，未将空本人私聊换成文件传输助手。真正 Codex Agent 经 MCP 读取两份获准上下文、生成两份 Completed 草稿并完成两个 DraftReadyForHuman；本地密封草稿复核与审计通过，无 shell 执行或 Agent 发送。正式有限时 worker 又捕获 1 条真实入站消息，events_seen/admitted 与 reply_tasks_created 各为 1；其精确披露 Completed，生成 1 份 DraftReadyForHuman，审计有效。随后停止 worker/所有者会话并撤权、关闭三个控制开关；人工微信提交/记录观察尚未验收，不能用草稿完成替代。
 
-新增 19 项安全/流程/worker 回归，本机全量 230 项发现/228 执行通过/2 平台跳过。双平台 CI 随提交核验；Windows 无微信实机。Codex 本机 MCP 配置已写入并通过真实调用验证；配置本身不代表当前桌面聊天已刷新。原生主动发送资格仍未通过，和本轮人工流程分别记录。
+新增 19 项安全/流程/worker 回归，本机全量 230 项发现/228 执行通过/2 平台跳过。833cf88 双平台 CI 已通过：Mac 230/228/2，Win 230/222/8，原生构建/CTest/私有文件排除均通过；Windows 无微信实机。Codex 本机 MCP 配置已写入并通过真实调用验证；配置本身不代表当前桌面聊天已刷新。原生主动发送资格仍未通过，和本轮人工流程分别记录。
+
+更换授权测试联系人时，真实 MCP 读取 6/0 条文本；不含关键词的两条入站文本被规则过滤，含关键词的新入站消息已准入并获准披露。旧 principal 的持久披露 taint 包含已撤权目标，因此新草稿被 Guard 阻止，没有伪装为 Completed。更换联系人现在建立独立模型 principal，要求旧客户端停止后启动全新临时模型会话；旧来源记录保留。相关回归验证完整 Service 流程，独立身份的实机草稿/人工提交仍待验收。
 
 270134 继续追踪执行闭包 → session dispatch → 发送服务 → 逐条队列包装 → outgoing Message：新增 16 个完整函数、9 条直接调用边、8 条实际 dyld page-chain 虚表引用。确认目标集合 string 写至逐目标消息 +0x90，再流入 outgoing Message +0x30；账号 string 来自 AppContext，写至 +0x18；正文经 helper 写至 +0x48。outgoing Message 大小 0x278（shared allocation 0x290），独立于前轮 0x350 转换对象，仍不是最终 wire request。排队包装、消息 shared_ptr 与闭包释放成组核对；不证明运行账号/收件人、线程、取消或提交成功，保持不可发送。
 
