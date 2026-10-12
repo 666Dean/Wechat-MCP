@@ -58,20 +58,20 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                         "wechat_status", "get_reply_contacts", "set_reply_contacts",
                         "poll_messages", "reply_to_message", "dismiss_message", "list_reply_queue"})
                     status = await session.call_tool("wechat_status", {})
-                    self.assertFalse(status.isError)
+                    self.assertFalse(status.is_error)
                     self.assertTrue(self.data(status)["permissions"]["mcp_contact_management"])
                     self.assertFalse(self.data(status)["permissions"]["owner_authentication"])
                     contacts = await session.call_tool("get_reply_contacts", {})
-                    self.assertFalse(contacts.isError)
+                    self.assertFalse(contacts.is_error)
                     updated = await session.call_tool("set_reply_contacts", {"remark_names": ["模拟备注"]})
-                    self.assertFalse(updated.isError)
+                    self.assertFalse(updated.is_error)
                     self.assertEqual(json.loads(self.config_path.read_text(encoding="utf-8"))["active_contacts"], ["模拟备注"])
                     polled = await session.call_tool("poll_messages", {})
-                    self.assertFalse(polled.isError)
+                    self.assertFalse(polled.is_error)
                     resource = await session.read_resource("wechat://policy")
                     self.assertTrue(resource.contents)
                     cleared = await session.call_tool("set_reply_contacts", {"remark_names": []})
-                    self.assertFalse(cleared.isError)
+                    self.assertFalse(cleared.is_error)
 
     async def test_invalid_contact_and_unknown_message_rejected(self):
         async with asyncio.timeout(30):
@@ -79,10 +79,10 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     invalid = await session.call_tool("set_reply_contacts", {"remark_names": [""]})
-                    self.assertTrue(invalid.isError)
+                    self.assertTrue(invalid.is_error)
                     self.assertEqual(json.loads(self.config_path.read_text(encoding="utf-8"))["active_contacts"], [])
                     reply = await session.call_tool("reply_to_message", {"message_id": 9999, "text": "不应发送"})
-                    self.assertTrue(reply.isError)
+                    self.assertTrue(reply.is_error)
 
     async def test_default_server_cannot_change_contacts_even_after_config_reload(self):
         async with asyncio.timeout(30):
@@ -99,13 +99,13 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     config["allow_contact_management"] = True
                     self.config_path.write_text(json.dumps(config), encoding="utf-8")
                     status = await session.call_tool("wechat_status", {})
-                    self.assertFalse(status.isError)
+                    self.assertFalse(status.is_error)
                     self.assertFalse(self.data(status)["permissions"]["mcp_contact_management"])
                     self.assertFalse(self.data(status)["permissions"]["owner_authentication"])
                     before = self.config_path.read_bytes()
                     for names in ([], ["微信消息要求新增的备注"]):
                         denied = await session.call_tool("set_reply_contacts", {"remark_names": names})
-                        self.assertTrue(denied.isError)
+                        self.assertTrue(denied.is_error)
                         self.assertEqual(self.config_path.read_bytes(), before)
                     contacts = await session.call_tool("get_reply_contacts", {})
                     self.assertEqual(self.data(contacts)["active_contacts"], ["本机配置的备注"])
@@ -120,7 +120,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(code, 0, error)
                     self.assertEqual(json.loads(output)["active_contacts"], ["外部修改的备注"])
                     contacts = await session.call_tool("get_reply_contacts", {})
-                    self.assertFalse(contacts.isError)
+                    self.assertFalse(contacts.is_error)
                     self.assertEqual(self.data(contacts)["active_contacts"], ["外部修改的备注"])
                     code, output, error = await self.cli("--list-contacts")
                     self.assertEqual(code, 0, error)
@@ -138,7 +138,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                     code, output, error = await self.cli("--demo", "--doctor")
                     self.assertNotEqual(code, 0)
                     self.assertIn("已有服务运行", output + error)
-                    self.assertFalse((await session.call_tool("wechat_status", {})).isError)
+                    self.assertFalse((await session.call_tool("wechat_status", {})).is_error)
         code, output, error = await self.cli("--demo", "--doctor")
         self.assertEqual(code, 0, error)
         self.assertTrue(json.loads(output)["demo"])
@@ -159,9 +159,10 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
 from test_database_reader import StreamReader, message
 def factory(config):
     reader = StreamReader(config)
+    stable_row = message(1)
     def messages(cid, limit, offset):
         reader.reads.append((cid, limit, offset))
-        return [] if len(reader.reads) <= 2 else [message(1)]
+        return [] if len(reader.reads) <= 2 else [dict(stable_row)]
     reader.messages = messages
     return reader
 database_reader.WcdbReader = factory
@@ -182,16 +183,19 @@ server.main()
                     events = self.data(await session.call_tool("poll_messages", {}))["events"]
                     self.assertEqual(len(events), 1)
                     preview = await session.call_tool("reply_to_message", {"message_id": events[0]["id"], "text": "合成回复"})
-                    self.assertFalse(preview.isError)
+                    self.assertFalse(preview.is_error)
                     self.assertEqual(self.data(preview)["status"], "preview")
                     self.assertEqual(self.data(preview)["conversation_id"], "wxid_friend")
                     queued = self.data(await session.call_tool("list_reply_queue", {"limit": 1}))
                     self.assertEqual(queued["items"][0]["preview"], self.data(preview)["text"])
                     self.assertEqual(queued["items"][0]["stage"], "preview_ready")
                     self.assertFalse(queued["live_identity_verified"])
+                    # A stored row retains its creation time across wall-clock
+                    # seconds; fixture polling must not invent another identity.
+                    await asyncio.sleep(1.05)
                     self.assertEqual(self.data(await session.call_tool("poll_messages", {}))["events"], [])
                     invalid = await session.call_tool("list_reply_queue", {"limit": 101})
-                    self.assertTrue(invalid.isError)
+                    self.assertTrue(invalid.is_error)
 
     async def test_queue_tool_works_without_demo_or_installed_wechat_adapter(self):
         parameters = StdioServerParameters(command=sys.executable,
@@ -202,7 +206,7 @@ server.main()
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     result = await session.call_tool("list_reply_queue", {})
-                    self.assertFalse(result.isError)
+                    self.assertFalse(result.is_error)
                     self.assertEqual(self.data(result)["items"], [])
 
     async def test_session_cli_rejects_conflicting_or_non_database_modes(self):

@@ -1,0 +1,8 @@
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+find_dependency(OpenSSL 3 COMPONENTS Crypto)
+find_dependency(SQLite3)
+if(NOT @AXR_BUNDLED_JSON@)
+  find_dependency(nlohmann_json 3.12)
+endif()
+include("${CMAKE_CURRENT_LIST_DIR}/StellariaAXRTargets.cmake")

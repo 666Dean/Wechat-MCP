@@ -1,0 +1,80 @@
+name: AXR native and security gates
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Native dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install openssl@3 sqlcipher
+          echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          echo "AXR_SQLCIPHER_LIBRARY=$(brew --prefix sqlcipher)/lib/libsqlcipher.dylib" >> "$GITHUB_ENV"
+      - name: Cache Windows dependency builds
+        if: runner.os == 'Windows'
+        id: windows-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/AppData/Local/vcpkg/archives
+          key: axr-vcpkg-windows-20261011
+      - name: Native dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          vcpkg install openssl:x64-windows sqlite3:x64-windows nlohmann-json:x64-windows sqlcipher:x64-windows
+          "CMAKE_ARGS=-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows" >> $env:GITHUB_ENV
+          "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin" >> $env:GITHUB_PATH
+          "AXR_SQLCIPHER_LIBRARY=$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin/sqlcipher.dll" >> $env:GITHUB_ENV
+      - name: Save completed Windows dependency builds
+        if: runner.os == 'Windows' && steps.windows-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/AppData/Local/vcpkg/archives
+          key: axr-vcpkg-windows-20261011
+      - name: Python and editable C++ SDK
+        run: python -m pip install -r requirements.axr.txt pybind11==3.0.1
+      - name: Root helpers and native tests (macOS)
+        if: runner.os == 'macOS'
+        run: python scripts/build_axr.py --openssl "$OPENSSL_ROOT_DIR" --mac-selection-probe
+      - name: Compile read-only native process eligibility probe (macOS)
+        if: runner.os == 'macOS'
+        run: swiftc adapters/macos/native_runtime_probe.swift -o .local-private/build/wechat-native-runtime-probe
+      - name: Root helpers and native tests (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: python scripts/build_axr.py --config Release --toolchain "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+      - name: Native sandbox witness path (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          echo "AXR_TEST_WORKER=$PWD/.local-private/build/AXR/axr-worker-probe" >> "$GITHUB_ENV"
+          echo "AXR_TEST_RUNTIME_ROOTS=$OPENSSL_ROOT_DIR/lib" >> "$GITHUB_ENV"
+          echo "AXR_TEST_KEY_OBSERVER=$PWD/.local-private/build/libwechat-key-observer.dylib" >> "$GITHUB_ENV"
+          echo "AXR_TEST_KEY_FIXTURE=$PWD/.local-private/build/wechat-key-fixture" >> "$GITHUB_ENV"
+      - name: Native sandbox witness paths (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "AXR_TEST_WORKER=$env:GITHUB_WORKSPACE/.local-private/build/AXR/Release/axr-worker-probe.exe" >> $env:GITHUB_ENV
+          "AXR_TEST_WINDOWS_LAUNCHER=$env:GITHUB_WORKSPACE/.local-private/build/AXR/Release/axr-sandbox.exe" >> $env:GITHUB_ENV
+          "AXR_TEST_RUNTIME_ROOTS=$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/debug/bin;$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin" >> $env:GITHUB_ENV
+      - name: Security and legacy regressions
+        run: python -m unittest discover -q
+      - name: Confirm private files are absent
+        shell: bash
+        run: |
+          if git ls-files | grep -E '(^\.local-private/|^\.venv/|\.sqlite3($|-)|\.db$|\.dpapi$|\.sealed\.json$|\.(so|pyd|dylib|dll|exe)$)'; then exit 1; fi

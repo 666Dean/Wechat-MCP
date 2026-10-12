@@ -1,2 +1,2 @@
-mcp==1.30.0
-wxauto4==41.1.7
+mcp==2.3.0
+wxauto4==41.1.7; sys_platform == "win32"

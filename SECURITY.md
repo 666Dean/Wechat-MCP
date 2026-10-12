@@ -2,6 +2,20 @@
 
 这是未完成的实验性原型。默认预览模式；不要在未验证的微信主账号上启用无人值守发送。
 
+## AXR opt-in 模式
+
+AXR 的签名 policy、Guard/AET、加密正文上下文、访问与披露分离及独立 OS 所有者认证
+见 [Gen1 安全边界](docs/AXR_GEN1.md)。密钥仅在 OS 凭据库，没有明文 fallback。
+微信专属 [所有者初始化](docs/WCDB_OWNER.md) 可以隐藏导入 key；Mac 也可经明确选择与系统认证，
+在私有临时副本内观察原 KDF 结果，首个页 HMAC 成功后入库。该模式会给临时副本 ad-hoc 签名
+并加载 observer；保持原安装签名与 SIP，不读取登录 token，不提供 MCP 密钥/issuer 工具。
+可信边界包括主人终端、状态目录、构建产物及同用户 OS 凭据库，不能隔离已控制同用户的程序。
+身份/压缩/字典/profile/目录权限不明确时拒绝读取或发送。数据库 ID 不代替 UI 发前 witness。
+
+## 原项目 legacy 模式
+
+下面的明文持久化与旧 DLL 描述只适用于保留的 legacy 路径。
+
 - `state.sqlite3` 存储符合回复条件的消息正文和回复状态，未加密。
 - `config.json` 保存本机联系人设置；`codex-mcp.toml` 保存本机路径。
 - 可选 WCDB 后端的密钥仅由本机交互 CLI 录入，使用当前用户 DPAPI 保存为 .dpapi 文件并绑定账号路径，不通过 MCP 传递；同用户程序仍在信任边界内。

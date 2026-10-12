@@ -1,4 +1,4 @@
-param([string]$PythonExe = '')
+param([string]$PythonExe = '', [switch]$AXR)
 $ErrorActionPreference = 'Stop'
 $TaskRoot = $PSScriptRoot
 if (-not $PythonExe) {
@@ -13,7 +13,10 @@ if (-not $PythonExe) {
 if ($LASTEXITCODE -ne 0) { throw 'Python 3.12 x64 is required by the pinned Windows dependency.' }
 & $PythonExe -m venv --without-pip "$TaskRoot\.venv"
 if ($LASTEXITCODE -ne 0) { throw 'Could not create virtual environment. Use Python 3.12 x64.' }
-& $PythonExe -m pip --python "$TaskRoot\.venv\Scripts\python.exe" install -r "$TaskRoot\requirements.txt"
+$TaskRequirements = if ($AXR) { 'requirements.axr.txt' } else { 'requirements.txt' }
+Push-Location -LiteralPath $TaskRoot
+try { & $PythonExe -m pip --python "$TaskRoot\.venv\Scripts\python.exe" install -r "$TaskRoot\$TaskRequirements" }
+finally { Pop-Location }
 if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
 if (-not (Test-Path -LiteralPath "$TaskRoot\config.json")) {
     Copy-Item -LiteralPath "$TaskRoot\config.example.json" -Destination "$TaskRoot\config.json"
