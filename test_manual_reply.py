@@ -175,13 +175,28 @@ class ManualReplyWorkflow(unittest.TestCase):
         from axr.aet import Action,Resource
         s=self.s;s.config['database']={'fixture':True}
         binding={'conversation_id':'new-fixture','display_name':'fixture new','data_class':'personal'}
+        s.journal.taint_disclosure(s.principal,self.fixture.resource,'personal')
         with patch.object(owner_codex,'qualify_existing_contacts',return_value=[binding]) as qualify, \
              patch.object(s.store,'seal_config',create=True) as seal:
             owner_codex.setup(s.store,60,4,['fixture new'])
             qualify.assert_called_once_with(s.store,s.config,['fixture new'])
             self.assertEqual(seal.call_args.args[0]['conversations'],[binding])
+            new_principal=seal.call_args.args[0]['principal']
+            self.assertNotEqual(new_principal,s.principal)
         with self.assertRaises(AXRError):s.guard.check(s._read_action('friend',{}))
-        s.guard.check(Action(s.principal,Resource('wechat',s.account,'new-fixture'),'messages.read',s.purpose,{}))
+        s.guard.check(Action(new_principal,Resource('wechat',s.account,'new-fixture'),'messages.read',s.purpose,{}))
+        self.assertEqual(len(s.journal.disclosure_taint(s.principal)),1)
+        self.assertEqual(s.journal.disclosure_taint(new_principal),[])
+        policy=seal.call_args.args[0]
+        s.config=policy;s.principal=new_principal;s.destination=policy['agent_destination']
+        s.bindings={'new-fixture':binding};s.initial_policy_digest=digest(policy)
+        with patch.object(s.store,'config',return_value=policy):
+            task=s.request_task('new-fixture')
+            approve(s.store,task['disclosure_job'],new_principal)
+            context=s.task_context(task['task_id'])
+            draft=s.prepare('new-fixture','fixture new isolated draft',[context['context_id']])
+            self.assertEqual(draft['state'],'Completed')
+            self.assertEqual(s.finish_task(task['task_id'],draft['id'])['state'],'DraftReadyForHuman')
 
 
 if __name__=='__main__':unittest.main()

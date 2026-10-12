@@ -3,6 +3,7 @@
 import argparse
 import json
 import time
+import uuid
 from contextlib import closing
 from pathlib import Path
 from axr.aet import AXRError, Resource, digest
@@ -33,7 +34,11 @@ def setup(store,ttl,uses,contacts=None):
     if not policy.get('database') or not 1<=len(policy['conversations'])<=32:
         raise AXRError('qualified_database_and_private_bindings_required')
     if contacts is not None:
-        policy={**policy,'conversations':qualify_existing_contacts(store,policy,contacts)}
+        policy={**policy,'conversations':qualify_existing_contacts(store,policy,contacts),
+                'principal':'codex:'+uuid.uuid4().hex}
+        # Prior model disclosure taint remains attached to its old principal.
+        # This replacement must use a NEW ephemeral model conversation; never
+        # reconnect a model retaining the old private chat's memory.
     policy={**policy,'mode':'wcdb','agent_destination':'model:codex',
             'runner':{'enabled':False},'listener':{'listen':True,'wake_agent':True,'auto_execute':False,
             'start_from_now':True,'keywords':['AXR测试','@Codex'],'aggregate_seconds':2,'poll_seconds':5,
@@ -47,6 +52,7 @@ def setup(store,ttl,uses,contacts=None):
             expires_at=time.time()+ttl,max_uses=uses,classes=[binding.get('data_class','personal')])
     return {'configured':True,'bindings':len(policy['conversations']),'destination':'model:codex',
             'ttl':ttl,'max_uses_per_binding':uses,'submission':'human','automatic_send':False,
+            'fresh_model_conversation_required':contacts is not None,
             'body_disclosure':'exact_owner_approval_per_context','keywords':policy['listener']['keywords']}
 
 
