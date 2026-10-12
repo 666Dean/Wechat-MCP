@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from PySide6.QtCore import QObject, Property, Signal, Slot, QTimer, QUrl, QEvent, QCoreApplication
+from PySide6.QtCore import QObject, Property, Signal, Slot, QTimer, QUrl, QEvent, QCoreApplication, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QFileDialog
 from PySide6.QtQml import QQmlApplicationEngine
@@ -21,11 +21,11 @@ from .codex_config import snippet,install,restore
 
 
 class Controller(QObject):
-    changed=Signal();detailChanged=Signal();noticeChanged=Signal();completed=Signal(object)
+    changed=Signal();detailChanged=Signal();manualChanged=Signal();noticeChanged=Signal();completed=Signal(object)
     def __init__(self,state,helper=None,fixture=False,fixture_case="empty"):
         super().__init__();self.state=state;self.helper=helper;self.fixture=fixture;self.fixture_case=fixture_case
         self._data={'connected':False,'jobs':[],'drafts':[],'conversations':[],'grants':[],'summaries':[]}
-        self._preview={};self._detail='';self._notice='连接本地服务，开始你的工作台。';self.selected=None;self.config_review=None;self.config_backup=None
+        self._preview={};self._manual={};self._detail='';self._notice='连接本地服务，开始你的工作台。';self.selected=None;self.config_review=None;self.config_backup=None
         self.pool=concurrent.futures.ThreadPoolExecutor(max_workers=2);self.inflight=set();self.broker_process=None;self.worker_process=None;self.worker_job=None
         self.completed.connect(self.accept)
         self.timer=QTimer(self);self.timer.timeout.connect(self.refresh);self.timer.start(5000)
@@ -34,6 +34,10 @@ class Controller(QObject):
     def data(self):return self._data
     @Property('QVariantMap',notify=detailChanged)
     def preview(self):return self._preview
+    @Property('QVariantMap',notify=manualChanged)
+    def manual(self):return self._manual
+    @Property(bool,notify=changed)
+    def restoreAvailable(self):return self.config_backup is not None
     @Property(str,notify=detailChanged)
     def detail(self):return self._detail
     @Property(str,notify=noticeChanged)
@@ -62,20 +66,42 @@ class Controller(QObject):
             self.noticeChanged.emit()
             if result['name']=='refresh':
                 self._data.update(connected=False,jobs=[],drafts=[],summaries=[],grants=[])
+            if result['name'] in {'refresh','manual_draft','copy_draft'}:
+                self._manual={};self.manualChanged.emit()
             self.changed.emit()
             return
         value=result['value'];name=result['name']
+        if name=='stop':
+            self._manual={};self._preview={};self.manualChanged.emit();self.detailChanged.emit()
+        if name=='install':self.changed.emit()
         if name=='refresh':
             self._data=value;self._data.update(connected=True,loading=bool(self.inflight),last_sync=time.strftime('%H:%M:%S'),
                 worker_state='running' if self.worker_process is not None and self.worker_process.poll() is None else 'stopped')
+            if self._manual and (self._manual.get('expires',0)<=time.time() or
+                    not any(d['job_id']==self._manual.get('job_id') for d in value.get('drafts',[]))):
+                self._manual={};self.manualChanged.emit()
             self.changed.emit()
+        elif name=='manual_draft':
+            self._manual=value;self.manualChanged.emit()
+        elif name=='copy_draft':
+            # Revalidate the sealed draft through the owner broker immediately
+            # before explicit copying. Never copy a changed/unreviewed payload.
+            if (value.get('expires',0)<=time.time() or any(value.get(k)!=self._manual.get(k)
+                    for k in ('job_id','conversation_id','text'))):
+                self._manual={};self.manualChanged.emit()
+                self._notice='草稿已变化或到期，请重新查看。';self.noticeChanged.emit();return
+            QApplication.clipboard().setText(value['text'])
+        elif name=='manual_observe':
+            self._notice='已找到与你提交的草稿一致的发出记录。' if value.get('database_record_observed') else '尚未找到对应发出记录，请稍后核对。'
+            self.noticeChanged.emit();return
         elif name in {'review','draft','config_preview','connection'}:
             self._preview=value;self._detail=json.dumps(value,ensure_ascii=False,indent=2);self.detailChanged.emit()
             if name=='review' and 'intent' in value:self.selected=(value['intent']['execution_id'],value['seal'])
         elif name=='summaries':self._data['summaries']=value['summaries'];self.changed.emit()
-        self._notice={'refresh':'本地状态已更新。','approve':'系统认证通过，精确意图已批准。',
+        self._notice={'refresh':'已同步。','approve':'已批准这一次操作。',
             'stop':'已撤销授权并停止监听。','install':'Codex MCP 配置已安装；权限仍由你单独授予。',
-            'restore':'已恢复安装前的 Codex 配置。','start':'本地服务已启动。','execute':'执行完成，请查看实际回执。','agent':'10 分钟草稿 Agent 已启动；等待已授权的任务。','grant':'已建立 15 分钟本地读取授权；模型披露仍需精确批准。','cache':'缓存范围已更新，之前的权限已撤销。'}.get(name,'操作已完成。')
+            'restore':'已恢复安装前的 Codex 设置。','start':'本地服务已启动。','execute':'请查看处理结果。','agent':'助理已启动，等待授权范围内的新任务。','grant':'已授权此会话的本地读取，有效期 15 分钟。','cache':'文件目录已更新，请重新授权。',
+            'copy_draft':'已复制，请核对微信目标后由你发送。','manual_draft':'请核对收件人与回复内容。'}.get(name,'操作已完成。')
         self.noticeChanged.emit()
     @Slot()
     def refresh(self):
@@ -86,13 +112,16 @@ class Controller(QObject):
             now=time.time()
             self._data.update(last_sync='—',loading=self.fixture_case=='loading',worker_state='stopped')
             if self.fixture_case=='content':
-                label='项目工作群 · Product / Engineering · 超长联系人名称与中英文混排验证'
+                label='项目讨论 · Product & Design · 产品规划与文档协作事项'
                 self._data['conversations']=[{'conversation_id':'fixture-chat','display_name':label,'data_class':'personal'}]
                 self._data['jobs']=[{'id':'fixture-job-'+str(i),'state':state,'operation':operation,'target':label,
                     'created':now-i*90,'expires':now+900} for i,(state,operation) in enumerate([
                     ('AwaitingApproval','disclosure.send'),('Executing','messages.read'),('Verifying','files.read'),
                     ('Completed','reply.prepare'),('Unknown','messages.send'),('FailedSafe','files.read')])]
                 self._data['drafts']=[{'job_id':'fixture-draft','display_name':label,'expires':now+600}]
+                self._manual={'job_id':'fixture-draft','conversation_id':'fixture-chat','display_name':label,
+                    'text':'这是合成界面样本。\n\n建议先确认会议时间，再整理文档更新与待办事项。\n\n— Codex · AI 助理',
+                    'expires':now+600,'submission':'human'};self.manualChanged.emit()
                 self._data['grants']=[{'conversation_id':'fixture-chat','operations':['messages.read','reply.prepare'],
                     'expires':now+600,'remaining':42,'destinations':[],'exact_intent':False}]
                 self._data['summaries']=[{'summary':'合成设计样本：讨论 Meeting Agenda 与文档更新，建议先核对时间，再准备回复。此文本不是微信数据。',
@@ -137,6 +166,20 @@ class Controller(QObject):
         self.selected=None;self._preview={};self.detailChanged.emit()
         if self.fixture:return
         self.run('draft',lambda:call(self.state,'control.draft',(jid,),owner=True))
+    @Slot(str)
+    def manualDraft(self,jid):
+        self._manual={};self.manualChanged.emit()
+        if not self.fixture:self.run('manual_draft',lambda:call(self.state,'control.draft',(jid,),owner=True))
+    @Slot()
+    def copyDraft(self):
+        if self.fixture or not self._manual:return
+        jid=self._manual['job_id']
+        self.run('copy_draft',lambda:call(self.state,'control.draft',(jid,),owner=True))
+    @Slot()
+    def observeManual(self):
+        if self.fixture or not self._manual:return
+        jid=self._manual['job_id']
+        self.run('manual_observe',lambda:call(self.state,'observe_manual_reply',(jid,)))
     @Slot()
     def stop(self):
         if self.fixture:return
@@ -180,7 +223,7 @@ class Controller(QObject):
         raw=path.read_bytes() if path.exists() else b''
         value=snippet(sys.executable,Path(__file__).resolve().parent.parent/'server.py',self.state)
         self.config_review=(path,value,hashlib.sha256(raw).hexdigest())
-        self._detail=value;self.detailChanged.emit();self._notice='请核对下面的 MCP 配置，确认后安装。';self.noticeChanged.emit()
+        self._detail=value;self.detailChanged.emit();self._notice='确认后连接 Codex。现有设置会保留。';self.noticeChanged.emit()
     @Slot()
     def installConfig(self):
         if not self.config_review or self.fixture:return
@@ -228,19 +271,22 @@ def main():
     parser.add_argument('--capture',help='Synthetic fixture screenshot only')
     parser.add_argument('--exit-after',type=int)
     parser.add_argument('--width',type=int,default=1280);parser.add_argument('--height',type=int,default=800)
-    parser.add_argument('--page',type=int,choices=range(7),default=0)
+    parser.add_argument('--page',type=int,choices=range(10),default=0)
     parser.add_argument('--theme',choices=['light','dark'],default='light')
     parser.add_argument('--fixture-case',choices=['empty','content','loading','error'],default='empty')
     args=parser.parse_args()
     if args.capture and not args.fixture:parser.error('Screenshots are supported only for the synthetic fixture')
     QQuickStyle.setStyle('Basic')
     app=QApplication(sys.argv);app.setApplicationName('WeChat MCP Desktop');app.setOrganizationName('Stellaria Studio')
+    app.styleHints().setColorScheme(Qt.ColorScheme.Dark if args.theme=='dark' else Qt.ColorScheme.Light)
     controller=Controller(args.state,args.helper,args.fixture,args.fixture_case)
     engine=QQmlApplicationEngine();engine.rootContext().setContextProperty('owner',controller)
     engine.load(QUrl.fromLocalFile(str(Path(__file__).with_name('Main.qml'))))
     if not engine.rootObjects():raise SystemExit(1)
     window=engine.rootObjects()[0]
     window.setWidth(args.width);window.setHeight(args.height);window.setProperty('page',args.page);window.setProperty('darkMode',args.theme=='dark')
+    window.darkModeChanged.connect(lambda:app.styleHints().setColorScheme(
+        Qt.ColorScheme.Dark if window.property('darkMode') else Qt.ColorScheme.Light))
     tray=QSystemTrayIcon(QIcon(str(Path(__file__).with_name('icon.svg'))),app)
     menu=QMenu();menu.addAction('打开工作台',lambda:(window.show(),window.raise_(),window.requestActivate()))
     menu.addAction('撤销全部授权',controller.stop);menu.addSeparator();menu.addAction('退出界面',app.quit)
