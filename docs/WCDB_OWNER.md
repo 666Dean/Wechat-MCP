@@ -16,6 +16,7 @@ python -m adapters.wcdb_owner --state STATE --helper HELPER --account-root ACCOU
 ```
 
 密钥只能在隐藏输入中录入，不能放入 argv、环境变量、聊天、配置文件或管道。
+默认 `--key-mode raw`。Windows 已有二进制口令可显式指定 `--key-mode password`：按所选库 salt 派生后校验首页面 HMAC，仅将验证后的页密钥保存到 Credential Manager，索引与复核仍用 `wcdb4-raw`。每库单独导入，不自动猜测或修改 legacy DPAPI；详见 [Windows 更新](WINDOWS_UPDATE.md)。
 本轮没有提供 Windows 自动取得密钥的实现或微信设备验收。
 
 macOS 可选的启动观察方式：

@@ -163,6 +163,8 @@ def main():
     parser.add_argument('--account-root',required=True,help='Exact owner-selected db_storage directory')
     commands=parser.add_subparsers(dest='command',required=True)
     p=commands.add_parser('import-key');p.add_argument('--database',required=True)
+    p.add_argument('--key-mode',choices=('raw','password'),default='raw',
+                   help='Explicit credential semantics; password derives a per-database page key')
     p=commands.add_parser('observe-mac');p.add_argument('--observer',required=True)
     p.add_argument('--allow-temporary-copy',action='store_true',required=True)
     p=commands.add_parser('qualify');p.add_argument('--sqlcipher-library',required=True)
@@ -186,7 +188,7 @@ def main():
                     raw=getpass.getpass('32-byte hex WCDB key (hidden, local only): ')
                     try:key=bytes.fromhex(raw)
                     except ValueError:raise AXRError('invalid_database_key')
-                    keys[args.database]=provision_verified(root,args.database,key,store.secrets,rows[args.database]['salt'])
+                    keys[args.database]=provision_verified(root,args.database,key,store.secrets,rows[args.database]['salt'],key_mode=args.key_mode)
                     del raw,key;save_index(store,root,keys)
                 elif args.command=='observe-mac':
                     # The installed client is shared across account roots.

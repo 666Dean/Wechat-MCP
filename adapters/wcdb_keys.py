@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 from axr.aet import AXRError, identifier, digest
 from .wcdb import CipherConnection
+from database_key_probe import verified_page_key
 
 
 def verified_raw_key(key, page):
@@ -63,13 +64,15 @@ def inventory(root, maximum=128):
     return result
 
 
-def provision_verified(root, relative, key, secret_store, expected_salt):
+def provision_verified(root, relative, key, secret_store, expected_salt, *, key_mode='raw'):
+    if key_mode not in ('raw','password'):raise AXRError('unsupported_database_key_mode')
     path=private_database_path(root,relative)
     with path.open('rb') as stream:page=stream.read(4096)
     if page[:16].hex()!=expected_salt:raise AXRError('database_generation_changed_before_key_provision')
-    if not verified_raw_key(key,page):raise AXRError('candidate_key_hmac_rejected')
+    effective=verified_page_key(page,key,key_mode)
+    if effective is None:raise AXRError('candidate_key_hmac_rejected')
     ref='wcdb:'+digest([str(path),expected_salt])
-    secret_store.provision(ref,key)
+    secret_store.provision(ref,effective)
     return {'key_reference':ref,'salt':expected_salt,'cipher_profile':'wcdb4-raw'}
 
 

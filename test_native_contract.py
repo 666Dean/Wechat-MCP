@@ -3,7 +3,12 @@ import struct
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
-from adapters.macos import native_contract as contract
+try:
+    from adapters.macos import native_contract as contract
+except ModuleNotFoundError as exc:
+    if exc.name == 'axr':
+        raise unittest.SkipTest('AXR optional: install SDK for native contract tests') from exc
+    raise
 from axr.aet import AXRError
 
 
