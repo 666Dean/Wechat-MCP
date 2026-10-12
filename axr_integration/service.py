@@ -13,6 +13,7 @@ from axr.runtime import Runtime
 from axr.workspace import Workspace
 from axr.admission import Budget,Admission
 from .policy import validate_controls
+from .content_safety import mask_credentials
 
 class Service:
     def __init__(self,state,*,store=None,adapter=None,leases=None,manual_replies=False):
@@ -169,7 +170,16 @@ class Service:
         readback_job=options.pop("readback_job",None)
         manual_readback=options.pop('manual_readback_job',None)
         if self.config["mode"]=="ui":options["guard_context"]=check.commit_proof()
-        page=self.adapter.search(action.resource.conversation_id,**options)
+        try:page=self.adapter.search(action.resource.conversation_id,**options)
+        except AXRError as error:
+            # Static codes only: never persist exception text, SQL or bodies.
+            codes={'sender_identity_unknown','private_chat_sender_identity_mismatch',
+                'wcdb_compression_dictionary_required','message_compression_invalid',
+                'wcdb_schema_not_qualified','group_sender_not_resolved','unknown_wcdb_compression',
+                'database_query_failed_not_empty_result'}
+            code=str(error) if str(error) in codes else 'unclassified'
+            self.journal.meter('read_failure_'+code)
+            raise
         check() # A changed policy cannot disclose or persist a newly fetched page.
         self.journal.meter("pages_read")
         if readback_job is not None or manual_readback is not None:
@@ -189,13 +199,16 @@ class Service:
         for message in page["messages"]:
             text=message.get("text")
             if not isinstance(text,str):continue
-            clipped=text.encode("utf8")[:min(remaining,4000)].decode("utf8","ignore")
+            safe_text,masked=mask_credentials(text)
+            clipped=safe_text.encode("utf8")[:min(remaining,4000)].decode("utf8","ignore")
             if not clipped:break
             remaining-=len(clipped.encode("utf8"))
-            messages.append({**message,"text":clipped,"truncated":clipped!=text,
+            messages.append({**message,"text":clipped,"truncated":clipped!=safe_text,"credentials_redacted":masked,
                 "data_class":self.bindings[action.resource.conversation_id].get("data_class","personal"),
                 "trust":"untrusted-external"})
         context={"messages":messages,"coverage":page["coverage"],"complete_history":False,
+                 "read_scope":{k:action.payload[k] for k in ('since','until','limit')},
+                 "scanned":page.get('scanned'),"has_more":bool(page.get('has_more')),
                  "budget_truncated":len(messages)<len([m for m in page["messages"] if isinstance(m.get("text"),str)]) or any(m["truncated"] for m in messages)}
         cid=self.journal.remember(self.principal,action.resource,context,self.guard.version,ttl=900)
         next_cursor=None
@@ -394,6 +407,7 @@ class Service:
             data={'id':task_id,'principal':self.principal,'resource':action.resource.key,'version':self.guard.version,
                   'expires':review['deadline'],'summary':summary,'context_digest':digest(context),
                   'text_records':len(context['messages']),'budget_truncated':context.get('budget_truncated',False)}
+            data.update(read_scope=context.get('read_scope'),scanned=context.get('scanned'),has_more=context.get('has_more'))
             self.journal.db.execute('INSERT INTO review_notes VALUES(?,?,?,?,?,?)',
                 (task_id,self.principal,action.resource.key,self.guard.version,review['deadline'],self.journal.vault.seal(data,task_id+':review')))
             self.journal.db.execute('DELETE FROM reply_tasks WHERE id=? AND principal=?',(task_id,self.principal))

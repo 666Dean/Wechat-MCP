@@ -35,7 +35,7 @@ def discover(store,policy):
         labels={r['username']:r['remark'] or r['nick_name'] or r['username'] for r in
                 paged(db,'SELECT username,nick_name,remark FROM contact ORDER BY username')}
     finally:db.close()
-    bindings={};shards=[];unmapped=0;table_count=0;records=0;texts=0
+    bindings={};shards=[];unmapped=0;invalid_names=0;table_count=0;records=0;texts=0
     available=[rel for rel in rows if Path(rel).parent==Path('message') and Path(rel).stem.removeprefix('message_').isdigit()]
     missing=[rel for rel in available if rel not in keys]
     for rel in sorted(available):
@@ -47,7 +47,11 @@ def discover(store,policy):
             if sum(r['user_name']==account for r in names)!=1:raise AXRError('account_identity_not_present_in_shard')
             mapping={}
             for r in names:
-                name=identifier(r['user_name']);table='Msg_'+hashlib.md5(name.encode()).hexdigest()
+                try:name=identifier(r['user_name'])
+                except AXRError:
+                    invalid_names+=1
+                    continue
+                table='Msg_'+hashlib.md5(name.encode()).hexdigest()
                 if table in mapping and mapping[table]!=name:raise AXRError('conversation_hash_identity_collision')
                 mapping[table]=name
             tables=list(paged(db,"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%' ORDER BY name",maximum=4096))
@@ -71,7 +75,7 @@ def discover(store,policy):
     return {'conversations':sorted(bindings.values(),key=lambda b:(b['kind'],b['display_name'],b['conversation_id'])),
         'database':{'sqlcipher_library':library,'shards':shards},
         'coverage':{'message_shards_available':len(available),'message_shards_verified':len(shards),
-            'missing_key_shards':len(missing),'message_tables':table_count,'unmapped_tables':unmapped,
+            'missing_key_shards':len(missing),'message_tables':table_count,'unmapped_tables':unmapped,'invalid_name_rows':invalid_names,
             'records':records,'text_records':texts,'nontext_records':records-texts,
             'snapshot_until':snapshot_until,'atomic_snapshot':False,
             'catalog_complete':not missing and unmapped==0,'server_history_complete':False}}

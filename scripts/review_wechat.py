@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Interactive real MCP review client; no raw transcript or message file.
 
-JSON stdin: catalog, page(index), ack(summary), status, quit.
+JSON stdin: catalog, page(index), ack(summary), abandon, status, quit.
 --show-content explicitly forwards only exact owner-approved context to caller.
 Run one broker per state, alongside the authenticated owner_review controller.
 """
@@ -24,7 +24,14 @@ async def run(state,show):
                 await c.initialize();bindings=[];cursors={};pending=None;completed=set()
                 async def call(tool,args):
                     value=await c.call_tool(tool,args)
-                    if value.is_error:raise ValueError('mcp_operation_failed')
+                    if value.is_error:
+                        error_text=' '.join(b.text for b in value.content if hasattr(b,'text'))
+                        safe_codes=('sender_identity_unknown','private_chat_sender_identity_mismatch',
+                            'wcdb_compression_dictionary_required','message_compression_invalid',
+                            'wcdb_schema_not_qualified','account_review_page_budget_exhausted',
+                            'grant_required','account_review_expired','reply_task_missing_expired_or_revoked',
+                            'context_expired_revoked_or_out_of_scope','job_payload_expired')
+                        raise ValueError(next((code for code in safe_codes if code in error_text),'mcp_operation_failed'))
                     return json.loads(value.content[0].text)
                 while True:
                     line=await asyncio.to_thread(sys.stdin.readline)
@@ -33,6 +40,10 @@ async def run(state,show):
                         request=json.loads(line);op=request['op']
                         if op=='quit':break
                         if op=='status':value=await call('wechat_status',{})
+                        elif op=='abandon':
+                            # No cursor advancement: an expired/failed page is not
+                            # acknowledged as reviewed. Existing SDK TTL still applies.
+                            pending=None;value={'pending_page_cleared':True,'cursor_advanced':False}
                         elif op=='catalog':
                             if pending:raise ValueError('review_page_pending')
                             bindings=[];offset=0
@@ -68,8 +79,9 @@ async def run(state,show):
                             pending=None;value.update(index=index,conversations_finished=len(completed))
                         else:raise ValueError('review_command_unknown')
                         print(json.dumps(value,ensure_ascii=False),flush=True)
-                    except (ValueError,KeyError,TypeError):
-                        print(json.dumps({'error':'review_command_failed','pending_page':pending is not None}),flush=True)
+                    except (ValueError,KeyError,TypeError) as error:
+                        reason=str(error) if isinstance(error,ValueError) else 'invalid_mcp_response'
+                        print(json.dumps({'error':'review_command_failed','reason':reason,'pending_page':pending is not None}),flush=True)
 
 
 def main():

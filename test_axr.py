@@ -867,6 +867,17 @@ class DatabasePages(unittest.TestCase):
         with self.assertRaisesRegex(AXRError,'account_identity'):self.adapter.search(self.chat)
         self.adapter.config['account_id']='fixture-self';db=sqlite3.connect(self.paths[0]);db.execute(f'UPDATE "{self.table}" SET real_sender_id=999');db.commit();db.close()
         with self.assertRaisesRegex(AXRError,'sender_identity'):self.adapter.search(self.chat)
+    def test_nontext_unknown_sender_advances_without_inventing_identity(self):
+        db=sqlite3.connect(self.paths[0])
+        db.execute(f'INSERT INTO "{self.table}" VALUES(3,30,10000,99,0,?)',('synthetic private system body',))
+        db.commit();db.close()
+        page=self.adapter.search(self.chat,limit=1)
+        self.assertEqual(page['scanned'],1);self.assertTrue(page['has_more'])
+        self.assertEqual(page['messages'],[])
+        following=self.adapter.search(self.chat,after=page['cursor'],limit=6)
+        self.assertEqual(len(following['messages']),2)
+        self.assertTrue(all(m['sender']==self.chat for m in following['messages']))
+        self.assertNotIn('private system body',json.dumps(page))
     def test_database_replacement_requires_new_baseline(self):
         self.adapter.search(self.chat)
         path=self.paths[0];replacement=self.root/'new.db';replacement.write_bytes(path.read_bytes());os.replace(replacement,path)

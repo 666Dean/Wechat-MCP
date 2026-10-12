@@ -247,7 +247,11 @@ class DatabaseAdapter:
                         text=decode_text(row["body"],row["compression"])
                     # Schema-specific direction must be explicitly known, never inferred from content.
                     direction=row["direction"]
-                    if sender_ids:
+                    if raw_type!=1:
+                        # Unsupported/system records advance the scan cursor only.
+                        # No body, sender or direction is inferred or disclosed.
+                        actual_sender=None;outgoing=None
+                    elif sender_ids:
                         resolved=db.query("SELECT user_name FROM Name2Id WHERE rowid=? LIMIT 2",(int(direction),))
                         if len(resolved)!=1 or not resolved[0]["user_name"]:
                             raise AXRError("sender_identity_unknown")
