@@ -57,6 +57,43 @@ def identity(s):
     return (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
 
 
+def windows_identity(path=None, handle=None):
+    """Compare Windows pathname and open handle through the same native API.
+
+    Python's stat/fstat timestamp representations can differ on Windows. Do not
+    weaken identity checks or compare fields obtained through different APIs.
+    """
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+    class Info(ctypes.Structure):
+        _fields_=[('attributes',wintypes.DWORD),('created',wintypes.FILETIME),
+            ('accessed',wintypes.FILETIME),('written',wintypes.FILETIME),
+            ('volume',wintypes.DWORD),('size_high',wintypes.DWORD),
+            ('size_low',wintypes.DWORD),('links',wintypes.DWORD),
+            ('index_high',wintypes.DWORD),('index_low',wintypes.DWORD)]
+    api=ctypes.WinDLL('kernel32',use_last_error=True)
+    api.CreateFileW.argtypes=[wintypes.LPCWSTR,wintypes.DWORD,wintypes.DWORD,
+        wintypes.LPVOID,wintypes.DWORD,wintypes.DWORD,wintypes.HANDLE]
+    api.CreateFileW.restype=wintypes.HANDLE
+    api.GetFileInformationByHandle.argtypes=[wintypes.HANDLE,ctypes.POINTER(Info)]
+    api.GetFileInformationByHandle.restype=wintypes.BOOL
+    api.CloseHandle.argtypes=[wintypes.HANDLE];api.CloseHandle.restype=wintypes.BOOL
+    owned=handle is None
+    raw=api.CreateFileW(str(path),0x80,7,None,3,0x00200000,None) if owned else msvcrt.get_osfhandle(handle.fileno())
+    if raw==ctypes.c_void_p(-1).value:raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        info=Info()
+        if not api.GetFileInformationByHandle(raw,ctypes.byref(info)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if info.attributes & (0x400|0x10):raise AXRError('attachment_link_or_directory_rejected')
+        return (info.volume,info.index_high,info.index_low,info.size_high,info.size_low,
+            info.written.dwHighDateTime,info.written.dwLowDateTime,
+            info.created.dwHighDateTime,info.created.dwLowDateTime)
+    finally:
+        if owned:api.CloseHandle(raw)
+
+
 class AttachmentResolver:
     def __init__(self, config):
         self.config = validate_attachment_controls(config)
@@ -114,13 +151,16 @@ class AttachmentResolver:
                 raise AXRError('attachment_link_rejected')
         if path.resolve(strict=True) != path:
             raise AXRError('attachment_path_changed')
+        expected_identity=windows_identity(path=path) if os.name=='nt' else identity(expected)
+        current_handle=lambda h:windows_identity(handle=h) if os.name=='nt' else identity(os.fstat(h.fileno()))
+        current_path=lambda:windows_identity(path=path) if os.name=='nt' else identity(path.stat())
         with path.open('rb') as handle:
-            if identity(os.fstat(handle.fileno())) != identity(expected):
+            if current_handle(handle) != expected_identity:
                 raise AXRError('attachment_identity_changed')
             data = handle.read(MAX_FILE+1)
             if (len(data) != expected.st_size or len(data) > MAX_FILE or
-                    identity(os.fstat(handle.fileno())) != identity(expected) or
-                    path.is_symlink() or identity(path.stat()) != identity(expected) or
+                    current_handle(handle) != expected_identity or
+                    path.is_symlink() or current_path() != expected_identity or
                     path.resolve(strict=True) != path):
                 raise AXRError('attachment_identity_changed')
         return data

@@ -10,7 +10,7 @@ from pathlib import Path
 
 def build(output,python,root,state,helper=None,platform=sys.platform):
     output=Path(output);output.mkdir(parents=True,exist_ok=True)
-    args=[str(Path(python).resolve()),'-m','desktop.app','--state',str(Path(state).resolve())]
+    args=[str(Path(python).absolute()),'-m','desktop.app','--state',str(Path(state).resolve())]
     if helper:args+=['--helper',str(Path(helper).resolve())]
     if platform=='darwin':
         app=output/'WeChat MCP Desktop.app';contents=app/'Contents';(contents/'MacOS').mkdir(parents=True,exist_ok=True)
@@ -26,7 +26,7 @@ def build(output,python,root,state,helper=None,platform=sys.platform):
     if platform=='win32':
         path=output/'WeChat MCP Desktop.cmd'
         pythonw=Path(python).with_name('pythonw.exe')
-        if pythonw.is_file():args[0]=str(pythonw.resolve())
+        if pythonw.is_file():args[0]=str(pythonw.absolute())
         if any('"' in x or '%' in x or '\n' in x for x in [*args,str(root)]):raise ValueError('unsupported launcher path')
         path.write_text('@echo off\ncd /d "'+str(Path(root).resolve())+'"\nstart "WeChat MCP Desktop" '+
             ' '.join('"'+x+'"' for x in args)+'\n',encoding='utf8');return path

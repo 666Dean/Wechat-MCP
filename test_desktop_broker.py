@@ -44,6 +44,15 @@ class DesktopBroker(unittest.TestCase):
     def test_optional_client_remains_available_when_broker_down(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(RemoteService(tmp).status()['initialization']['state'],'broker_unavailable')
+    def test_interpreter_entry_is_preserved_without_dereferencing_venv(self):
+        import sys,tomllib
+        entry=Path(sys.executable).absolute()
+        section=snippet(entry,'/server.py','/state')
+        self.assertEqual(tomllib.loads(section)['mcp_servers']['wechat_axr']['command'],str(entry))
+        from scripts.build_desktop import build
+        with tempfile.TemporaryDirectory() as tmp:
+            app=build(tmp,entry,Path.cwd(),'/state',platform='darwin')
+            self.assertIn(str(entry), (app/'Contents/MacOS/WeChatMCP').read_text())
     def test_config_preserves_others_and_rejects_stale_overwrite_restore(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);config=root/'config.toml'
