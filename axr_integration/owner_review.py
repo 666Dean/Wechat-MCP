@@ -45,7 +45,7 @@ def session(store,ttl=3600,pages=8192,*,draft_contacts=None,draft_self=False,pha
         'coverage':catalog['coverage'],'ttl':ttl,'max_pages':pages,'send_authority':False,
         'fresh_model_conversation_required':True}),flush=True)
     try:
-        while time.monotonic()<deadline and time.time()<policy['account_review']['deadline']:
+        while time.monotonic()<deadline and time.time()<wall_deadline:
             if store.guard.version!=version or digest(store.config())!=seal:raise AXRError('owner_session_policy_changed')
             if phase=='review' and phase_file is not None and Path(phase_file).exists():
                 path=Path(phase_file)

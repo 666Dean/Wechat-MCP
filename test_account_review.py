@@ -21,7 +21,7 @@ class CatalogTests(unittest.TestCase):
             db.execute('CREATE TABLE contact(username,nick_name,remark,delete_flag)')
             db.execute('INSERT INTO contact VALUES(?,?,?,0)',('peer','fixture peer',''));db.commit();db.close()
             db=sqlite3.connect(shard);db.execute('CREATE TABLE Name2Id(user_name)')
-            for name in ('account','peer','fixture@chatroom','gh_fixture'):
+            for name in ('account','peer','fixture@chatroom','gh_fixture','',None,'invalid\nname'):
                 db.execute('INSERT INTO Name2Id VALUES(?)',(name,))
             for name in ('peer','fixture@chatroom','gh_fixture'):
                 table='Msg_'+hashlib.md5(name.encode()).hexdigest()
@@ -44,6 +44,7 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual(result['coverage']['text_records'],3)
             self.assertEqual(result['coverage']['nontext_records'],3)
             self.assertEqual(result['coverage']['unmapped_tables'],1)
+            self.assertEqual(result['coverage']['invalid_name_rows'],3)
             self.assertFalse(result['coverage']['catalog_complete'])
             self.assertNotIn('private fixture must',str(result));identity.assert_called_once()
 
@@ -75,6 +76,34 @@ class ReviewSecurityTests(unittest.TestCase):
         self.assertEqual(result['state'],'Reviewed');self.assertEqual(s.poll_tasks()['tasks'],[])
         payload=s.journal.db.execute('select payload from review_notes').fetchone()[0]
         self.assertNotIn(b'fixture summary',bytes(payload));self.assertFalse(result['agent_sent'])
+        note=s.journal.vault.open(payload,task['task_id']+':review')
+        self.assertEqual(note['read_scope']['until'],s.config['account_review']['snapshot_until'])
+        self.assertEqual(note['read_scope']['since'],0)
+
+    def test_read_failure_telemetry_never_stores_exception_text(self):
+        for error,expected in [('sender_identity_unknown','sender_identity_unknown'),
+                               ('fixture private body and SQL','unclassified')]:
+            with patch.object(self.s.adapter,'search',side_effect=AXRError(error)):
+                result=self.s.request_task('friend')
+            self.assertEqual(result['read_job']['state'],'FailedSafe')
+            metrics=self.s.journal.metrics()
+            self.assertEqual(metrics['read_failure_'+expected],1)
+            self.assertNotIn('fixture private body',str(metrics))
+
+    def test_exact_disclosure_contains_masked_credentials_with_source_binding(self):
+        from axr.owner import approve
+        page={'messages':[{'reference':'credential-fixture','text':'任务：整理通知\n密码：fixture-secret',
+                          'sender':'friend','outgoing':False}],
+              'coverage':'fixture','has_more':False,'cursor':None,'scanned':1}
+        with patch.object(self.s.adapter,'search',return_value=page):task=self.s.request_task('friend')
+        approve(self.s.store,task['disclosure_job'],self.s.principal)
+        disclosed=self.s.task_context(task['task_id'])
+        self.assertTrue(disclosed['body_disclosed'])
+        self.assertNotIn('fixture-secret',str(disclosed))
+        context=disclosed['disclosure']['result']
+        self.assertTrue(context['messages'][0]['credentials_redacted'])
+        self.assertEqual(context['messages'][0]['reference'],'credential-fixture')
+        self.assertFalse(context['budget_truncated'])
 
     def test_owner_opt_in_all_incoming_still_filters_outgoing(self):
         s=self.s;s.config['listener']['all_incoming']=True;s.initial_policy_digest=digest(s.config)
@@ -110,7 +139,7 @@ class ReviewSecurityTests(unittest.TestCase):
         def sleep(seconds):
             events.append(copy.deepcopy(state[0]))
             if len(events)==1:marker.write_text('reply')
-            else:raise KeyboardInterrupt
+            elif len(events)==3:raise KeyboardInterrupt
         target={'conversation_id':'selected','display_name':'selected','data_class':'personal'}
         with patch.object(owner_review,'discover',return_value=catalog),patch.object(owner_review.time,'sleep',side_effect=sleep), \
              patch.object(owner_codex,'qualify_existing_contacts',return_value=[target]) as qualify:
