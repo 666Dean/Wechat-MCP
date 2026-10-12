@@ -10,9 +10,14 @@
 | 草稿完成 | 该入站任务披露 Completed、draft_job 非空；正式 worker 输出 1 次 draft_ready_for_human；本地审计有效 |
 | 所有者会话 | 一次 OS 认证、两个既有绑定、限 60 分钟/400 次额度/12 批，每批最多 6 条/24KB；实际批准 3 批，未签发微信发送权限 |
 | 收尾 | worker、broker、所有者面板已停止；会话输出 authority_revoked=true，当前版本任务 0；listen/wake_agent/auto_execute 均 false，审计有效 |
-| 待验收 | 人工核对/复制、微信手动提交及唯一数据库记录观察尚未验证；不将 DraftReadyForHuman 称为发送或送达 |
+| 独立新身份 | 更换测试联系人后新建 principal，停止旧客户端并启动全新临时 Codex 会话；旧 taint 保留。原身份被来源检查阻止的草稿不计成功 |
+| 新身份读取及草稿 | 最近十分钟实际文本 4/0 条；正式 worker 完成 2 份 DraftReadyForHuman、12 次 MCP 调用、0 其他工具，无正文日志或 Agent 发送，密封草稿复核通过 |
+| 人工核对提交 | 主人确认在本地面板核对/复制新联系人的草稿，原版微信手动发送 |
+| 真实 MCP 读回 | wechat_observe_manual_reply 的独立只读 AET 为 Completed；完整文本、本人 sender、稳定目标、非零 server_id 唯一匹配，database_record_observed=true、agent_sent=false、delivery_confirmed=false |
+| 最终收尾 | 新身份会话批准 2 批后停止；authority_revoked=true、三个控制开关 false、当前任务 0、审计有效；worker/broker/面板退出 |
+| CI | 3edbb95 双平台原生构建/CTest/回归/私有文件排除通过：Mac 230/228/2，Win 230/222/8 |
 
-这些是小范围真实读取/新回信草稿证据，不是长期运行、Windows 微信硬件、任意任务执行或 Mac 原生主动发送资格。人工流程验收完成后才合并同一 PR。
+这些是小范围真实读取/新回信草稿证据，不是长期运行、Windows 微信硬件、任意任务执行或 Mac 原生主动发送资格。本轮按主人调整后的人工流程验收通过，可合并同一 PR；原生主动发送不作为这次人工交付的门槛。
 
 # 2026-10-11 Mac 实机读取记录
 

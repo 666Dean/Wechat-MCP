@@ -6,11 +6,11 @@
 
 本轮验收转为 [Codex 读取 → 回信任务 → 人工提交](CODEX_MANUAL_REPLY.md)。新增加密、限时、容量 50 的持久化收件箱，没有外部 runner 也不会丢弃准入消息；元数据 long-poll 区分显式读取和新入站回信。Codex 读取获准正文后生成带来源的草稿，本地面板核对目标并显式复制，由人提交。`--manual-replies` 在执行前阻断发送，主动发送原型单独保留。一次所有者工作会话限账号/私聊、目的/分类/目标、时间/读取额度和最多 12 批，每批精确批准保持；MCP 没有会话或 issuer 管理工具。
 
-当前实机证据：真实 stdio MCP 读取两个既有绑定私聊，近 14 天文本数量为 2 和 0，未将空本人私聊换成文件传输助手。真正 Codex Agent 经 MCP 读取两份获准上下文、生成两份 Completed 草稿并完成两个 DraftReadyForHuman；本地密封草稿复核与审计通过，无 shell 执行或 Agent 发送。正式有限时 worker 又捕获 1 条真实入站消息，events_seen/admitted 与 reply_tasks_created 各为 1；其精确披露 Completed，生成 1 份 DraftReadyForHuman，审计有效。随后停止 worker/所有者会话并撤权、关闭三个控制开关；人工微信提交/记录观察尚未验收，不能用草稿完成替代。
+当前实机证据：真实 stdio MCP 读取两个既有绑定私聊，近 14 天文本数量为 2 和 0，未将空本人私聊换成文件传输助手。真正 Codex Agent 经 MCP 读取两份获准上下文、生成两份 Completed 草稿并完成两个 DraftReadyForHuman；本地密封草稿复核与审计通过，无 shell 执行或 Agent 发送。正式有限时 worker 又捕获 1 条真实入站消息，events_seen/admitted 与 reply_tasks_created 各为 1；其精确披露 Completed，生成 1 份 DraftReadyForHuman，审计有效。随后停止 worker/所有者会话并撤权、关闭三个控制开关；人工微信提交与记录观察另见下方独立身份闭环，不能用草稿完成替代。
 
 新增 19 项安全/流程/worker 回归，本机全量 230 项发现/228 执行通过/2 平台跳过。833cf88 双平台 CI 已通过：Mac 230/228/2，Win 230/222/8，原生构建/CTest/私有文件排除均通过；Windows 无微信实机。Codex 本机 MCP 配置已写入并通过真实调用验证；配置本身不代表当前桌面聊天已刷新。原生主动发送资格仍未通过，和本轮人工流程分别记录。
 
-更换授权测试联系人时，真实 MCP 读取 6/0 条文本；不含关键词的两条入站文本被规则过滤，含关键词的新入站消息已准入并获准披露。旧 principal 的持久披露 taint 包含已撤权目标，因此新草稿被 Guard 阻止，没有伪装为 Completed。更换联系人现在建立独立模型 principal，要求旧客户端停止后启动全新临时模型会话；旧来源记录保留。相关回归验证完整 Service 流程，独立身份的实机草稿/人工提交仍待验收。
+更换授权测试联系人时，真实 MCP 读取 6/0 条文本；不含关键词的两条入站文本被规则过滤，含关键词的新入站消息已准入并获准披露。旧 principal 的持久披露 taint 包含已撤权目标，因此新草稿被 Guard 阻止，没有伪装为 Completed。更换联系人现在建立独立模型 principal，要求旧客户端停止后启动全新临时模型会话；旧来源记录保留。相关回归验证完整 Service 流程。独立身份真实读取最近十分钟文本 4/0 条，正式 Codex worker 完成 2 份草稿；密封复核通过。主人核对复制并手动提交后，真实 MCP 的独立只读观察 Completed，唯一完整文本/本人 sender/目标/非零 server_id 数据库记录观察为 true，agent_sent/delivery_confirmed 为 false。收尾撤权、三个开关 false、当前任务 0、审计有效。3edbb95 的双平台 CI 230 项通过（Mac/Win 跳过 2/8）；新人工流程的合并验收通过。下方保留旧轮原生发送未资格的历史判定，不作为已改为人工提交的合并门槛。
 
 270134 继续追踪执行闭包 → session dispatch → 发送服务 → 逐条队列包装 → outgoing Message：新增 16 个完整函数、9 条直接调用边、8 条实际 dyld page-chain 虚表引用。确认目标集合 string 写至逐目标消息 +0x90，再流入 outgoing Message +0x30；账号 string 来自 AppContext，写至 +0x18；正文经 helper 写至 +0x48。outgoing Message 大小 0x278（shared allocation 0x290），独立于前轮 0x350 转换对象，仍不是最终 wire request。排队包装、消息 shared_ptr 与闭包释放成组核对；不证明运行账号/收件人、线程、取消或提交成功，保持不可发送。
 
