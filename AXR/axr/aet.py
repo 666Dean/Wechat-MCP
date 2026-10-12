@@ -92,7 +92,7 @@ class Action:
 
     @property
     def side_effect(self):
-        return self.operation not in {"messages.read", "messages.search", "reply.prepare", "status.read"}
+        return self.operation not in {"messages.read", "messages.search", "files.read", "reply.prepare", "status.read"}
 
     @property
     def risk(self):

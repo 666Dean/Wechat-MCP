@@ -6,6 +6,9 @@ import math
 
 def validate_controls(config):
     if not isinstance(config,dict):raise AXRError('invalid_wechat_policy')
+    if 'attachments' in config:
+        from adapters.attachments import validate_attachment_controls
+        validate_attachment_controls(config['attachments'])
     if 'account_review' in config:
         review=config['account_review']
         if not isinstance(review,dict) or type(review.get('enabled')) is not bool:

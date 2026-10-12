@@ -105,7 +105,7 @@ unsigned Risk(const Json& a) {
     for(const auto& p:a.at("sources")) if(Contains(Json{"sensitive","credentials","financial"},p.at("data_class")))return 4;
     if(op.starts_with("funds.")||op.starts_with("credentials."))return 4;
     if(op.starts_with("messages.send")||op.starts_with("files.delete")||op.starts_with("disclosure."))return 3;
-    return (op=="messages.read"||op=="messages.search"||op=="status.read")?1:2;
+    return (op=="messages.read"||op=="messages.search"||op=="files.read"||op=="status.read")?1:2;
 }
 bool Terminal(std::string_view s) {return s=="Completed"||s=="Unknown"||s=="Denied"||s=="Expired"||s=="Cancelled"||s=="FailedSafe";}
 bool ValidTransition(std::string_view from,std::string_view to) {

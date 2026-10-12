@@ -1,0 +1,3 @@
+module Desktop
+singleton Theme 1.0 Theme.qml
+Icon 1.0 Icon.qml

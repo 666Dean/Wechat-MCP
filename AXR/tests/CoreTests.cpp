@@ -19,6 +19,10 @@ int main() {
         {"operation","messages.read"},{"purpose","test"},{"payload",Json::object()},
         {"sources",Json::array()},{"destination","local"},{"workflow","manual"},{"execution_id",RandomId()}};
     {
+        auto fileRead=a;fileRead["operation"]="files.read";
+        assert(Risk(fileRead)==1);
+        fileRead["sources"]=Json::array({Json{{"resource",a["resource"]},{"reference","fixture-file"},{"data_class","sensitive"},{"trust","untrusted-external"}}});
+        assert(Risk(fileRead)==4);
         Guard guard(dir/"guard.db",key);
         Json b{{"principal","agent:test"},{"resource",a["resource"]},{"operations",Json::array({"messages.read"})},
             {"purpose","test"},{"expires_at",Now()+60},{"max_uses",1},{"destinations",Json::array()},
