@@ -43,7 +43,7 @@ class DesktopUI(unittest.TestCase):
                 w.setWidth(width);w.setHeight(height)
                 for dark in (False,True):
                     w.setProperty('darkMode',dark)
-                    for page in range(7):
+                    for page in range(10):
                         w.setProperty('page',page);QTest.qWait(35)
                         image=w.grabWindow();self.assertFalse(image.isNull())
                         footer=w.findChild(QObject,'statusBar')
@@ -52,6 +52,9 @@ class DesktopUI(unittest.TestCase):
                         self.assertEqual(round(footer.property('height')),32)
                         self.assertLessEqual(viewport.property('y')+viewport.property('height'),footer.property('y')+1)
                         self.assertFalse(w.property('connected'));self.assertFalse(w.property('sendAvailable'))
+                        if page==7:
+                            manual=self.visual(w,'manualDraftText');self.assertIsNotNone(manual)
+                            self.assertGreater(manual.width(),200)
         finally:self.dispose(c,e,w)
     def test_empty_loading_error_and_keyboard_page_navigation(self):
         from PySide6.QtCore import QObject
@@ -63,5 +66,41 @@ class DesktopUI(unittest.TestCase):
                 self.assertTrue(w.property('previewMode'));self.assertFalse(w.property('connected'))
                 nav=self.visual(w,'nav6');self.assertIsNotNone(nav);nav.forceActiveFocus();QTest.keyClick(w,Qt.Key_Return)
                 QTest.qWait(20);self.assertEqual(w.property('page'),6)
+                nav=self.visual(w,'nav7');self.assertIsNotNone(nav);nav.forceActiveFocus();QTest.keyClick(w,Qt.Key_Return)
+                QTest.qWait(20);self.assertEqual(w.property('page'),7)
                 self.assertFalse(w.grabWindow().isNull())
             finally:self.dispose(c,e,w)
+    def test_manual_copy_revalidates_and_rejects_changed_payload(self):
+        import time
+        from unittest.mock import patch
+        c,e,w=self.create();c.timer.stop();c.fixture=False
+        draft={'job_id':'fixture-draft','conversation_id':'fixture-chat','display_name':'Synthetic recipient',
+            'text':'Synthetic reviewed reply','expires':time.time()+60,'submission':'human'}
+        def ready():
+            deadline=time.monotonic()+2
+            while c.inflight and time.monotonic()<deadline:
+                time.sleep(.01);self.app.processEvents()
+            self.assertFalse(c.inflight)
+        try:
+            with patch('desktop.app.call',return_value=draft) as rpc:
+                c.manualDraft('fixture-draft');ready()
+                c.copyDraft();ready()
+                self.assertEqual(self.app.clipboard().text(),draft['text'])
+                self.assertEqual(rpc.call_count,2)
+                self.assertEqual(rpc.call_args.args[1],'control.draft');self.assertTrue(rpc.call_args.kwargs['owner'])
+            with patch('desktop.app.call',return_value={**draft,'text':'Changed unreviewed text'}):
+                c.copyDraft();ready()
+                self.assertEqual(self.app.clipboard().text(),draft['text'])
+                self.assertFalse(c.manual)
+        finally:self.app.clipboard().clear();self.dispose(c,e,w)
+    def test_manual_body_clears_on_expiry_revocation_and_disconnect(self):
+        import time
+        c,e,w=self.create()
+        try:
+            c._manual={'job_id':'synthetic','text':'Synthetic private draft','expires':time.time()-1}
+            c.accept({'name':'refresh','value':{'drafts':[]},'error':None});self.assertFalse(c.manual)
+            c._manual={'job_id':'synthetic','text':'Synthetic private draft','expires':time.time()+60}
+            c.accept({'name':'stop','value':{'revoked':True},'error':None});self.assertFalse(c.manual)
+            c._manual={'job_id':'synthetic','text':'Synthetic private draft','expires':time.time()+60}
+            c.accept({'name':'refresh','value':None,'error':'local_broker_unavailable'});self.assertFalse(c.manual)
+        finally:self.dispose(c,e,w)

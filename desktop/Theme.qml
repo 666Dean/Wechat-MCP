@@ -4,7 +4,9 @@ QtObject {
     property bool dark: false
     readonly property color canvas: dark ? "#141917" : "#F6F7F5"
     readonly property color surface: dark ? "#1D2420" : "#FFFFFF"
-    readonly property color sidebar: dark ? "#181E1A" : "#FBFCFA"
+    readonly property color sidebar: canvas
+    readonly property color glass: dark ? "#C8242D28" : "#B8FFFFFF"
+    readonly property color glassBorder: dark ? "#38546A5B" : "#D8FFFFFF"
     readonly property color border: dark ? "#313B35" : "#E4E8E4"
     readonly property color ink: dark ? "#E7EEE9" : "#1D302C"
     readonly property color muted: dark ? "#9EAEA4" : "#74817B"

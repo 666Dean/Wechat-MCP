@@ -9,8 +9,11 @@ summaries, meeting and task preparation, and reply drafts. Payments, transfers,
 Moments, mini-programs, account changes and group administration are outside scope.
 Recommendations do not themselves authorize external actions.
 
-The application provides a workbench, Agent connection setup, messages/drafts, permission center,
-execution receipts, attachment controls and appearance settings. It reads actual broker/journal state;
+Primary navigation provides the workbench, briefings, tasks, pending approvals and
+manual replies. Connection setup, permissions, attachments and execution records
+are managed through Settings. Product pages contain no protocol test entry or raw
+configuration/diagnostic viewer. Developer checks remain separate from the app UI.
+The app reads actual broker/journal state;
 empty or expired results are not replaced with demonstration data. `--fixture`
 explicitly labels a synthetic visual preview and never connects to WeChat.
 
@@ -22,7 +25,7 @@ python -m desktop.app --state /private/owner/state --helper /path/to/axr-helper
 ```
 
 Start the local service from the workbench. Its default is human submission.
-Choose a bound conversation in Permissions to authenticate a 15-minute, 100-use
+Choose a bound conversation in Settings → Permissions to authenticate a 15-minute, 100-use
 local read/draft grant. Model disclosure and sends are separately exact-approved.
 An explicit recent-day task can be created there. Start a ten-minute **fresh Codex
 worker** in Agent connections; review disclosure jobs before approving them.
