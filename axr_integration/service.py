@@ -29,7 +29,8 @@ class Service:
         self.destination=self.config["agent_destination"]
         if self.destination=="local":raise AXRError("model_disclosure_destination_must_be_explicit")
         self.bindings={b["conversation_id"]:b for b in self.config["conversations"]}
-        if not self.bindings or len(self.bindings)>32:raise AXRError("explicit_conversation_bindings_required")
+        maximum=4096 if self.config.get('account_review',{}).get('enabled') else 32
+        if not self.bindings or len(self.bindings)>maximum:raise AXRError("explicit_conversation_bindings_required")
         # Global per-user lease root independent of journal/config locations.
         lease_root=Path(leases) if leases else Path.home()/".stellaria-axr"/"leases"
         self.lifetime=Lease(lease_root,["journal",str(self.store.directory)])
@@ -72,6 +73,9 @@ class Service:
             self.active_policy_version=self.guard.version
             from .inbox import Inbox
             self.inbox=Inbox(self.journal,self.guard,self.principal)
+            self.journal.db.execute('CREATE TABLE IF NOT EXISTS review_read_budget(principal TEXT PRIMARY KEY,pages INTEGER)')
+            self.journal.db.execute('CREATE TABLE IF NOT EXISTS review_notes(id TEXT PRIMARY KEY,principal TEXT,resource TEXT,version INTEGER,expires REAL,payload BLOB)')
+            self.journal.db.execute('DELETE FROM review_notes WHERE expires<=? OR version!=?',(self.journal.clock(),self.guard.version))
             self.listener_since=int(self.journal.clock())
         except BaseException:
             self.lifetime.__exit__();self.store.close();raise
@@ -106,9 +110,16 @@ class Service:
         # Always return the proposal. Approval belongs to the local owner CLI.
         return self.runtime.propose(action)
 
-    def conversations(self):
-        return {"conversations":[{"conversation_id":k,"display_name":v["display_name"]} for k,v in self.bindings.items()],
-                "coverage":"explicit_owner_bindings"}
+    def conversations(self,offset=0,limit=100):
+        if type(offset) is not int or offset<0 or type(limit) is not int or not 1<=limit<=100:raise AXRError('invalid_catalog_page')
+        self.ensure_policy();items=list(self.bindings.items())[offset:offset+limit]
+        if self.config.get('account_review',{}).get('enabled'):
+            for cid,_ in items:self.guard.check(self._read_action(cid,{'catalog_metadata':True}))
+        return {"conversations":[{"conversation_id":k,"display_name":v["display_name"],
+                    **{f:v[f] for f in ('kind','records','text_records') if f in v}} for k,v in items],
+                'total':len(self.bindings),'next_offset':offset+limit if offset+limit<len(self.bindings) else None,
+                "coverage":"explicit_owner_bindings",
+                'account_review':self.config.get('account_review',{}).get('coverage')}
 
     def _action(self,conversation_id,operation,payload,*,sources=(),destination="local",workflow="manual"):
         self.ensure_policy()
@@ -124,8 +135,21 @@ class Service:
         return replace(action,sources=(Provenance(action.resource,"query:"+digest(payload),data_class),))
 
     def read(self,conversation_id,query="",sender=None,since=0,until=2**63-1,cursor=None,limit=20):
+        with self.runtime.lock:
+            return self._read_context_locked(conversation_id,query,sender,since,until,cursor,limit)
+
+    def _read_context_locked(self,conversation_id,query="",sender=None,since=0,until=2**63-1,cursor=None,limit=20):
         if not isinstance(query,str) or len(query)>256 or type(limit) is not int or not 1<=limit<=100:
             raise AXRError("invalid_context_budget")
+        self.ensure_policy();review=self.config.get('account_review',{})
+        if review.get('enabled'):
+            if self.journal.clock()>=review['deadline']:raise AXRError('account_review_expired')
+            if until==2**63-1:until=review['snapshot_until']
+            if until>review['snapshot_until']:raise AXRError('account_review_snapshot_range')
+            limit=min(limit,6)
+            self.journal.db.execute('INSERT OR IGNORE INTO review_read_budget VALUES(?,0)',(self.principal,))
+            if self.journal.db.execute('UPDATE review_read_budget SET pages=pages+1 WHERE principal=? AND pages<?',
+                    (self.principal,review['max_pages'])).rowcount!=1:raise AXRError('account_review_page_budget_exhausted')
         after=None
         resource=self.resource(conversation_id)
         if cursor:
@@ -178,9 +202,12 @@ class Service:
         if page.get("cursor"):
             next_cursor=self.journal.remember(self.principal,action.resource,
                 {"filters":[action.payload[k] for k in ("query","sender","since","until")],"after":page["cursor"]},
-                self.guard.version,ttl=300)
+                self.guard.version,ttl=min(3600,max(1,self.config['account_review']['deadline']-self.journal.clock()))
+                    if self.config.get('account_review',{}).get('enabled') else 300)
         return {"epoch":epoch,"verified":True,"evidence_digest":digest([cid,len(messages)]),
             "output":{"context_id":cid,"count":len(messages),"cursor":next_cursor,"has_more":bool(page.get("has_more")),
+                      'scanned':page.get('scanned'),'budget_truncated':context['budget_truncated'],
+                      'effective_limit':action.payload['limit'],
                       "coverage":page["coverage"],"complete_history":False,"body_disclosed":False}}
 
     def _sources(self,resource,context_ids=()):
@@ -344,16 +371,36 @@ class Service:
                     'origin':task.get('origin','incoming_reply')})
             return {'tasks':tasks,'submission':'human','automatic_send':False}
 
-    def request_task(self,conversation_id,since=0,limit=6):
+    def request_task(self,conversation_id,since=0,limit=6,cursor=None,until=2**63-1):
         """Explicit bounded context task, distinct from a newly received message."""
         with self.runtime.lock:
             if type(limit) is not int or not 1<=limit<=6:raise AXRError('reply_task_page_limit')
-            read=self.read(conversation_id,since=since,limit=limit)
+            read=self.read(conversation_id,since=since,limit=limit,cursor=cursor,until=until)
             if read['state']!='Completed':return {'read_job':read,'body_disclosed':False}
             handle=read['result']['context_id'];proposal=self.disclose(conversation_id,handle)
             task_id=self.inbox.create(self.resource(conversation_id),handle,proposal['id'],origin='explicit_read')
             return {'task_id':task_id,'disclosure_job':proposal['id'],'read_job':read,
                     'body_disclosed':False,'automatic_send':False,'origin':'explicit_read'}
+
+    def acknowledge_review(self,task_id,summary):
+        with self.runtime.lock:
+            self.ensure_policy();review=self.config.get('account_review',{})
+            if not review.get('enabled') or self.journal.clock()>=review['deadline']:raise AXRError('account_review_not_active')
+            if not isinstance(summary,str) or len(summary.encode('utf8'))>16000:raise AXRError('review_summary_budget')
+            task=self.inbox.get(task_id);row=self.journal.get(task['disclosure_job'],self.principal)
+            if row['state']!='Completed':raise AXRError('reply_task_context_not_disclosed')
+            action=self.journal.action(row);self.guard.revalidate(action,row['grant_id'],row['policy_version'])
+            context=self.journal.context(task['context_id'],self.principal,action.resource,self.guard.version)
+            data={'id':task_id,'principal':self.principal,'resource':action.resource.key,'version':self.guard.version,
+                  'expires':review['deadline'],'summary':summary,'context_digest':digest(context),
+                  'text_records':len(context['messages']),'budget_truncated':context.get('budget_truncated',False)}
+            self.journal.db.execute('INSERT INTO review_notes VALUES(?,?,?,?,?,?)',
+                (task_id,self.principal,action.resource.key,self.guard.version,review['deadline'],self.journal.vault.seal(data,task_id+':review')))
+            self.journal.db.execute('DELETE FROM reply_tasks WHERE id=? AND principal=?',(task_id,self.principal))
+            self.journal.db.execute('DELETE FROM contexts WHERE id=? AND principal=?',(task['context_id'],self.principal))
+            self.journal.meter('review_pages_acknowledged')
+            return {'state':'Reviewed','text_records':data['text_records'],'summary_stored_encrypted':True,
+                    'budget_truncated':data['budget_truncated'],'agent_sent':False}
 
     def wait_tasks(self,timeout=40,after=None):
         if type(timeout) is not int or not 0<=timeout<=45:raise AXRError('invalid_task_wait_timeout')
@@ -419,6 +466,7 @@ class Service:
             # Purge never reads WeChat or deletes an active commit's payload.
             self.journal.purge()
             self.inbox.purge()
+            self.journal.db.execute('DELETE FROM review_notes WHERE expires<=? OR version!=?',(self.journal.clock(),self.guard.version))
             policy=self.config.get("listener",{})
             if not policy.get("listen",False):self.admission.clear();return {"state":"listener_off"}
             if policy.get("auto_execute",False):
@@ -504,7 +552,7 @@ def register(mcp,service):
     @mcp.tool(annotations={"readOnlyHint":True})
     def wechat_status()->dict:return service.status()
     @mcp.tool(annotations={"readOnlyHint":True})
-    def wechat_find_conversations()->dict:return service.conversations()
+    def wechat_find_conversations(offset:int=0,limit:int=100)->dict:return service.conversations(offset,limit)
     @mcp.tool()
     def wechat_ui_navigate(command:str)->dict:
         """Propose an owner-allowlisted menu action. No contact selection, reading or sending."""
@@ -526,9 +574,9 @@ def register(mcp,service):
         """List scoped reply tasks without message bodies; approval stays with the local owner."""
         return service.poll_tasks()
     @mcp.tool()
-    def wechat_request_task(conversation_id:str,since:int=0,limit:int=6)->dict:
+    def wechat_request_task(conversation_id:str,since:int=0,limit:int=6,cursor:str|None=None,until:int=2**63-1)->dict:
         """Request a bounded context task; old content is not a newly received reply."""
-        return service.request_task(conversation_id,since,limit)
+        return service.request_task(conversation_id,since,limit,cursor,until)
     @mcp.tool(annotations={"readOnlyHint":True})
     def wechat_wait_for_tasks(timeout:int=40,after:dict[str,str]|None=None)->dict:
         """Wait up to 45 seconds for metadata only. Requires a running, authorized listener."""
@@ -545,6 +593,10 @@ def register(mcp,service):
     def wechat_observe_manual_reply(draft_job:str)->dict:
         """Read WCDB for an exact human-submitted draft. Counts only; no send or delivery claim."""
         return service.observe_manual_reply(draft_job)
+    @mcp.tool()
+    def wechat_acknowledge_review(task_id:str,summary:str)->dict:
+        """Store a bounded encrypted review note after exact disclosure; never send or grant."""
+        return service.acknowledge_review(task_id,summary)
     @mcp.tool()
     def wechat_propose_send(conversation_id:str,draft_id:str)->dict:
         return service.propose_send(conversation_id,draft_id)
