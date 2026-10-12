@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import server
-from database_key_probe import page_key_mode, probe_database_key
+from database_key_probe import page_key_mode, probe_database_key, verified_page_key
 
 
 def synthetic_page(key, password=False):
@@ -51,6 +51,31 @@ class KeyProbeTests(unittest.TestCase):
     def probe(self):
         with patch("local_credentials.load_key", return_value=self.key.hex()):
             return probe_database_key(self.config["database_reader"])
+
+    def test_explicit_password_normalization_rejects_wrong_mode_and_tampering(self):
+        page = synthetic_page(self.key, True)
+        effective = verified_page_key(page, self.key, "password")
+        self.assertEqual(effective, hashlib.pbkdf2_hmac("sha512", self.key, page[:16], 256000, 32))
+        self.assertEqual(page_key_mode(page, effective), "raw")
+        self.assertIsNone(verified_page_key(page, self.key, "raw"))
+        self.assertIsNone(verified_page_key(page, bytes(32), "password"))
+        self.assertIsNone(verified_page_key(page[:-1], self.key, "password"))
+        self.assertIsNone(verified_page_key(page, self.key[:-1], "password"))
+        self.assertIsNone(verified_page_key(b"SQLite format 3\0" + page[16:], self.key, "password"))
+        changed = bytearray(page); changed[500] ^= 1
+        self.assertIsNone(verified_page_key(bytes(changed), self.key, "password"))
+        with self.assertRaisesRegex(ValueError, "unsupported_database_key_mode"):
+            verified_page_key(page, self.key, "auto")
+
+    def test_password_keys_are_bound_to_each_database_salt(self):
+        first = synthetic_page(self.key, True)
+        salt = bytes(reversed(range(16)))
+        effective = hashlib.pbkdf2_hmac("sha512", self.key, salt, 256000, 32)
+        mac_key = hashlib.pbkdf2_hmac("sha512", effective, bytes(x ^ 0x3A for x in salt), 2, 32)
+        second = salt + first[16:4032] + hmac.new(mac_key, first[16:4032] + struct.pack("<I", 1), hashlib.sha512).digest()
+        self.assertEqual(verified_page_key(second, self.key, "password"), effective)
+        self.assertNotEqual(verified_page_key(first, self.key, "password"), effective)
+        self.assertIsNone(verified_page_key(first, effective))
 
     def test_authentication_distinguishes_modes_and_rejects_tampering(self):
         self.assertEqual(page_key_mode(synthetic_page(self.key), self.key), "raw")

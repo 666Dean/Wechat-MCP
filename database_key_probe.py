@@ -12,6 +12,22 @@ import struct
 from pathlib import Path
 
 
+def verified_page_key(page, key, mode="raw"):
+    """Normalize an explicitly selected SQLCipher4 key mode after page HMAC validation."""
+    if mode not in ("raw", "password"):
+        raise ValueError("unsupported_database_key_mode")
+    if (not isinstance(page, bytes) or len(page) != 4096
+            or page.startswith(b"SQLite format 3\0")
+            or not isinstance(key, bytes) or len(key) != 32):
+        return None
+    candidate = (hashlib.pbkdf2_hmac("sha512", key, page[:16], 256000, 32)
+                 if mode == "password" else key)
+    mac_key = hashlib.pbkdf2_hmac("sha512", candidate,
+                                bytes(value ^ 0x3A for value in page[:16]), 2, 32)
+    mac = hmac.new(mac_key, page[16:4032] + struct.pack("<I", 1), hashlib.sha512).digest()
+    return candidate if hmac.compare_digest(mac, page[4032:]) else None
+
+
 def page_key_mode(page, key):
     """Return raw/password/unmatched; reject incomplete or invalid inputs."""
     if not isinstance(page, bytes) or len(page) != 4096:

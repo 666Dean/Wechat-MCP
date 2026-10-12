@@ -8,6 +8,7 @@
 
 1. Python 3.12，安装原生构建依赖与 `requirements.axr.txt`；Windows 的 wxauto4 只用于 legacy。
 Legacy 安装仍使用 `requirements.txt` / `setup.ps1`；AXR opt-in 使用 `requirements.axr.txt` / `setup.ps1 -AXR`，后者须先安装 C++ 构建依赖。
+Windows 安装器支持 `-Toolchain`、`-OpenSSLRoot`、`-AXRState`，原生构建/CTest 成功才生成 `codex-axr.toml`；步骤及密钥语义见 [Windows 更新指南](WINDOWS_UPDATE.md)。
 
 2. 开发构建 `python scripts/build_axr.py --openssl /path/to/openssl3`，生成 Swift / C++ helper
    和 C++20 绑定。pip 安装 AXR 本身也会构建绑定，但不会构建微信 UIA；UIA 要构建根 CMake。
