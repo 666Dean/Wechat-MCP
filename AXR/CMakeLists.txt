@@ -1,0 +1,149 @@
+cmake_minimum_required(VERSION 3.24)
+project(StellariaAXR VERSION 1.0.0 LANGUAGES CXX)
+if(POLICY CMP0207)
+  cmake_policy(SET CMP0207 NEW)
+endif()
+include(CTest)
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+set(AXR_BUNDLED_JSON OFF)
+find_package(OpenSSL 3 REQUIRED COMPONENTS Crypto)
+find_package(SQLite3 REQUIRED)
+find_package(nlohmann_json 3.12 QUIET)
+if(NOT nlohmann_json_FOUND)
+  set(AXR_BUNDLED_JSON ON)
+  set(AXR_JSON_HEADER "${CMAKE_CURRENT_BINARY_DIR}/deps/nlohmann/json.hpp")
+  file(DOWNLOAD "https://raw.githubusercontent.com/nlohmann/json/v3.12.0/single_include/nlohmann/json.hpp"
+    "${AXR_JSON_HEADER}" EXPECTED_HASH SHA256=aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63
+    TLS_VERIFY ON)
+  add_library(axr_json INTERFACE)
+  target_include_directories(axr_json INTERFACE "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/deps>" "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
+  install(TARGETS axr_json EXPORT StellariaAXRTargets)
+  install(FILES "${AXR_JSON_HEADER}" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nlohmann)
+  add_library(nlohmann_json::nlohmann_json ALIAS axr_json)
+endif()
+add_library(axr STATIC src/Core.cpp extracted/Process.cpp extracted/DurableRecord.cpp)
+add_library(Stellaria::AXR ALIAS axr)
+set_target_properties(axr PROPERTIES POSITION_INDEPENDENT_CODE ON EXPORT_NAME AXR)
+target_compile_features(axr PUBLIC cxx_std_20)
+target_include_directories(axr PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+  "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
+if(NOT TARGET SQLite3::SQLite3)
+  add_library(SQLite3::SQLite3 ALIAS SQLite::SQLite3)
+endif()
+target_link_libraries(axr PUBLIC OpenSSL::Crypto SQLite3::SQLite3 nlohmann_json::nlohmann_json)
+if(WIN32)
+  if(MSVC)
+    target_compile_options(axr PUBLIC /utf-8)
+  endif()
+  target_compile_definitions(axr PUBLIC _WIN32_WINNT=0x0A00 WINVER=0x0A00)
+  target_link_libraries(axr PRIVATE userenv advapi32)
+  add_executable(axr-owner-auth native/windows/Owner.cpp)
+  target_link_libraries(axr-owner-auth PRIVATE axr windowsapp user32)
+  add_executable(axr-sandbox extracted/WindowsSandbox.cpp)
+  target_link_libraries(axr-sandbox PRIVATE axr userenv advapi32)
+endif()
+option(AXR_PYTHON "Build thin Python native binding" OFF)
+if(AXR_PYTHON)
+  find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+  find_package(pybind11 3 CONFIG REQUIRED)
+  pybind11_add_module(_axr_native src/Python.cpp)
+  target_link_libraries(_axr_native PRIVATE axr)
+  if(WIN32)
+    install(TARGETS _axr_native
+      RUNTIME_DEPENDENCIES
+        DIRECTORIES "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin" "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
+        PRE_EXCLUDE_REGEXES "api-ms-" "ext-ms-" "[Pp]ython[0-9]+.*[.]dll"
+        POST_EXCLUDE_REGEXES ".*[Ww]indows[/\\\\].*"
+      LIBRARY DESTINATION axr RUNTIME DESTINATION axr)
+    foreach(dependency openssl sqlite3)
+      if(EXISTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${dependency}/copyright")
+        install(FILES "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${dependency}/copyright" DESTINATION axr/licenses RENAME "${dependency}.txt")
+      endif()
+    endforeach()
+  else()
+    install(TARGETS _axr_native LIBRARY DESTINATION axr RUNTIME DESTINATION axr)
+  endif()
+endif()
+if(APPLE)
+  option(AXR_MAC_UI_FIXTURE "Build the manual synthetic input fixture (never installed)" OFF)
+  if(AXR_MAC_UI_FIXTURE AND BUILD_TESTING)
+    enable_language(OBJC)
+    add_executable(axr-mac-input-fixture MACOSX_BUNDLE tests/MacInputFixture.m)
+    target_compile_options(axr-mac-input-fixture PRIVATE -fobjc-arc)
+    target_link_libraries(axr-mac-input-fixture PRIVATE "-framework Cocoa")
+    set_target_properties(axr-mac-input-fixture PROPERTIES
+      MACOSX_BUNDLE_GUI_IDENTIFIER dev.axr.input-fixture
+      MACOSX_BUNDLE_BUNDLE_NAME AXRInputFixture)
+  endif()
+  find_program(AXR_SWIFTC swiftc REQUIRED)
+  option(AXR_MAC_SELECTION_PROBE "Build the owner-operated system picker qualification tool (never installed)" OFF)
+  if(AXR_MAC_SELECTION_PROBE AND BUILD_TESTING)
+    set(AXR_PICKER_APP "${CMAKE_CURRENT_BINARY_DIR}/axr-mac-selection-probe.app")
+    file(GENERATE OUTPUT "${AXR_PICKER_APP}/Contents/Info.plist" CONTENT
+      "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>dev.axr.selection-probe</string><key>CFBundleExecutable</key><string>axr-selection-probe</string><key>CFBundleName</key><string>AXR Window Selection Probe</string><key>CFBundlePackageType</key><string>APPL</string><key>LSUIElement</key><true/></dict></plist>")
+    add_custom_command(OUTPUT "${AXR_PICKER_APP}/Contents/MacOS/axr-selection-probe"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory "${AXR_PICKER_APP}/Contents/MacOS"
+      COMMAND "${AXR_SWIFTC}" -I "${CMAKE_CURRENT_SOURCE_DIR}/native/bridge" "${CMAKE_CURRENT_SOURCE_DIR}/tests/MacSelectionProbe.swift"
+        -Xlinker "$<TARGET_FILE:axr>" -Xlinker "$<TARGET_FILE:OpenSSL::Crypto>" -lsqlite3 -lc++
+        -o "${AXR_PICKER_APP}/Contents/MacOS/axr-selection-probe"
+      DEPENDS axr tests/MacSelectionProbe.swift native/bridge/module.modulemap include/axr/Commit.h VERBATIM)
+    add_custom_target(axr-mac-selection-probe-build ALL
+      DEPENDS "${AXR_PICKER_APP}/Contents/MacOS/axr-selection-probe")
+  endif()
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/axr-helper"
+    COMMAND "${AXR_SWIFTC}" -I "${CMAKE_CURRENT_SOURCE_DIR}/native/bridge"
+      "${CMAKE_CURRENT_SOURCE_DIR}/native/macos/AXRHelper.swift"
+      -Xlinker "$<TARGET_FILE:axr>" -Xlinker "$<TARGET_FILE:OpenSSL::Crypto>" -lsqlite3 -lc++
+      -o "${CMAKE_CURRENT_BINARY_DIR}/axr-helper"
+    DEPENDS axr native/macos/AXRHelper.swift native/bridge/module.modulemap include/axr/Commit.h VERBATIM)
+  add_custom_target(axr-helper-build ALL DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/axr-helper")
+endif()
+if(BUILD_TESTING)
+  add_executable(axr-worker-probe tests/WorkerProbe.cpp)
+  target_link_libraries(axr-worker-probe PRIVATE axr)
+  if(WIN32)
+    target_link_libraries(axr-worker-probe PRIVATE ws2_32)
+  endif()
+  add_executable(axr-core-tests tests/CoreTests.cpp)
+  target_link_libraries(axr-core-tests PRIVATE axr)
+  if(MSVC)
+    target_compile_options(axr-core-tests PRIVATE /UNDEBUG)
+  else()
+    target_compile_options(axr-core-tests PRIVATE -UNDEBUG)
+  endif()
+  add_test(NAME AXRCore COMMAND axr-core-tests)
+endif()
+install(TARGETS axr EXPORT StellariaAXRTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(EXPORT StellariaAXRTargets NAMESPACE Stellaria:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/StellariaAXR)
+configure_package_config_file(cmake/StellariaAXRConfig.cmake.in "${CMAKE_CURRENT_BINARY_DIR}/StellariaAXRConfig.cmake" INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/StellariaAXR)
+write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/StellariaAXRConfigVersion.cmake" VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/StellariaAXRConfig.cmake" "${CMAKE_CURRENT_BINARY_DIR}/StellariaAXRConfigVersion.cmake" DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/StellariaAXR)
+if(SKBUILD)
+  set(AXR_HELPER_DEST axr/bin)
+else()
+  set(AXR_HELPER_DEST ${CMAKE_INSTALL_BINDIR})
+endif()
+if(APPLE)
+  install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/axr-helper" DESTINATION ${AXR_HELPER_DEST})
+elseif(WIN32)
+  install(TARGETS axr-owner-auth axr-sandbox
+    RUNTIME_DEPENDENCIES
+      DIRECTORIES "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin" "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
+      PRE_EXCLUDE_REGEXES "api-ms-" "ext-ms-"
+      POST_EXCLUDE_REGEXES ".*[Ww]indows[/\\\\].*"
+    RUNTIME DESTINATION ${AXR_HELPER_DEST})
+endif()
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+install(FILES LICENSE NOTICE THIRD_PARTY_NOTICES.md DESTINATION ${CMAKE_INSTALL_DATADIR}/StellariaAXR)
+install(DIRECTORY licenses/ DESTINATION ${CMAKE_INSTALL_DATADIR}/StellariaAXR/licenses)
+if(WIN32)
+  # Standalone helper distributions include the resolved DLL licenses as well.
+  foreach(dependency openssl sqlite3)
+    if(EXISTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${dependency}/copyright")
+      install(FILES "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${dependency}/copyright"
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/StellariaAXR/licenses RENAME "${dependency}.txt")
+    endif()
+  endforeach()
+endif()

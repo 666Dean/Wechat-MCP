@@ -17,7 +17,7 @@ stdio 传输本身不验证微信号主人身份。微信备注名和消息中�
 | 组件 | 代码入口 | 责任与边界 |
 |---|---|---|
 | 微信桌面客户端 | 用户在微信中登录 | 持有真实微信登录会话；本服务不负责创建、刷新或注销它 |
-| MCP 入口 | [server.py](../server.py)：`main` | 创建 FastMCP，以 `mcp.run(transport="stdio")` 服务本机客户端；启动参数控制是否注册名单写入工具 |
+| MCP 入口 | [server.py](../server.py)：`main` | 创建 MCPServer，以 `mcp.run(transport="stdio")` 服务本机客户端；启动参数控制是否注册名单写入工具 |
 | 规则与队列 | [bridge.py](../bridge.py)：`Bridge` | 过滤会话、消息来源和回复资格；检查时效、状态、长度、发送开关与频率；不认证 MCP 调用者 |
 | 微信适配器 | [bridge.py](../bridge.py)：`WxAdapter` | 通过 wxauto4 操作已经登录的 UI；`IsOnline` 检查在线状态，不验证当前账号就是预期主人 |
 | 数据库读取器 | [database_reader.py](../database_reader.py)：`WcdbReader` | 明确选择 DLL 和数据库；账号目录/会话绑定、只调用读取接口，不认证实际登录者 |

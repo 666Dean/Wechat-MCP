@@ -1,11 +1,113 @@
 # 更新日志
 
+### 2026-10-12 — 更换联系人时隔离模型身份与来源
+
+- 修复：实测更换目标后，旧模型 principal 保留的披露 taint 引用已撤权联系人，导致新草稿停在 AwaitingApproval。更换联系人现在创建独立的 Agent principal，并要求停止旧客户端、启动全新临时 Codex 会话；旧身份的来源记录保留，不删除 taint、不补发旧联系人权限。
+- 目的与设计意图：把新会话的权限与其可见知识对应，避免旧联系人数据混入新目标草稿。回归同时验证旧权限撤销、旧 taint 保留、新身份隔离，以及新上下文→披露→Completed 草稿→DraftReadyForHuman 的完整 Service 流程。
+- worker 提示明确所有未附草稿的显式读取任务都需要生成草稿，Completed 披露不等于任务已完成；要求在五分钟 TTL 前立即准备，不能等下一条消息。仍禁用外部操作与微信发送。
+- 验证与边界：相关 19 项回归通过。833cf88 双平台 CI 已通过：Mac 230 项发现/228 执行/2 跳过，Win 230/222/8，原生构建、CTest 与私有文件排除均通过。更换目标后的实际披露和关键词入站准入已验证。独立身份实机读取最近十分钟文本 4/0 条，正式 worker 完成 2 份草稿、12 次 MCP 调用、0 其他工具；本地密封复核通过。主人手动提交后，真实 MCP 只读观察 Completed，唯一完整匹配的数据库记录为 true，agent_sent/delivery_confirmed 为 false。收尾停止 worker/面板/会话、撤权、三个控制开关 false、当前任务 0、审计有效。3edbb95 的 Mac/Win CI 均通过（230/228/2 与 230/222/8）；本轮人工流程验收通过，可以合并。Windows 微信无实机，Mac 原生主动发送仍未资格。
+
+### 2026-10-12 — Codex 读取、回信任务与人工提交
+
+- 更新内容：新增加密持久化任务收件箱、元数据长轮询、显式读取与新入站回信区分、精确批准后获取上下文、带来源草稿及 DraftReadyForHuman 完成状态。没有外部 runner 时不再丢弃已准入的消息。新增本地 Manual replies 面板与人工提交记录观察、有限时 Codex worker、MCP 配置示例和使用文档。
+- 目的与设计意图：按主人本轮要求，让 Codex 读取已授权私聊并完成整理/草稿任务，由人核对目标并提交。人工模式在 broker 执行前禁止所有 messages.send，包括已批准动作；主动发送原型继续随项目保留，270134 未资格路径仍关闭。旧消息、出站消息及显式读取不能冒充新回信触发。
+- 安全边界：任务容量 50、加密正文限时；撤权、策略变化和过期拒绝缓存访问。本地所有者会话一次 OS 认证，最长 60 分钟、既有账号/私聊和分类/目的、每目标最多 400 额度、最多 12 批，每批最多 6 条/24KB；仍由原生 Guard 签发精确单次披露批准。owner/issuer/key/session 管理不注册 MCP，聊天不能更改权限。worker 仅允许任务/读取/草稿工具，禁用 shell/web/其他 apps/plugins，不打印或保存原始 JSONL 正文。SDK 保持应用无关的 AXR 能力与 AGPL v3 许可证边界。
+- 实机验证：真实 stdio MCP 读取两个既有私聊，近 14 天文本为 2 和 0；真正 Codex Agent 获准读取两份上下文、完成两份草稿和两个 DraftReadyForHuman，本地密封草稿与审计复核通过，无 shell 执行或 Agent 发送。本人目标保持本人微信 ID，未替换为文件传输助手。正式 worker 另捕获 1 条真实入站消息，准入/任务计数均为 1，经精确披露 Completed 生成 1 份 DraftReadyForHuman，审计有效。结束后停止 worker/会话、撤权并关闭控制开关；人工微信提交及精确记录观察尚未验收，不能用草稿完成代替发送。
+- 回归与交付：新增 19 项流程、安全和 worker 回归，本机全量 230 项发现、228 执行通过、2 平台跳过。Mac/Windows CI 随本轮同一 PR 推送核验，Windows 无微信实机。README/STATUS 及人工流程文档已更新；完成新的人工流程验收后才合并。
+
+### 2026-10-12 — 270134 执行闭包、目标数据流与排队生命周期
+
+- 更新内容：沿普通微信执行链追到 session dispatch、发送服务、逐条队列包装和 outgoing Message；固定样本新增 16 个完整函数、9 条直接调用边、8 条 dyld page-chain 虚表引用。独立解码 0xa8 所有权闭包、0xf8 队列 shared allocation、0x278 outgoing Message / 0x290 shared allocation，并核对构造/持有/释放路径。
+- 目的与设计意图：区分 0x350 转换对象、排队包装、outgoing Message 和最终网络请求，避免裸内存构造、过早释放异步对象或把任务创建当成发送成功。目标节点 string → 逐目标消息 +0x90 → outgoing +0x30 的静态数据流单独核对；账号来源为 AppContext、outgoing +0x18，正文 helper 使用 +0x48。这些不等于运行中账号/收件人见证或完整私有 ABI。
+- SDK 安全建设：新增应用无关的离线 format-6 chained rebase，按 segment/page 和实际链成员验证，返回未加 slide 的地址；拒绝原始字掩码猜指针、导入、标签、保留位、跨页/文件越界及不支持格式。微信知识留在 SDK 外，未加载映像、附加/调用原版、改写序列化、读取正文/凭据或新增聊天权限。
+- 验证：新增 7 项安全回归，覆盖 fat/非零 vm base、未列入链的伪函数指针、导入/标签/畸形链，以及账号/目标虚表与消息字段/析构尾调用替换。16 项相关回归通过；本机全量 211 项发现、209 执行通过、2 项平台跳过，固定原版离线 CLI 实测通过。前一提交 31e007c 双平台 CI 通过（Mac 204/202/2，Win 204/196/8）；当前提交双平台 CI 随同一 PR 验证，Windows 无微信实机。
+- 原版入口核查与剩余：本机没有声明 AppleScript 字典或 NSServices，sdef 返回 -192；URL scheme 注册不能证明指定私聊发送。原版没有 get-task-allow，不能把调用方 debugger entitlement 当作原版运行访问许可。当前没有找到符合现有保护条件的运行入口；最终 wire request、线程/取消、运行账号及两个收件人仍未资格，两个真实私聊发送、读回、后台写入未完成。README/STATUS/详细证据更新，重新 fetch 上游 main 仍为已合并的 3df0050；继续同一 Draft PR，验收前不合并。
+
+### 2026-10-11 — 文件身份复核统一句柄快照
+
+- 更新与目的：6554f76 的 macOS 原生构建/CTest/204 项回归和 Swift 探针编译通过；Windows 原生构建/CTest 通过，合成普通文件在 read_regular 的 stat/fstat 复核处失败。改为保持原句柄存活、只读重新打开精确路径，用同一 fstat API 复核；保留设备/inode/大小/mtime/ctime/mode/nlink 全部七字段和链接拒绝，不采用时间容差或跳过。
+- 设计意图与验证：用重新打开的文件身份验证路径仍指向原对象，同时避免不同元数据 API 视图混比。原回归增加七字段逐一替换拒绝，读取期间变化与路径替换分别核对；本机对应 9 项回归及实际固定样本再校验，双平台 CI 重新验证。未改变不可发送状态或授权规则，真实私聊闭环仍未通过。
+
+### 2026-10-11 — 270134 消息对象、所有权与运行资格
+
+- 更新内容：从当前原版代码追到上层普通微信目标分支、对象复制、目标展开、任务构造和订阅；新增 SDK 外的 native_contract 核对 15 个完整函数与 7 条精确调用边，并解码对象大小、正文 string、shared allocation 和目标 kind。当前对象为 0x350 字节、正文 +0xb8、shared allocation 0x368；旧 0x340/+0xb0/0x358 被拒绝。
+- 目的与设计意图：推进真正的请求对象与生命周期分析，防止只凭低层 MMStartTask 或旧 C++ 布局调用。原生构造/复制/析构必须成组使用；账号 getter 的借用结果和 account context 引用需要执行租约内持有与重验。静态路径与运行身份分别记录，最终 wire request、线程、取消和收件人契约未通过时保持不可发送。
+- 实机：固定 270134 样本、15 个对象/账号函数和 7 条调用边校验通过。Swift 探针确认唯一原版运行进程的腾讯签名，仅申请只读 task port 并立即释放；本机返回 -1/errno=1（EPERM），未取得端口、读取内存、输出账号/正文或调用微信。没有修改原版、关闭 SIP、绕过屏幕隐私或执行第三方安装器；签名历史样本只读分析，没有安装、运行或降级。
+- 验证：新增 3 项安全回归覆盖旧对象/正文布局、不同 kind/调用边/析构字段和错误指令位宽/寄存器/移位。本机全量 204 项发现、202 执行通过、2 项跳过，Swift 工具编译/实际探测通过预期拒绝路径；双平台 CI 增加 Mac 探针编译并随提交核验。Windows 无微信实机。
+- 交付边界：native_send_available、native_request_abi_verified、运行账号/收件人资格保持 false。两个指定私聊的真实发送、读回、后台写入及多日运行仍未完成；重新 fetch 上游 main 仍为已合并的 3df0050，继续同一 Draft PR，不合入主分支。私人标识、配置、正文、密钥、日志、程序样本及未公开技术来源不进入提交。
+
+### 2026-10-11 — MCP 合成消息身份跨秒稳定性
+
+- 更新与目的：587a7ec 的 macOS 原生构建/CTest 通过，MCP 回归暴露既有合成 reader 每次查询重建 create_time、跨秒被当成另一条消息的问题。将同一合成记录只创建一次，每页返回副本；新增真实 stdio 用例内跨秒等待并核对无重复事件。生产消息身份与预览/发送规则未改变。
+- 设计意图与验证：数据库存量消息创建时间不会随查询变化，测试应模拟稳定记录；修复对应 MCP 回归本机通过，不跳过安全断言或仅重跑偶发失败。双平台 CI 随同一 PR 再次验证，真实原账号发送与后台读回仍未完成。
+
+
+### 2026-10-11 — 原生样本校验测试的跨平台路径修复
+
+- 更新与目的：9c2a3dc 的 macOS CI 通过；Windows 原生构建/CTest 通过，201 项回归唯一失败是新测试用 POSIX 分隔符断言模拟 Mac bundle 路径。改用 Path.parts 精确核对 Contents/Resources/wechat.dylib，保持核心资源路径检查，未跳过用例或放松生产资格。
+- 设计意图与验证：同一套离线校验安全测试在两平台验证相同资源含义；对应 6 项本机安全回归重新通过，双平台 CI 重新运行。不是 Windows 微信实机或 Mac 真实发送证据，原账号发送/读回/后台写入仍未通过，继续同一 Draft PR。
+
+
+### 2026-10-11 — Mac 270134 原生调用链与代码身份校验
+
+- 更新内容：SDK 新增应用无关的离线 arm64 Mach-O 解析，支持有界 fat32/64、UUID、函数边界/哈希、直接 BL 和相邻 ADRP/ADD 引用。微信侧新增固定原版安装位置的 native_qualification CLI，匹配 270134 厂商签名、核心 UUID/整文件哈希、3 个函数指纹及任务调用链；不注册 MCP 或提供发送参数。
+- 目的与设计意图：直接推进当前版本原生适配，防止将旧偏移、低层任务入口、状态字符串或静态代码身份当成可发送资格。工具不附加进程、加载/改写代码、获取正文/凭据或授予权限；文件链接/变化、版本/指纹异常失败关闭并脱敏。微信版本知识继续放在 AXR 外，许可证边界保持。
+- 实机：腾讯签名原版 4.1.15.54 / 270134 离线校验通过，定位 MMStartTask 入口/manager 和 Req2Buf 候选；排除实际比较 SendMsgFailed 的上层误候选。native_send_available 与 runtime_identity_verified 均为 false，未真实发送或读取聊天；不是原生 ABI、稳定运行中收件人或后台发送验收。
+- 验证：新增 6 项安全回归；本机 201 项发现/199 项执行通过/2 项平台跳过，双平台 CI 随同一 PR 更新。未新增生产依赖或发布第三方程序/二进制。
+- 协作与剩余：重新 fetch 实际上游 main 仍为已合并的 3df0050，更新 README/STATUS 与详细原生记录；沿用同一 Draft PR。当前原生文本请求构造/对象生命周期/线程 ABI、运行账号与精确收件人仍缺失；两个指定既有私聊的真实发送、读回、后台写入及多日运行仍未完成，暂不合主分支。
+
+
 格式参考 Keep a Changelog。日期按 Asia/Shanghai 记录；版本号仅表示本项目，
 不表示微信客户端兼容性已经得到验证。
 
 ## Unreleased
 
-后续每次完成更新，都在这里说明新增、修复、测试及仍未解决的限制；发布版本时归档。
+### 2026-10-11 — Windows 导航回归清理与继续审查
+
+- 修复：旧签名权限迁移测试显式提交并关闭 SQLite 连接，避免 Windows 文件锁导致临时目录清理失败；不修改生产授权规则。目的与设计意图是让双平台安全回归实际完成收尾，而非跳过失败用例。
+- 验证：前提交 d46e68e 的 macOS 原生构建、CTest、195 项发现（193 执行/2 跳过）及隐私检查通过；Windows 原生构建/CTest 通过，回归只在临时授权库清理遇到 WinError 32。修复后本机对应安全回归通过，双平台 CI 重新验证；未做 Windows 微信设备测试。
+- 继续研究：审查固定 revision 的公开 4.1.15 工具，其发送仍需画面/OCR 与人工选定会话，不属于非 OCR 原生接口；没有执行其捕获修复或发送代码。当前安装包核心没有导出的可直接使用的发送符号/已验证私聊 URL 契约，内部字符串不等于可调用 ABI。两个既有私聊的实际发送/读回仍未通过。
+
+### 2026-10-11 — 非 OCR 菜单操作与原生发送方案审查
+
+- 更新内容：新增默认关闭的 `wechat_ui_navigate` MCP 提议和 SDK 外的固定菜单目录：“文件 → 发起会话”与“微信 → 设置”；本地 OS 认证批准后经同一 AET 执行。新增本地单次资格 CLI，不开放 MCP owner/issuer、联系人选择、任意菜单、快捷键、截图或发送。
+- 目的与设计意图：停止继续尝试实际微信 OCR，先让 Agent 操作真实可用的语义功能。应用菜单权限独立于聊天权限，密封 bundle/PID、菜单与窗口验证条件；C++ 签发、broker 和原生 commit 强制精确 intent/最长 300 秒/一次使用，旧式宽泛授权拒绝。无法确认外部副作用时保留 Unknown、禁止自动重试；实际账号发送仍要求稳定身份与独立读回。
+- 实机：主人完成 OS 认证，腾讯签名原版 4.1.15.54 / 270134 从失焦状态打开会话选择面板，AET Completed、唯一窗口验证、审计有效；未选择联系人、读取正文或发送。结束撤权、逻辑清理结果，Computer Use 独立确认面板并取消返回主窗口；内部联系人/输入节点仍缺失。设置窗口另经 GUI 打开/关闭，未修改选项，未另做设置命令的 AET 资格。此证据只属于菜单操作。
+- 研究：固定 revision 审查 wechat_chatter（GPL-3.0，配置最高 4.1.12，运行需修改客户端/关闭 SIP）与 wechat-use（4.1.9、核心未公开、自定义非商业及再分发限制），补充 SovietExtension 具体发送 ABI 的版本门禁、scripting/share 扩展边界。没有运行其安装器或调用旧地址，未修改原版、降级或弱化系统保护。
+- 验证：新增 7 项安全回归覆盖默认关闭、独立资源/本地批准、Unknown 不重试、目录/平台拒绝、binding 交换与旧签名宽泛权限拒绝；本机 195 项发现、193 项执行通过、2 项平台跳过，根目录 Swift/C++ 构建与 CTest 通过。双平台 CI 将核验本次提交，Windows 无微信硬件测试，Mac 菜单操作不宣称 Windows 支持。
+- 协作及剩余：重新获取实际默认分支 main，仍为已合并的 3df0050；沿用同一 PR，说明更新内容、目的和设计意图。两个指定既有私聊的真实发送、读回、后台写入及多日运行仍未通过。
+
+### 2026-10-11 — 所有者单帧 OCR 与空帧安全关闭
+
+- 更新内容：可选 Apple 单窗口探针新增本地所有者精确读取入口；默认元数据模式保持。OS 认证后密封资源、bundle/PID、窗口 ID、标题/几何，原始 picker filter 只取一帧、本地 Vision，无图片文件、网络、音频、模型披露或输入。结束撤权并逻辑清理加密 OCR 结果，入口不注册 MCP。
+- 目的与设计意图：把真实画面可用性与元数据、平台身份和发送资格分开验收；不扩大窗口范围或通过切换过滤器规避排除。空帧不算读取成功，取消/范围或权限变化/超时失败关闭。
+- 实机：主人分别认证、选择两个既有独立私聊，598×640 帧、OCR 0 行、0 个不透明采样，当前按 FailedSafe 处理，未发送；旧试验 Completed 仅为捕获事务返回，不证明内容读取。相同路径纯合成失焦窗口通过：1280×1024、4 行/67 字节、4072 个不透明采样；审计有效，图片不落盘、正文不披露。合成等待超时记录不算通过，窗口选择不证明内部账号/会话身份。
+- 验证：新增 3 项安全回归，覆盖严格窗口绑定、私有请求/链接拒绝、空帧关闭及撤权/结果清理；本机 188 项发现、186 项执行通过、2 项平台跳过，原生探针与 CTest 通过。Windows 原生构建及回归由本次 CI 验证，未做微信硬件测试。
+- 仓库协作：接受当前账号已有的 write 邀请后确认上游 push 权限；main 当前无保护规则，仍按同一 PR 提交审阅，更新说明明确目的和设计意图。上游 main 会在推送前重新获取。
+- 剩余：两个真实私聊的可用内容读取、自动发送/发送后读回、后台写入及多日运行仍未通过；合成失焦读取不是微信后台验收。没有绕过隐私保护或开放 OCR 盲发。
+
+### 2026-10-11 — 官方窗口选择器、渠道资格与新版客户端复查
+
+- AXR 新增默认关闭、不安装的 Mac 单窗口系统选择器探针：主人手动选择，核对单窗口 filter、bundle 和原 PID，取消/超时/范围变化失败关闭；只输出元数据，不启动捕获、OCR、网络或输入。Mac CI 只编译该探针。
+- 修正旧 CoreGraphics sharing=0 的诊断解释，改为 legacy_nonsharing_windows、capture_policy_candidates 和 capture_privacy=unqualified；数值不证明现代保护或捕获可用，自动 OCR 的保守拒绝检查保留。UIAdapter 兼容旧 helper 字段，状态探测不会授予发送权限。
+- 本机系统选择器由主人选择主微信窗口，单窗口/PID/bundle 元数据核验成功；未读取正文或图片，也不作为指定私聊绑定。腾讯签名标准升级至 4.1.15.54 / 270134，DMG 哈希、严格厂商签名及 Gatekeeper 校验通过，原签名应用副本保留，新版正常进入原账号。新版角色探测仍为 1 窗口/5 节点/0 编辑/0 文本，工具截图白屏，未发送。
+- 静态审查腾讯 iLink Bot、官方分享扩展及两个固定版本开源 hook 方案；没有证据满足原账号既有私聊发送，未部署机器人、插件、注入或盲发。新增 MAC_TRANSPORTS.md，修正研究、回复和验收文档中的保护状态推断。
+- 根目录原生构建（含选择器探针）、CTest 通过；本机发现 185 项回归，执行 183 项、跳过 2 项。真实发送/读回、后台写入和多日运行仍未通过，旧 WCDB 持续读取证据继续归属实际启动版本。重新 fetch 上游 main 仍为已合并的 3df0050。
+
+### 2026-10-11 — Mac 安全输入、本地 OCR 与混合读写编排
+
+- Mac SDK 增加单次 PID Return 路径：资格身份、准备前焦点/空草稿、精确正文、提交前再次验证及新气泡见证；单行最多 200 字符，不用全局回车、剪贴板或清空草稿。旧无完整发送检查的 press/set_value 入口关闭。控件同窗口/缓存 handle epoch 复核，防止借用另一聊天窗口的身份或过期输入节点；两平台见证有界，Win 空草稿必须读取 ValuePattern，提交前复核精确正文。
+- 新增所有者明确选择的 hybrid 模式（WCDB 读/UI 写）与 wechat_observe_send_record，独立读取 AET 核对本人/完整正文/非零整数 server_id/唯一记录，保留原发送分类、不创建正文 context，无正文外传、不重发、不将 Unknown 提升成功。数据库模式仍只读。
+- ScreenCaptureKit 单窗口白名单区域 + 本地 Vision OCR 预览，策略密封 PID/窗口/几何/区域；legacy sharing 为 0 时自动路径保守拒绝，身份前后复核。纯 OCR 身份须完整 ID 和高置信度，或使用真实 AX 身份路径；不推测 sender/时间/空草稿，不开放 OCR 盲发。
+- C++ scoped commit 绑定请求资源/操作/发送正文/OCR 布局与原始 action；来源权限 descriptor 不得省略或换序，来源预算最多 200。SDK/helper 须同步升级，旧不含 action 的 proof 拒绝。
+- 本机合成 Cocoa 失焦输入、新气泡/空草稿、篡改正文拒绝及 OCR 读回通过；纯 OCR 身份置信度 0.5 被拒绝，最小化焦点未通过。主人打开官方独立私聊仍白屏/无输入节点，未修改隐私保护或发送。旧共享标志的解释见后续修正。
+- 新增默认不构建/不安装的合成 fixture 与复现脚本；本机 185 项回归通过（2 项跳过），原生 CTest、Core ASan/UBSan 通过。代码 866abd6 的 macOS/Windows CI 原生构建、CTest 和 185 项回归全部通过（执行 183/178 项、跳过 2/7 项），见 [CI 38127817314](https://github.com/Aethra2007/wechat-codex-mcp/actions/runs/38127817314)。两个真实目标的发送读回、后台写入和多日运行仍未通过。
+
+### 2026-10-11 — 合并上游数据库校验更新
+
+- 合并实际默认分支 main 的 98e8a2a / 3df0050，保留原项目缓存导入、首页面密钥模式诊断和 0.6.2 有限实机记录；它们不替代 AXR 的所有者认证或账号资格。
+- 对外说明、源码注释和 SDK 安装包仅描述 AXR 自身能力，保留版权及第三方许可证；内部来源清单退出公开发行。
+- 解决 CLI、状态说明和更新日志冲突，禁止 AXR 模式混用所有旧数据库/联系人管理操作，新增互斥回归。合并后本机 176 项回归通过（2 项平台跳过）；微信真实发送尚未通过。
 
 ### 2026-10-11 — 显式导入开源工具本机密钥缓存
 
@@ -34,6 +136,132 @@
 - 真实 CLI：首页面 checked=4/password=4/raw=0/unmatched=0/error=0（会话库 + 3 个数字编号消息库）。首页面匹配不证明整库、账号身份或实时读取。
 - 独立实验使用 apsw-sqlite3mc 3.53.4.0，在一个稳定加密副本上只读查询已绑定私聊 20 条文本：严格解码 20/20，对方 9/本人 11、未知发送者 0；连接及临时副本已清理。正文未输出/存档，没有发送、基线或队列。
 - 新依赖仅安装在忽略的实验目录，没有修改产品依赖或提交第三方二进制。样本没有 zstd；没有全局最新页、实时增量、性能、跨分库、显示名重验、Python 3.12 或远程 CI 证据。原生 DLL -100/关闭故障仍未修复，MCP 后端尚未接入开源引擎。
+
+
+### 2026-10-11 — 控件正文隔离的双平台验证记录
+
+- bf25e9c macOS/Windows CI 均通过原生构建、CTest 和 160 项回归，分别执行 158/154 项、跳过 2/6 项。
+- 本机只角色备用 AX 子项/命中探测未恢复聊天或编辑节点；微信官方更新检查报告已是最新版本。未替换安装、未发送；持续最小化、真实发送后读回及多日验收仍未通过。
+
+### 2026-10-11 — Mac 控件诊断与结构探测的正文隔离
+
+- Mac 通用 SDK 新增只请求窗口角色/子项的有界 capabilities，排除菜单搜索框；UIAdapter 将诊断绑定进程 PID，报告缺少输入控件或未资格候选，不将健康检查转成发送权限。Mac/Win structure 不再先获取正文值/Name 再隐藏输出，移除仅供探测的 authorized_label。
+- 原版微信严格签名复核、Apple Inspector 与一次 Chromium 辅助功能启动参数实验均未恢复聊天/输入树；恢复无实验参数的原版并进入账号。macOS 27.0.1 / 微信 4.1.15 当前窗口诊断为 1 窗口、5 节点、0 编辑节点。设置截图可用、聊天白屏，主人未找到类似屏幕隐藏选项；未修改或绕过隐私保护，未发送。
+- 固定版本静态审查 AX 与本地 Swift 捕获方案；不引入云端截图、坐标/OCR 标题发送。隔离 Cocoa 合成 getter 实测旧 structure 取值 1 次，新 structure/capabilities 均 0 次；本机 160 项回归通过（2 项跳过）及原生 CTest 通过。真实读写读回、后台 UI 发送和多日运行仍未通过。
+- CoreGraphics 元数据确认当前唯一可见主聊天窗口 sharing_state=0；不注入或绕过该共享属性。新 OS 认证后两个 AET 读取 Completed，最小化状态随后变化导致测试安全停止；撤权/恢复关闭、审计有效、测试上下文逻辑清理为 0，不报持续最小化通过。
+
+### 2026-10-11 — 本地面板显示、键盘导航与审批刷新
+
+- 本地所有者面板新增 F1–F5 页切换、草稿控件聚焦与刷新；待审批列表建立首行焦点、保留仍有效的选择，任务消失或读取失败时清空旧意图。自动选择仅用于查看，不授予权限。
+- Mac 桌面使用独立合成状态实际验证三页、三个独立开关/草稿 JSON、精确意图、审计计数及任务消失后的清空；密封 policy 三开关仍关闭、版本不变、审计有效。Tk AX 控件缺失/坐标路径未通过，已验证交互采用键盘；GUI OS 认证提交和 Windows GUI 仍待验收。
+- 本机 157 项回归通过（2 项平台跳过）；上一提交 50612b7 双平台 CI 已通过。主人确认本人是内部微信 ID 私聊，保持绑定；解锁后微信 AX/取画面阻塞仍在，未发送。
+
+后续每次完成更新，都在这里说明新增、修复、测试及仍未解决的限制；发布版本时归档。
+
+### 2026-10-11 — 157 项双平台 CI 验收记录
+
+- 代码 30a2797 的 macOS/Windows CI 原生构建、CTest、157 项回归全部通过，分别执行 155/151 项、跳过 2/6 项。记录最终代码检查结果，实机 AET 持续测试仍归属实际启动的 1a16221，不声称 GUI、真实发送或多日资格。
+
+### 2026-10-11 — 关闭监听时的 TTL 维护与证据整理
+
+- 1898980 双平台 CI 构建/CTest 及 156 项回归均通过（Mac/Win 分别跳过 2/6 项），外部 SDK consumer 构建运行通过。更新 Gen1 说明中已被后续实测关闭的正式 CLI 认证限制，保持每项证据所属版本。
+- 运行监听维护线程时，即使 listen/wake/auto_execute 全部关闭，也清理过期 context/result 和待审批正文；不访问适配器，不删除正在提交的 payload。新增无适配器访问的过期审批与审计回归，本机 157 项通过（2 项跳过）。这是逻辑 TTL 清理，不声称磁盘物理擦除。
+- 1a16221 启动的实际 AET 监听线程完成 1800.01 秒/714 个新增 Completed 读取，零失败/保留连接/活动正文 context；审计有效，线程停止、权限撤销与两目标拒绝复核、开关恢复关闭。RSS 高水位 39.95→60.58 MiB，不外推恒定内存或多日资格。锁屏提示后又完成 286 个事务，未连续监测锁屏状态。
+
+### 2026-10-11 — 临时副本厂商签名与缓存格式预检
+
+- 私有副本在 ad-hoc 签名前先执行 Tencent 严格签名验证，并要求 Identifier / TeamIdentifier / CDHash 与复制前原版一致；不同 Executable 路径不影响比较。副本不完整或发生变化时拒绝重签名/启动，清理并恢复原版。
+- 私有缓存索引的版本、容器、条目数与 salt/key-reference 类型有界校验，异常结构返回固定 AXR 错误，不能进入凭据获取或产生意外 traceback。
+- 本机复制原版后独立验证厂商签名与 CDHash 一致，原安装前后签名一致；该验证副本未重签名或启动并已清理。新增副本变化/缺失或重复签名身份及缓存异常结构回归，本机 156 项通过（2 项平台跳过）。
+- 正式取钥完整流程的已通过实机版本为 1a16221；这次新增复制资格环节单独验证，不外推新的全流程、发送、GUI 或多日资格。
+
+### 2026-10-11 — 读取分类、来源访问与单次额度检查
+
+- 明确读取、监听与 policy simulation 的密封意图始终带入所有者绑定的数据分类，个人会话不能借 workspace-normal 授权取得正文；派生草稿/披露的来源访问能力也须覆盖实际来源分类。
+- 原生 Guard 将同资源读取的分类查询交给主授权校验，避免把已预留的最后一页当作额度耗尽，也允许精确批准的一次敏感读取完成；其他来源仍复核独立访问/披露权限与额度。
+- 集成 broker 与本地配置面板校验监听及 runner 开关必须为 JSON 布尔值，字符串 false、数字或异常容器在接触适配器前拒绝，不能意外开启后台能力。
+- 本机 155 项回归通过（2 项平台跳过），含实际 stdio 披露/拒绝与新分类、单次敏感读取、最后一页/原生提交 proof、回放和无数据访问的控制校验。原生 CTest 与 C++ Core 的 ASan/UBSan CTest 通过；sanitizer 仅限定 Core 测试目标，不声称 Swift helper 的 sanitizer 构建资格。
+- 当前 30 分钟 AET 监听测试使用启动时的 1a16221 版本，不能归为这次修改的长期实机证据；真实发送、GUI 设备资格与多日运行仍未通过。
+
+### 2026-10-11 — 正式取钥/绑定 CLI 实测及失败恢复修正
+
+- Mac 启动观察在原版签名有效且已正常退出后，即使复制、签名、临时启动或中断发生于创建子进程之前，也清理并恢复原版；检测用户已重新打开原版时不重复启动，签名发生变化时拒绝启动。临时写进程退出后才关闭 FIFO，多个账户共用客户端捕获锁。
+- 正式 observe-mac 本次 OS 认证成功，完整取得 21 个 HMAC 校验 key；临时目录与进程最终清理为 0，原版 Tencent 签名有效并恢复登录。正式 qualify 再次独立 OS 认证成功，两个私聊 ID 与先前绑定一致，三个消息分库只读验证；只生成本地配置片段，未开通发送/披露或模型。
+- 本机 151 项回归通过（2 项平台跳过）。新增复制/签名/启动/中断失败、用户自行重启及原版签名变化的恢复回归；其故障注入证据不替代微信长期设备测试。
+- 真实 UI 发送仍无稳定见证，本人近 14 天无正文，配置 GUI 与多日/锁屏运行资格仍未完成；Windows 本轮无微信实机验收。
+
+### 2026-10-11 — WCDB 所有者初始化与 Mac 实机只读验证
+
+- 微信集成增加独立所有者 CLI：隐藏 key 导入、有限首个页 HMAC 校验、Keychain/Windows Credential Manager 存储、缓存 salt/引用复核、目录候选与 contact 唯一账户绑定、排除群聊/公众号/删除项/重复私聊身份。仅生成私有配置片段，不自动启用 policy、模型或发送。
+- Mac 可选 C++20 启动 observer：主人认证并明确选择私有临时副本，原 KDF 参数与结果保持不变，0600 FIFO/128 记录/120 秒封顶，只存 HMAC 校验 key；清理自有副本进程并验证、恢复原安装。应用专属代码在 SDK 外，Windows 仅支持已有 key 本地导入。
+- 实机发现新版 WCDB 压缩标记 4/5，修复为普通 Zstd；2/3 字典模式明确拒绝。完整单 frame、编码/解码/窗口限额阻止截断、尾随内容和解压扩张。
+- Mac 实机初次取得 21/24 个候选 key（必要 contact/session/三个消息分库均覆盖）；复核会排除 salt 变化项。两个私聊稳定 ID 绑定通过，指定私聊有真实文本读回，本人近 14 天为空；后台失焦重复读取成功，连接及时释放。所有者 OS 认证及实际 AET/MCP stdio 两会话读取 Completed，审计有效、代理回执无正文；短时读取授权已撤销。
+- 本机 150 项 unittest 通过（2 项平台跳过），原生构建/CTest 通过。新增错误 key/首个页篡改/代际变化/路径与预算/索引换 key 或路径/私聊与账户歧义/完整 Zstd/observer 等价及 FIFO 权限回归；Mac CI 执行 observer 合成 fixture，Win 平台跳过。
+- 保留限制：本机 AX 聊天树与捕获画面缺失，真实发送仍未通过；本人正文为空不视为读写读回成功；多日/锁屏/客户端切换与发送审批、模型 runner、配置 GUI 尚未资格验证。Windows 按本轮要求无微信实机测试。实机数据、私钥、账号路径与副本二进制不进入公开提交。
+- 后续验收记录：代码 b4c9cca 的 macOS/Windows CI 均通过原生构建、CTest 与 150 项回归（分别跳过 2/4 项）。原生只读适配器完成 1800 秒、714 次查询，零错误/保留连接，P95 27.91 ms；包含原版正常退出与恢复登录，RSS 高水位 42.73→54.09 MiB。新增匿名实机记录，明确不外推长期 AET 监听、恒定内存或多日资格。正式 observe-mac 再次实测未完成 OS 认证，没有进入 capture；与已成功的私有 bootstrap、资格函数及 OS 认证读取分开记录。
+
+### 2026-10-11 — Stellaria AXR Gen1 开发与安全边界
+
+#### 新增
+
+- 根目录 AXR/ 应用无关 SDK：C++20 Guard、AET intent seal、OpenSSL AES-GCM/HMAC、持久链、进程 API、Python 薄绑定；Swift 通用 AX helper；Win C++ Hello 与 AppContainer。
+- AXR 提供预算、append-only triggers、耐久日志、进程管理与沙箱原语。
+- SDK AGPL v3 only，项目其他源码保留 MIT，README/LICENSE/LICENSES/NOTICE 明确边界与第三方义务。
+- 独立 owner CLI / 本地 Tk policy/审批/telemetry 面板 + Keychain/Windows Credential Manager；代理不能发放 capability；principal/account/conversation/purpose/workflow/TTL/quota 全部绑定，外部发送与披露逐动作确认。
+- AXR MCP、AET 执行与取消、加密 context/result TTL、会话来源传播、dry-run/模拟、metadata-only 审计和计数；legacy 兼容名称在 AXR 模式走 AET。
+- 原生 SQLCipher 只读 WCDB DB+WAL、明确会话/分库、过滤与 keyset 游标、Name2Id 稳定发送者解析、bounded zstd。复用 MIT chatlog-keeper 的选定解析规则与 wechat-mcp 的 AX 标识/标题工具，保留完整许可。
+- Swift AX / C++ STA UIA 有界读取及发前身份检查；稳定账号/会话 witness 不足时拒绝发送，没有坐标/全局 Return 兜底。
+- 常驻监听实际线程，listen/wake/auto_execute 默认独立关闭，历史 baseline、聚合/TTL/去重、调用/成本预算；owner-pinned 本地 runner 同样进入精确披露 AET，仅生成草稿。
+- 受限 workspace 文本原子写入/加密版本备份；Mac deny-default worker sandbox，Win AppContainer/JobObject；跨平台 CMake、独立 SDK 安装导出、Python 原生构建与 CI。
+
+#### 修复与验证
+
+- MCP 迁移至官方 Python SDK 2.3.0 / MCPServer，更新 snake_case 测试 API；保留旧模式行为。
+- 修复事务插入列数、Swift throwing predicate、worker runtime ancestor stat 权限等开发期问题；发送不明/旧 epoch/崩溃恢复均拒绝重复执行。
+- 本机 141 项 unittest 通过（2 项平台跳过）：原有 91 项 + 50 项安全、合成数据库、原生沙箱与实际 stdio AET 测试。
+- 真实 SQLCipher 库对合成加密 DB/WAL 验证 committed WAL 可见、原始密钥拒错、只读拒写；这不等同本机微信正文验证。
+- C++ Core/Swift 编译与 CTest、SDK 安装、独立 CMake consumer 通过；Mac 实际 sandbox 拒绝范围外文件与 loopback 连接。
+- Win CI 加入 AppContainer 真实进程合成 witness：staged 文件读取、私有文件拒绝与 loopback 拒绝；这是 CI 验证，不是微信实机测试。
+- Win CI 随 PR 运行；本轮按主人要求不做 Windows 微信实机测试。
+
+- PR 后续修正：可信 Swift/UIA helper 在实际读取/平台提交之前复核 broker 的 grant 摘要、策略版本、墙钟 TTL 和来源额度；私有管道不传 issuer key，不把 metadata proof 声称为公开认证协议。增加原生/Python 撤权、过期、改摘要和来源额度测试。
+- Windows CI 实际发现 Hello interop 的 get_abi 返回 void* / HSTRING 类型错误，按官方 ABI 显式转换；dependency cache 在依赖构建后保存，编译失败不再丢失已构建依赖。
+- PR 后续修正：监听每条 4000 字符、pending 50 条，runner 总正文 24000 字符；预算拒绝负数/非整数/无效窗口；owner grant 可明确授权 personal 本地草稿分类。独立 SDK 安装包含 AGPL/NOTICE/源复用和第三方许可。
+- PR 后续修正：TTL 清理将过期的待审批/Ready 任务置为终态并去除正文，保留正在提交事务直至核验/恢复；Swift/UIA 原生回复生成前限制单节点与总正文，保留截断标记。新增 TTL/崩溃恢复测试。
+- PR 后续修正：SDK wheel 和独立安装补齐 pybind11 编译头的 BSD 全文；独立 Windows helper 安装也保留实际链接 DLL 的依赖 copyright。
+- PR 后续修正：Mac draft 核验只读取真实 AXValue，空值不会被标题/描述替代；无法读取 draft value 时拒绝提交。C++ Core 新提交前复核路径通过本机 ASan/UBSan；独立 wheel 在全新 venv 验证 crypto/Guard/Swift helper 与许可文件。
+- 验证入口强化：显式指定的 SQLCipher 库不存在时测试失败，不能通过平台跳过掩盖 CI 配置错误。
+- Windows SDK 已完成 MSVC 编译；CI 暴露 install 阶段对系统 DLL 路径分隔符匹配错误，现按 CMake CMP0207 归一化并兼容两种分隔符，避免递归打包 Windows 系统依赖。
+- Windows wheel/install、UIA/Hello/AppContainer 编译及 CTest 均已运行通过；真实 CI 回归暴露 pywin32 JobObject 不接受 None name，改为每次随机唯一名称，并使用 PyHANDLE.Close 正确释放、对配置失败清理句柄与进程。
+- 隐私修正：已经披露的来源保留加密的 coarse scope/class 元数据，正文 TTL 或 broker 重启不会清洗后续输出的 provenance；不保留聊天正文历史。新增到期/重启及空 context_ids 草稿测试。
+- Windows native AppContainer 的 staged 文件读取在 CI 直接 probe 已运行成功；移除重复 JobObject 后 supervised bootstrap 仍失败，正在核查启动环境。仍由原生启动器在恢复线程前强制配置 JobObject，并由 parent 退出关闭 handle 终止子进程。
+- 审批修正：每个 Action 的唯一 execution_id 纳入原生 intent seal；Journal 原子登记持久 execution claim，取消/正文 TTL/重启后也不能重提同一 ID。旧审批无法迁移到内容相同的新任务；新增取消后的审批复用与持久重放测试。开发期旧意图缺字段时拒绝执行，须重新提案与审批。
+- Windows Supervisor 保留系统用户 profile 路径环境供 AppContainer 初始化，不传密钥或服务配置；原生失败仅输出白名单 stage 与整数错误码，继续拒绝沙箱降级。
+- Windows worker/JobObject 超时及输出上限回归已通过；CI 使用与 wheel 一致的 Release helper/probe，避免依赖不可分发的 Debug CRT；沙箱保持拒绝降级，新增纯元数据 stage/exit 诊断。
+- Windows CI 已验证 profile 环境修复后的 AppContainer 受管启动、staged 文件读取与私有文件拒绝。loopback 探针的阻塞 connect 在 WFP 丢包时超时，改为非阻塞 select + SO_ERROR，最多 1.5 秒；仍要求同一端口的沙箱外控制连接成功，不能用 worker 超时当作网络隔离通过。
+- CI run 38080631671（cf7d64a）：macOS / Windows 原生 SDK、UIA/Hello/AppContainer 编译、CTest、141 项回归均通过（各 2 项平台跳过）。Windows AppContainer 实际合成进程验证受管启动、staged 文件读取、私有文件及 loopback 隔离；Hello 人类认证和微信 UIA 仍待设备验收。更新 README/STATUS/SDK 文档与 PR 证据，保留 Draft。
+- PR 后续修正：监听分页同样进入 AET/账号租约/额度与提交前复核；本地基线 context 在处理后删除，仅 admitted batch 留待精确披露审阅。保留末页高水位便于增量读取，非文本媒体正文不取出 SQLite。
+- 新建纯 legacy venv 安装 requirements.txt 后 93 项发现结果通过（3 项跳过，含 2 个可选 AXR 测试模块），证明 opt-in 路径无原生编译依赖。
+- PR 后续修正：数据库 interrupt/close 生命周期加锁；所有者可显式关闭展示前缀，但密封意图中的 agent 来源仍保留。Win dependency binary cache 加入 CI。
+- PR 后续修正：每页完成后释放原生数据库连接，避免 Windows 持久句柄阻止微信分库轮换/替换；保留 generation/salt 变化检测与只读 pager。
+- Windows CI 实际发现 UIA SetValue 的 BSTR 类型错误，改为 SysAllocStringLen / SysFreeString；原生 SDK 改成显式 opt-in requirements.axr.txt / setup.ps1 -AXR，保留只装 Python 的 legacy 安装路径，未安装 SDK 时仅跳过其可选测试，原生加载错误仍失败。
+- PR 后续修正：Win 构建显式 UTF-8 / Windows API 版本；wheel/helper 安装收集运行时 DLL 并保留依赖 copyright，避免 Python 3.8+ DLL 搜索规则导致 native import 失败；Windows CI 同样加载 SQLCipher 做加密合成库验证。
+- PR 后续修正：披露意图绑定 context digest，本地终端/面板显示实际待披露内容，不能只用 opaque handle 代替精确审阅。
+- PR 后续修正：原生 Windows path/argv 按 UTF-8 转换，避免中文用户名/目录错误；SQLCipher 查询增加 5 秒 VM 进度上限，关闭服务时取消 runner；模型尝试与成功结果分开计数。
+- PR 后续修正：按 Microsoft 桌面应用文档使用 HWND / IUserConsentVerifierInterop，替换依赖 UWP CoreWindow 的 Windows Hello 调用；保持设备无可用验证方式时拒绝。
+
+#### 未关闭的验收
+
+- Mac 微信 4.1.15 没有暴露聊天 AX 树；增强 AX 失败、调试 capability 被系统拒绝（未读内存），数据目录被 macOS 权限拒绝；后续 GUI 测试又遇到锁屏。
+- 尚未取得/验证本机微信数据库密钥，指定会话读写与稳定身份映射、后台/锁屏/人工并发、OS 所有者审批、Windows 平台行为及长期 listener/runner 端到端均未通过。
+- 没有成熟安装签名/经过验收的原生配置 GUI/硬件防回滚/自动密钥初始化；Gen1 不提供 blanket 自动发送。完整架构发布验收仍开放，提交为开发 PR。
+- 本轮不发布账号标识、联系人、聊天内容、密钥、实际数据库路径、实机截图、私有仓库整树或第三方二进制。
+
+### 2026-10-10 — 开源数据库读取路线评估
+
+- 新增 docs/OPEN_SOURCE_READERS.md：固定提交核对 chatlog-keeper、wxq、wechat-cli-local 的许可证、页解密、WAL 和分页实现；首选评估 chatlog-keeper 的密钥模式判别与校验逻辑。
+- 记录候选的逐页校验/提交边界差异、Windows 快照锁及整库重新解密开销；更新下一步验证顺序，不将开源 README 的兼容声明作为本机证据。
+- 本项目 91 项回归测试通过。仅静态阅读候选源码，未安装或执行候选，未新增真实数据库读取、发送或可用后端；0.6.1 消息 -100 阻塞仍存在。
 
 ## 0.6.1 — 2026-10-10
 
