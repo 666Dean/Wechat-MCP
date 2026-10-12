@@ -62,3 +62,5 @@ $TaskHelper = Join-Path $PWD '.local-private\build\AXR\Release\axr-owner-auth.ex
 本次 Windows 本地回归覆盖口令归一化、salt 绑定、错误/篡改页拒绝，以及含中文、空格、美元符号和引号的路径生成 TOML。AXR 缺失时原生用例明确跳过，不使用替代 Guard。原生 SQLCipher 合成口令库的页密钥只读重开/拒写测试交由双平台 CI。
 
 本机当前 Python 为 3.14，未配置 C++/CMake 原生构建工具，不能据此称为 Python 3.12 安装或 Hello/微信设备验收。Windows 真实后台读、压缩正文、重启/锁屏、人工提交记录和长时监听仍需分别验收。本次没有读取真实聊天、取钥或发送。
+
+`6c674f7` 的 [Mac/Windows CI](https://github.com/666Dean/wechat-codex-mcp/actions/runs/38267106329) 已通过，Windows runner 实际执行完整安装器、SDK 导入和配置/helper 检查。自主读取组件与 WeFlow 主项目的参考定位见 [WEFLOW_REFERENCE.md](WEFLOW_REFERENCE.md)。

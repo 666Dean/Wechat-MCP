@@ -6,6 +6,8 @@
 
 2026-10-12 Windows 更新：同步 Mac 已合并方案，修复 AXR 安装入口生成 legacy 配置的问题，补齐 helper 构建/CTest 和显式口令模式的每库页密钥导入。配置路径生成与口令归一化本地回归通过；原生 AXR/SQLCipher 测试由双平台 CI 独立验证。本机缺少原生 SDK/构建工具，原生用例明确跳过；未进行 Hello、真实微信读取或发送验收。见 [Windows 更新指南](WINDOWS_UPDATE.md)。
 
+代码 `6c674f7` 的 [双平台 CI](https://github.com/666Dean/wechat-codex-mcp/actions/runs/38267106329) 已通过：Mac/Windows 各发现 235 项，分别执行 232/227 项、跳过 3/8 项；原生构建/CTest、真实合成 SQLCipher 口令库只读重开通过，Windows 另实际执行完整 AXR 安装器。新增 [WeFlow 主项目参考](WEFLOW_REFERENCE.md) 和 legacy 可选导出/能力诊断；接口存在不代表实机资格，自主 SQLCipher 适配器不等同 WeFlow 可加载 DLL。
+
 本轮验收转为 [Codex 读取 → 回信任务 → 人工提交](CODEX_MANUAL_REPLY.md)。新增加密、限时、容量 50 的持久化收件箱，没有外部 runner 也不会丢弃准入消息；元数据 long-poll 区分显式读取和新入站回信。Codex 读取获准正文后生成带来源的草稿，本地面板核对目标并显式复制，由人提交。`--manual-replies` 在执行前阻断发送，主动发送原型单独保留。一次所有者工作会话限账号/私聊、目的/分类/目标、时间/读取额度和最多 12 批，每批精确批准保持；MCP 没有会话或 issuer 管理工具。
 
 当前实机证据：真实 stdio MCP 读取两个既有绑定私聊，近 14 天文本数量为 2 和 0，未将空本人私聊换成文件传输助手。真正 Codex Agent 经 MCP 读取两份获准上下文、生成两份 Completed 草稿并完成两个 DraftReadyForHuman；本地密封草稿复核与审计通过，无 shell 执行或 Agent 发送。正式有限时 worker 又捕获 1 条真实入站消息，events_seen/admitted 与 reply_tasks_created 各为 1；其精确披露 Completed，生成 1 份 DraftReadyForHuman，审计有效。随后停止 worker/所有者会话并撤权、关闭三个控制开关；人工微信提交与记录观察另见下方独立身份闭环，不能用草稿完成替代。
