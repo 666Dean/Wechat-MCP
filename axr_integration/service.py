@@ -35,7 +35,9 @@ class Service:
         # Global per-user lease root independent of journal/config locations.
         lease_root=Path(leases) if leases else Path.home()/".stellaria-axr"/"leases"
         self.lifetime=Lease(lease_root,["journal",str(self.store.directory)])
-        self.lifetime.__enter__()
+        try:self.lifetime.__enter__()
+        except BaseException:
+            self.store.close();raise
         try:
             if not self.journal.verify_audit():raise AXRError("journal_audit_integrity_failed")
             self.journal.recover();self.journal.purge()

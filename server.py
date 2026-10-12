@@ -39,8 +39,9 @@ def main():
                 or args.import_keeper_key is not None):
             parser.error("AXR mode cannot mix legacy/demo/owner-management switches")
         from axr_integration.service import Service,register
+        from axr_integration.lifecycle import DeferredService
         from mcp.server import MCPServer
-        service=Service(args.axr_state,manual_replies=args.manual_replies)
+        service=(Service if args.doctor else DeferredService)(args.axr_state,manual_replies=args.manual_replies)
         try:
             if args.doctor:
                 print(json.dumps(service.status(),ensure_ascii=False,indent=2));return

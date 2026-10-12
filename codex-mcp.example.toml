@@ -3,6 +3,8 @@
 # Contact writes are disabled by default. Add "--allow-contact-management" to args
 # only for a trusted client; this grants a capability, not owner authentication.
 [mcp_servers.wechat-personal]
+# Keep normal Codex chats usable if this optional local integration is unavailable.
+required = false
 command = "C:/path/to/wechat-codex-mcp/.venv/Scripts/python.exe"
 args = ["C:/path/to/wechat-codex-mcp/server.py"]
 cwd = "C:/path/to/wechat-codex-mcp"
