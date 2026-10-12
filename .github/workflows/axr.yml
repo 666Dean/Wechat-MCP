@@ -57,7 +57,9 @@ jobs:
       - name: Root helpers and native tests (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: python scripts/build_axr.py --config Release --toolchain "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+        run: |
+          .\setup.ps1 -AXR -PythonExe (Get-Command python).Source -Toolchain "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -AXRState "$env:RUNNER_TEMP/AXR install fixture"
+          .\.venv\Scripts\python.exe -c "import pathlib,tomllib,axr; c=tomllib.loads(pathlib.Path('codex-axr.toml').read_text(encoding='utf8')); s=c['mcp_servers']['wechat_axr']; assert '--manual-replies' in s['args']; assert pathlib.Path(s['command']).is_file(); assert pathlib.Path('.local-private/build/AXR/Release/axr-owner-auth.exe').is_file()"
       - name: Native sandbox witness path (macOS)
         if: runner.os == 'macOS'
         run: |
