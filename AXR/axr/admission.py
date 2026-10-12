@@ -39,6 +39,8 @@ class Admission:
         self.pending={}
 
     def evaluate(self, resource, events, policy, authorize, *, replay=False):
+        if type(policy.get('all_incoming',False)) is not bool:
+            raise AXRError('all_incoming_control_requires_boolean')
         decisions=[]
         if not policy.get("listen",False):
             return {"decisions":[],"model_calls":0,"state":"listener_off"}
@@ -52,7 +54,7 @@ class Admission:
                 reason="expired_or_future"
             elif policy.get("senders") and event.get("sender") not in policy["senders"]:
                 reason="sender_not_in_workflow"
-            elif not any(k in event["text"] for k in policy.get("keywords",[])):
+            elif not policy.get('all_incoming',False) and not any(k in event["text"] for k in policy.get("keywords",[])):
                 reason="no_local_rule_match"
             elif not replay and self.journal.seen(resource,reference):
                 reason="duplicate"

@@ -27,11 +27,12 @@ def qualify_existing_contacts(store,policy,labels):
         store.secrets.get(item['key_reference']),policy['account_id'],labels,account_root=root)
 
 
-def setup(store,ttl,uses,contacts=None):
+def setup(store,ttl,uses,contacts=None,all_incoming=False):
+    if type(all_incoming) is not bool:raise AXRError('wechat_control_requires_boolean')
     if type(ttl) is not int or not 60<=ttl<=3600 or type(uses) is not int or not 1<=uses<=500:
         raise AXRError('codex_setup_budget_invalid')
     policy=store.config()
-    if not policy.get('database') or not 1<=len(policy['conversations'])<=32:
+    if not policy.get('database') or not 1<=len(policy['conversations'])<=(4096 if contacts is not None else 32):
         raise AXRError('qualified_database_and_private_bindings_required')
     if contacts is not None:
         policy={**policy,'conversations':qualify_existing_contacts(store,policy,contacts),
@@ -42,7 +43,9 @@ def setup(store,ttl,uses,contacts=None):
     policy={**policy,'mode':'wcdb','agent_destination':'model:codex',
             'runner':{'enabled':False},'listener':{'listen':True,'wake_agent':True,'auto_execute':False,
             'start_from_now':True,'keywords':['AXR测试','@Codex'],'aggregate_seconds':2,'poll_seconds':5,
+            'all_incoming':all_incoming,
             'event_ttl':300,'workflow':'manual'}}
+    policy.pop('account_review',None)
     validate_controls(policy)
     store.guard.revoke_owner('policy-change');store.seal_config(policy)
     for binding in policy['conversations']:
@@ -81,9 +84,9 @@ def approve_session_task(store,task,policy):
     return True
 
 
-def session(store,ttl,uses,batches,contacts=None):
+def session(store,ttl,uses,batches,contacts=None,all_incoming=False):
     if type(batches) is not int or not 1<=batches<=12:raise AXRError('owner_session_batch_limit')
-    result=setup(store,ttl,uses,contacts);policy=store.config();seal=digest(policy)
+    result=setup(store,ttl,uses,contacts,all_incoming);policy=store.config();seal=digest(policy)
     deadline=time.monotonic()+ttl;wall_deadline=time.time()+ttl;version=store.guard.version
     inbox=Inbox(store.journal,store.guard,policy['principal']);seen=set();approved=0
     print(json.dumps({**result,'owner_session_started':True,'max_disclosures':batches}),flush=True)
@@ -119,6 +122,7 @@ def main():
     delegated=sub.add_parser('session');delegated.add_argument('--ttl',type=int,default=3600)
     delegated.add_argument('--uses',type=int,default=400);delegated.add_argument('--batches',type=int,default=12)
     delegated.add_argument('--contact',action='append',help='Exact owner-selected contact labels replacing previous bindings')
+    delegated.add_argument('--all-incoming',action='store_true',help='Owner opt-in: draft tasks for all new incoming text, no keyword required')
     args=p.parse_args()
     try:
         if args.command=='approve':
@@ -134,7 +138,7 @@ def main():
                         raise AXRError('codex_context_disclosure_only')
         authenticate(args.helper)
         with closing(OwnerStore(args.state)) as store:
-            if args.command=='session':session(store,args.ttl,args.uses,args.batches,args.contact);return
+            if args.command=='session':session(store,args.ttl,args.uses,args.batches,args.contact,args.all_incoming);return
             if args.command=='setup':result=setup(store,args.ttl,args.uses)
             else:
                 principal=store.config()['principal']

@@ -17,6 +17,19 @@ func children(_ node: AXUIElement) -> [AXUIElement] {
     return attr(node, kAXChildrenAttribute) as? [AXUIElement] ?? []
 }
 func string(_ node: AXUIElement, _ key: String) -> String { return attr(node, key) as? String ?? "" }
+final class MetadataTraversal {
+    var seen: [CFHashCode:[AXUIElement]] = [:]
+    var cycles = 0
+    var foreign = 0
+    func accept(_ node:AXUIElement, pid:pid_t) -> Bool {
+        var actual:pid_t = 0
+        guard AXUIElementGetPid(node,&actual) == .success, actual == pid else { foreign += 1; return false }
+        let key=CFHash(node)
+        if seen[key,default:[]].contains(where:{ CFEqual($0,node) }) { cycles += 1; return false }
+        seen[key,default:[]].append(node)
+        return true
+    }
+}
 func value(_ node: AXUIElement) -> String {
     for key in [kAXValueAttribute, kAXTitleAttribute, kAXDescriptionAttribute] {
         let v = string(node, key)
@@ -140,6 +153,8 @@ func main() throws -> [String:Any] {
         // Window health excludes menu search fields; never ask for content.
         var visited = 0, editable = 0, text = 0, truncated = false
         var errors: [String:Int] = [:]
+        let traversal=MetadataTraversal()
+        var invalidRoots=0
         func metadata(_ node: AXUIElement, _ key: String) -> CFTypeRef? {
             var result: CFTypeRef?
             let code = AXUIElementCopyAttributeValue(node,key as CFString,&result)
@@ -147,26 +162,36 @@ func main() throws -> [String:Any] {
             return result
         }
         func walk(_ node: AXUIElement, _ depth: Int) {
+            guard traversal.accept(node,pid:app.processIdentifier) else { return }
             guard visited < 1500, depth <= 16 else { truncated = true; return }
             visited += 1
             let role = metadata(node,kAXRoleAttribute) as? String ?? ""
+            if ["AXApplication","AXMenuBar","AXMenuBarItem","AXMenu","AXMenuItem"].contains(role) { return }
             if ["AXTextArea","AXTextField","AXComboBox"].contains(role) { editable += 1 }
             if role == "AXStaticText" { text += 1 }
             let descendants = metadata(node,kAXChildrenAttribute) as? [AXUIElement] ?? []
             for child in descendants { walk(child,depth+1) }
         }
         let windows = metadata(root,kAXWindowsAttribute) as? [AXUIElement]
-        if let windows { for window in windows { walk(window,0) } }
+        if let windows { for window in windows {
+            guard string(window,kAXRoleAttribute)=="AXWindow" else { invalidRoots += 1; truncated=true; continue }
+            walk(window,0)
+        } }
         else { truncated = true }
         return ["pid":app.processIdentifier,"nodes_visited":visited,"editable_nodes":editable,
             "text_nodes":text,"window_count":windows?.count ?? 0,"scope":"application_windows",
             "truncated":truncated,"attribute_errors":errors,"content_read":false]
+            .merging(["cycle_nodes_skipped":traversal.cycles,"foreign_nodes_skipped":traversal.foreign,
+                      "invalid_window_roots":invalidRoots]) { _,new in new }
     }
     if op == "structure" {
         // Selector metadata only. Redacting after fetching text is insufficient.
         var records: [[String:Any]] = []
+        let traversal=MetadataTraversal()
+        var truncated=false
         func walk(_ n: AXUIElement, _ p: [Int], _ depth: Int) {
-            guard records.count < 1500, depth <= 16 else { return }
+            guard traversal.accept(n,pid:app.processIdentifier) else { return }
+            guard records.count < 1500, depth <= 16 else { truncated=true; return }
             let c = children(n)
             let item: [String:Any] = ["path":p, "role":string(n,kAXRoleAttribute), "children":c.count,
                 "identifier":string(n,kAXIdentifierAttribute)]
@@ -174,7 +199,8 @@ func main() throws -> [String:Any] {
             for (i,ch) in c.enumerated() { walk(ch,p+[i],depth+1) }
         }
         walk(root,[],0)
-        return ["nodes":records, "pid":app.processIdentifier, "text_redacted":true]
+        return ["nodes":records, "pid":app.processIdentifier, "text_redacted":true,
+                "cycle_nodes_skipped":traversal.cycles,"foreign_nodes_skipped":traversal.foreign,"truncated":truncated]
     }
     if op == "visual_capabilities" { return visualCapabilities(pid: app.processIdentifier) }
     if op == "read_ocr" {
