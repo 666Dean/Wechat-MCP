@@ -1,5 +1,7 @@
 # WCDB 数据库读取原型（0.6.2）
 
+2026-10-12：参考 WeFlow 的可插拔协议，生命周期接口必需、查询接口按需检测。`wechat_status.native_capabilities` 仅报告导出存在性；缺少消息接口时会话诊断可继续，实际消息读取明确失败。游标三接口完整检测不启用游标、不证明实机资格。新 AXR 原生 SQLCipher 适配器另见 [Windows 更新](WINDOWS_UPDATE.md) / [WeFlow 参考与自主组件设计](WEFLOW_REFERENCE.md)。
+
 2026-10-10：真实账号打开与会话/显示名查询成功；**单私聊消息查询返回 -100，正文读取未通过**。
 ABI 对照 [EchoTrace v3.0.2 FFI 源码](https://github.com/ycccccccy/echotrace/blob/98280f0d0d7b764b2f2027fc4d103024e8ed30fd/lib/services/wechat_wcdb_native.dart)
 与 [原生接口文档](https://github.com/ycccccccy/echotrace/blob/98280f0d0d7b764b2f2027fc4d103024e8ed30fd/docs/wcdb_realtime.md)。

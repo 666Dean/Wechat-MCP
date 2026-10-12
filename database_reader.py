@@ -285,9 +285,25 @@ class WcdbReader:
             "wcdb_get_messages": ([C.c_int64, C.c_char_p, C.c_int32, C.c_int32, out], C.c_int32),
             "wcdb_get_display_names": ([C.c_int64, C.c_char_p, out], C.c_int32),
         }
+        lifecycle = {"wcdb_init", "wcdb_shutdown", "wcdb_open_account",
+                     "wcdb_close_account", "wcdb_free_string"}
         for name, (args, result) in specs.items():
-            function = getattr(self.native, name)
+            function = getattr(self.native, name, None)
+            if function is None:
+                if name in lifecycle:
+                    raise ReaderError(f"WCDB 组件缺少必要接口：{name}")
+                continue
             function.argtypes, function.restype = args, result
+
+    def capabilities(self):
+        """Export presence is diagnostic metadata, never runtime qualification."""
+        return {"sessions": getattr(self.native, "wcdb_get_sessions", None) is not None,
+                "display_names": getattr(self.native, "wcdb_get_display_names", None) is not None,
+                "messages": getattr(self.native, "wcdb_get_messages", None) is not None,
+                "message_cursor_exports_complete": all(getattr(self.native, name, None) is not None for name in (
+                    "wcdb_open_message_cursor", "wcdb_fetch_message_batch", "wcdb_close_message_cursor")),
+                "message_cursor_enabled": False,
+                "runtime_qualified": False}
 
     @staticmethod
     def _check(code, operation):
@@ -296,9 +312,12 @@ class WcdbReader:
 
     def _json(self, operation, *args, expected=list):
         self._verify()
+        function = getattr(self.native, "wcdb_" + operation, None)
+        if function is None:
+            raise ReaderError(f"WCDB 组件不支持所需查询：{operation}")
         pointer = C.c_void_p()
         try:
-            code = getattr(self.native, "wcdb_" + operation)(self.handle, *args, C.byref(pointer))
+            code = function(self.handle, *args, C.byref(pointer))
             self._check(code, operation)
             if not pointer.value:
                 raise ReaderError("原生查询未返回 JSON 指针")

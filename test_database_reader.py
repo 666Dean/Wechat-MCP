@@ -513,6 +513,49 @@ class DatabaseTests(unittest.TestCase):
     def native_reader(self, native):
         return WcdbReader(self.config["database_reader"], native=native, key_loader=lambda c: "a" * 64)
 
+    def test_optional_message_export_keeps_catalog_but_fails_message_reads(self):
+        native = FakeNative(); del native.wcdb_get_messages
+        reader = self.native_reader(native)
+        try:
+            rows, names = reader.sessions()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(names, native.names)
+            self.assertEqual(len(reader.session_catalog()['sessions']), 1)
+            self.assertFalse(reader.capabilities()['messages'])
+            self.reader.close(); self.bridge.reader = reader
+            status = self.bridge.status()
+            self.assertTrue(status['connected'])
+            self.assertFalse(status['native_capabilities']['messages'])
+            self.assertFalse(status['native_capabilities']['runtime_qualified'])
+            self.assertFalse(status['send_enabled'])
+            with self.assertRaisesRegex(ReaderError, '不支持所需查询：get_messages'):
+                reader.messages('wxid_friend', 1, 0)
+            self.assertEqual(native.buffers, {})
+        finally: reader.close()
+        self.assertEqual(native.closed, [native.large_handle])
+        self.assertEqual(native.shutdowns, 1)
+
+    def test_lifecycle_exports_are_required_before_initialization_or_key_loading(self):
+        for name in ('wcdb_init', 'wcdb_shutdown', 'wcdb_open_account', 'wcdb_close_account', 'wcdb_free_string'):
+            native = FakeNative(); delattr(native, name)
+            if name != 'wcdb_init': native.wcdb_init = Mock(side_effect=AssertionError('must not initialize'))
+            with self.assertRaisesRegex(ReaderError, '缺少必要接口：' + name):
+                WcdbReader(self.config['database_reader'], native=native,
+                           key_loader=Mock(side_effect=AssertionError('must not load key')))
+            self.assertEqual(native.closed, [])
+            self.assertEqual(native.shutdowns, 0)
+
+    def test_cursor_capability_requires_full_group_and_never_invokes_exports(self):
+        native = FakeNative(); reader = self.native_reader(native)
+        try:
+            for index, name in enumerate(('wcdb_open_message_cursor', 'wcdb_fetch_message_batch', 'wcdb_close_message_cursor')):
+                setattr(native, name, Mock(side_effect=AssertionError('capability inspection must not call native code')))
+                capabilities = reader.capabilities()
+                self.assertEqual(capabilities['message_cursor_exports_complete'], index == 2)
+                self.assertFalse(capabilities['message_cursor_enabled'])
+                self.assertFalse(capabilities['runtime_qualified'])
+        finally: reader.close()
+
     def test_ffi_int64_utf8_pointer_free_and_close(self):
         native = FakeNative()
         reader = self.native_reader(native)

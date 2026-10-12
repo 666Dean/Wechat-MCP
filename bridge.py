@@ -300,9 +300,12 @@ class Bridge:
             from database_reader import validate_sessions
             def inspect(reader):
                 rows, names = reader.sessions()
-                return validate_sessions(rows, names, self.reader_config["conversations"])
-            count = self.database_call(inspect)
+                count = validate_sessions(rows, names, self.reader_config["conversations"])
+                capabilities = reader.capabilities() if callable(getattr(reader, "capabilities", None)) else None
+                return count, capabilities
+            count, capabilities = self.database_call(inspect)
             return {"backend": "wcdb", "connected": True,
+                    "native_capabilities": capabilities,
                     "scan_mode": self.reader_config.get("scan_mode", "full"),
                     "coverage": "configured_database_conversations_only", "session_count": count,
                     "bound_conversation_count": len(self.reader_config["conversations"]),
