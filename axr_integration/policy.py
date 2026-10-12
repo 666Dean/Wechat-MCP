@@ -5,7 +5,7 @@ from axr.aet import AXRError
 
 def validate_controls(config):
     if not isinstance(config,dict):raise AXRError('invalid_wechat_policy')
-    for section,names in (('listener',('listen','wake_agent','auto_execute')),('runner',('enabled',))):
+    for section,names in (('listener',('listen','wake_agent','auto_execute','start_from_now')),('runner',('enabled',))):
         controls=config.get(section,{})
         if not isinstance(controls,dict):raise AXRError('invalid_wechat_controls')
         for name in names:

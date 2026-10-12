@@ -17,7 +17,7 @@ class Budget:
             raise AXRError("invalid_budget_reservation")
         now=int(self.journal.clock());window=now//seconds*seconds
         key=hashlib.sha256(identity.encode()).hexdigest()
-        # Adapted from Hub: reject without incrementing if this reservation exceeds the ceiling.
+        # Reject without incrementing when the reservation exceeds its ceiling.
         self.db.execute("BEGIN IMMEDIATE")
         try:
             self.db.execute("DELETE FROM throttle WHERE window<?",(now-86400*2,))

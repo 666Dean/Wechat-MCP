@@ -15,7 +15,9 @@ from axr.admission import Budget,Admission
 from .policy import validate_controls
 
 class Service:
-    def __init__(self,state,*,store=None,adapter=None,leases=None):
+    def __init__(self,state,*,store=None,adapter=None,leases=None,manual_replies=False):
+        if type(manual_replies) is not bool:raise AXRError('manual_reply_control_requires_boolean')
+        self.manual_replies=manual_replies
         self.store=store or OwnerStore(state)
         self.guard,self.journal=self.store.guard,self.store.journal
         try:self.config=validate_controls(self.store.config())
@@ -68,6 +70,9 @@ class Service:
             self.runner_supervisor=Supervisor(timeout=min(60,self.config.get("runner",{}).get("timeout",30)))
             self.baselines=set();self.cursors={};self.pending_drafts=[]
             self.active_policy_version=self.guard.version
+            from .inbox import Inbox
+            self.inbox=Inbox(self.journal,self.guard,self.principal)
+            self.listener_since=int(self.journal.clock())
         except BaseException:
             self.lifetime.__exit__();self.store.close();raise
 
@@ -85,6 +90,7 @@ class Service:
             "policy_version":self.guard.version,"listener":{k:self.config.get("listener",{}).get(k,False) for k in ("listen","wake_agent","auto_execute")},
             "metrics":self.journal.metrics(),"audit_valid":self.journal.verify_audit(),
             "approval":"local_owner_os_authentication","unknown_retry":False,
+            "reply_submission":"human" if self.manual_replies else "approved_adapter",
             "navigation":{"enabled":self.navigation is not None,
                 "actions":list(self.config.get("navigation",{}).get("actions",[])),
                 "scope":"application_menu_only","message_send_authority":False},
@@ -137,13 +143,15 @@ class Service:
         options=dict(action.payload)
         options.pop("visual_binding",None) # Sealed owner selector, not a query filter.
         readback_job=options.pop("readback_job",None)
+        manual_readback=options.pop('manual_readback_job',None)
         if self.config["mode"]=="ui":options["guard_context"]=check.commit_proof()
         page=self.adapter.search(action.resource.conversation_id,**options)
         check() # A changed policy cannot disclose or persist a newly fetched page.
         self.journal.meter("pages_read")
-        if readback_job is not None:
-            original=self.journal.action(self.journal.get(readback_job,self.principal))
-            if original.operation!="messages.send" or original.resource!=action.resource:
+        if readback_job is not None or manual_readback is not None:
+            original=self.journal.action(self.journal.get(readback_job or manual_readback,self.principal))
+            expected='reply.prepare' if manual_readback else 'messages.send'
+            if original.operation!=expected or original.resource!=action.resource:
                 raise AXRError("readback_resource_changed")
             matches=[m for m in page["messages"] if m.get("text")==original.payload["text"] and m.get("outgoing") is True
                      and m.get("sender")==self.account and type(m.get("server_id")) is int and m["server_id"]>0
@@ -226,9 +234,12 @@ class Service:
     def _prepare(self,action,check,epoch):
         check()
         cid=self.journal.remember(self.principal,action.resource,{"draft":asdict(action)},self.guard.version,ttl=900)
-        return {"epoch":epoch,"verified":True,"evidence_digest":action.seal,"output":{"draft_id":cid,"preview":True}}
+        return {"epoch":epoch,"verified":True,"evidence_digest":action.seal,
+            "output":{"draft_id":cid,"preview":True,"manual_submission":self.manual_replies,
+                      "automatic_send":False}}
 
     def propose_send(self,conversation_id,draft_id):
+        if self.manual_replies:raise AXRError('human_submission_only')
         resource=self.resource(conversation_id)
         data=self.journal.context(draft_id,self.principal,resource,self.guard.version)
         draft=Action.from_dict(data["draft"])
@@ -237,6 +248,7 @@ class Service:
             destination="wechat:"+resource.key,workflow=draft.workflow))
 
     def _send(self,action,check,epoch):
+        if self.manual_replies:raise AXRError('human_submission_only')
         if self.config["mode"] not in {"ui","hybrid"}:raise AXRError("database_read_mode_has_no_send_authority")
         return self.adapter.send(action,check,epoch)
 
@@ -266,11 +278,36 @@ class Service:
             summary.update(read["result"])
             return summary
 
+    def observe_manual_reply(self,jid):
+        """Observe an exact human-submitted draft; never claim AXR sent it."""
+        with self.runtime.lock:
+            self.ensure_policy()
+            if self.config['mode'] not in {'wcdb','hybrid'}:raise AXRError('database_readback_required')
+            row=self.journal.get(jid,self.principal);action=self.journal.action(row)
+            if row['state']!='Completed' or action.operation!='reply.prepare':
+                raise AXRError('completed_reply_draft_required')
+            self.guard.revalidate(action,row['grant_id'],row['policy_version'])
+            read_action=self._read_action(action.resource.conversation_id,
+                {'query':action.payload['text'][:256],'sender':self.account,'since':max(0,int(row['created'])-1),
+                 'until':2**63-1,'after':None,'limit':50,'manual_readback_job':jid})
+            classes={p.data_class for p in action.sources}
+            read_action=replace(read_action,sources=(*read_action.sources,
+                *(Provenance(action.resource,'manual-readback-class:'+c,c) for c in sorted(classes))))
+            read=self.runtime.propose(read_action)
+            if read['state']=='Ready':read=self.execute(read['id'])
+            result={'submission':'human','agent_sent':False,'delivery_confirmed':False,
+                    'database_record_observed':False,'read_job':read}
+            if read['state']=='Completed':result.update(read['result'])
+            return result
+
     def execute(self,jid,dry_run=False):
         with self.runtime.lock:return self._execute_locked(jid,dry_run)
 
     def _execute_locked(self,jid,dry_run=False):
         self.ensure_policy()
+        if self.manual_replies:
+            row=self.journal.get(jid,self.principal)
+            if self.journal.action(row).operation=='messages.send':raise AXRError('human_submission_only')
         receipt=self.runtime.execute(jid,self.principal,dry_run)
         if receipt.get("state")=="Completed":
             row=self.journal.get(jid,self.principal);action=self.journal.action(row)
@@ -290,6 +327,83 @@ class Service:
         return self.runtime.propose(self._action(conversation_id,"workspace.write",{"path":path,"text":text},
             sources=self._sources(self.resource(conversation_id),context_ids)))
 
+    def poll_tasks(self):
+        with self.runtime.lock:
+            self.ensure_policy();self.journal.purge()
+            tasks=[]
+            for task in self.inbox.list():
+                self.resource(task['conversation_id'])
+                job=self.journal.get(task['disclosure_job'],self.principal)
+                state=job['state']
+                if state=='AwaitingApproval':
+                    try:self.guard.check(self.journal.action(job));state='Ready'
+                    except AXRError:pass
+                tasks.append({'task_id':task['id'],'conversation_id':task['conversation_id'],
+                    'disclosure_job':job['id'],'state':'DraftReadyForHuman' if task['draft_job'] else state,
+                    'draft_job':task['draft_job'],'expires':task['expires'],'body_disclosed':False,
+                    'origin':task.get('origin','incoming_reply')})
+            return {'tasks':tasks,'submission':'human','automatic_send':False}
+
+    def request_task(self,conversation_id,since=0,limit=6):
+        """Explicit bounded context task, distinct from a newly received message."""
+        with self.runtime.lock:
+            if type(limit) is not int or not 1<=limit<=6:raise AXRError('reply_task_page_limit')
+            read=self.read(conversation_id,since=since,limit=limit)
+            if read['state']!='Completed':return {'read_job':read,'body_disclosed':False}
+            handle=read['result']['context_id'];proposal=self.disclose(conversation_id,handle)
+            task_id=self.inbox.create(self.resource(conversation_id),handle,proposal['id'],origin='explicit_read')
+            return {'task_id':task_id,'disclosure_job':proposal['id'],'read_job':read,
+                    'body_disclosed':False,'automatic_send':False,'origin':'explicit_read'}
+
+    def wait_tasks(self,timeout=40,after=None):
+        if type(timeout) is not int or not 0<=timeout<=45:raise AXRError('invalid_task_wait_timeout')
+        if after is None:after={}
+        if not isinstance(after,dict) or len(after)>50 or any(not isinstance(k,str) or not isinstance(v,str) for k,v in after.items()):
+            raise AXRError('invalid_task_wait_state')
+        deadline=time.monotonic()+timeout
+        while True:
+            result=self.poll_tasks()
+            result['tasks']=[t for t in result['tasks'] if after.get(t['task_id'])!=t['state']]
+            if result['tasks'] or self.stop_event.is_set() or time.monotonic()>=deadline:return result
+            self.stop_event.wait(min(0.5,max(0,deadline-time.monotonic())))
+
+    def task_context(self,task_id):
+        with self.runtime.lock:
+            self.ensure_policy();task=self.inbox.get(task_id)
+            resource=self.resource(task['conversation_id'])
+            row=self.journal.get(task['disclosure_job'],self.principal)
+            action=self.journal.action(row)
+            if (action.resource!=resource or action.operation!='disclosure.send' or
+                    action.payload.get('context_id')!=task['context_id'] or action.payload.get('runner')):
+                raise AXRError('reply_task_disclosure_binding_mismatch')
+            if row['state']=='AwaitingApproval':
+                try:self.guard.check(action)
+                except AXRError:return {'state':'AwaitingApproval','job_id':row['id'],'body_disclosed':False}
+            result=self.execute(row['id'])
+            return {'task_id':task_id,'conversation_id':task['conversation_id'],
+                    'context_id':task['context_id'],'body_disclosed':result.get('state')=='Completed' and 'result' in result,
+                    'disclosure':result,'submission':'human','automatic_send':False}
+
+    def finish_task(self,task_id,draft_job):
+        with self.runtime.lock:
+            self.ensure_policy();task=self.inbox.get(task_id)
+            row=self.journal.get(draft_job,self.principal);action=self.journal.action(row)
+            if (row['state']!='Completed' or action.operation!='reply.prepare' or
+                    action.resource!=self.resource(task['conversation_id'])):
+                raise AXRError('completed_matching_reply_draft_required')
+            disclosure=self.journal.get(task['disclosure_job'],self.principal)
+            if disclosure['state']!='Completed':raise AXRError('reply_task_context_not_disclosed')
+            self.guard.revalidate(self.journal.action(disclosure),disclosure['grant_id'],disclosure['policy_version'])
+            context=self.journal.context(task['context_id'],self.principal,action.resource,self.guard.version)
+            expected={m['reference'] for m in context['messages']}
+            actual={p.reference for p in action.sources if p.resource==action.resource}
+            if not expected.issubset(actual):raise AXRError('reply_task_sources_missing')
+            self.guard.revalidate(action,row['grant_id'],row['policy_version'])
+            self.journal.result(draft_job,self.principal,self.guard.version)
+            self.inbox.finish(task_id,draft_job)
+            return {'state':'DraftReadyForHuman','task_id':task_id,'draft_job':draft_job,
+                    'automatic_send':False,'submission':'human'}
+
     def tick(self):
         # Config controls are read on every tick. Any revocation invalidates cached context and workers.
         with self.runtime.lock:
@@ -304,6 +418,7 @@ class Service:
             # Privacy maintenance continues while all business controls are off.
             # Purge never reads WeChat or deletes an active commit's payload.
             self.journal.purge()
+            self.inbox.purge()
             policy=self.config.get("listener",{})
             if not policy.get("listen",False):self.admission.clear();return {"state":"listener_off"}
             if policy.get("auto_execute",False):
@@ -320,7 +435,9 @@ class Service:
                 resource=self.resource(cid)
                 # Listener pages use the same AET/lease/quota path as explicit reads.
                 # Six bounded text records fit the 24k local context budget.
-                payload=dict(query="",sender=None,since=0,until=2**63-1,after=self.cursors.get(cid),limit=6)
+                from_now=policy.get('start_from_now',False)
+                payload=dict(query="",sender=None,since=self.listener_since if from_now else 0,
+                             until=2**63-1,after=self.cursors.get(cid),limit=6)
                 action=self._read_action(cid,payload,workflow=policy.get("workflow","manual"))
                 self.guard.check(action)
                 proposal=self.runtime.propose(action);receipt=self.execute(proposal["id"])
@@ -335,7 +452,7 @@ class Service:
                 # admitted runner batch creates a new reviewable disclosure context.
                 for handle in (result["context_id"],cursor):
                     if handle:self.journal.db.execute("DELETE FROM contexts WHERE id=? AND principal=?",(handle,self.principal))
-                if resource.key not in self.baselines:
+                if not from_now and resource.key not in self.baselines:
                     for m in page["messages"]:self.journal.seen(resource,m["reference"])
                     if not result["has_more"]:self.baselines.add(resource.key)
                     continue
@@ -344,7 +461,15 @@ class Service:
                 batch=self.admission.drain(resource,policy)
                 if batch:
                     if not self.config.get("runner",{}).get("enabled",False):
-                        self.journal.meter("runner_disabled_batches");continue
+                        data={'messages':batch,'coverage':'admitted_listener_batch','complete_history':False}
+                        handle=self.journal.remember(self.principal,resource,data,self.guard.version,ttl=300)
+                        try:
+                            proposal=self.disclose(cid,handle)
+                            self.inbox.create(resource,handle,proposal['id'])
+                        except BaseException:
+                            self.journal.db.execute('DELETE FROM contexts WHERE id=? AND principal=?',(handle,self.principal))
+                            raise
+                        self.journal.meter('reply_tasks_created');continue
                     self.journal.meter("runner_proposals")
                     from .runner import run
                     # Runner receives only scoped data after independent disclosure approval.
@@ -376,9 +501,9 @@ class Service:
 
 def register(mcp,service):
     # Sync handlers are executed by the MCP SDK; Runtime serializes account transactions.
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint":True})
     def wechat_status()->dict:return service.status()
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint":True})
     def wechat_find_conversations()->dict:return service.conversations()
     @mcp.tool()
     def wechat_ui_navigate(command:str)->dict:
@@ -396,6 +521,30 @@ def register(mcp,service):
     @mcp.tool()
     def wechat_prepare_reply(conversation_id:str,text:str,context_ids:list[str])->dict:
         return service.prepare(conversation_id,text,context_ids)
+    @mcp.tool(annotations={"readOnlyHint":True})
+    def wechat_poll_tasks()->dict:
+        """List scoped reply tasks without message bodies; approval stays with the local owner."""
+        return service.poll_tasks()
+    @mcp.tool()
+    def wechat_request_task(conversation_id:str,since:int=0,limit:int=6)->dict:
+        """Request a bounded context task; old content is not a newly received reply."""
+        return service.request_task(conversation_id,since,limit)
+    @mcp.tool(annotations={"readOnlyHint":True})
+    def wechat_wait_for_tasks(timeout:int=40,after:dict[str,str]|None=None)->dict:
+        """Wait up to 45 seconds for metadata only. Requires a running, authorized listener."""
+        return service.wait_tasks(timeout,after)
+    @mcp.tool()
+    def wechat_get_task_context(task_id:str)->dict:
+        """Return an exact owner-approved batch; unapproved tasks return metadata only."""
+        return service.task_context(task_id)
+    @mcp.tool()
+    def wechat_finish_task(task_id:str,draft_job:str)->dict:
+        """Associate a completed reply draft with its task. Human submission remains pending."""
+        return service.finish_task(task_id,draft_job)
+    @mcp.tool()
+    def wechat_observe_manual_reply(draft_job:str)->dict:
+        """Read WCDB for an exact human-submitted draft. Counts only; no send or delivery claim."""
+        return service.observe_manual_reply(draft_job)
     @mcp.tool()
     def wechat_propose_send(conversation_id:str,draft_id:str)->dict:
         return service.propose_send(conversation_id,draft_id)

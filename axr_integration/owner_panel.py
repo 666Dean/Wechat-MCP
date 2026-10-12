@@ -36,6 +36,14 @@ class Panel:
         ttk.Button(bar,text='Authenticate exact approval',command=lambda:self.decide(True)).pack(side='right')
         self.metrics=tk.Text(status,wrap='word',state='disabled');self.metrics.pack(fill='both',expand=True)
         ttk.Button(status,text='Refresh counters and verify audit',command=self.refresh).pack(anchor='e')
+        drafts=ttk.Frame(self.tabs);self.tabs.add(drafts,text='Manual replies')
+        ttk.Label(drafts,text='Review the exact private chat and AI attribution. Copy here; submit yourself in WeChat.').pack(anchor='w')
+        self.draft_list=ttk.Treeview(drafts,columns=('target',),show='tree headings',height=6)
+        self.draft_list.heading('#0',text='Draft job');self.draft_list.heading('target',text='Target')
+        self.draft_list.pack(fill='x');self.draft_list.bind('<<TreeviewSelect>>',self.select_draft)
+        self.draft_text=tk.Text(drafts,wrap='word',state='disabled');self.draft_text.pack(fill='both',expand=True)
+        ttk.Button(drafts,text='Copy exact draft for manual submission',command=self.copy_draft).pack(anchor='e')
+        root.bind('<F6>',lambda event:(self.tabs.select(drafts),self.draft_list.focus_set(),'break')[-1])
         self.notice=tk.StringVar(value='Owner-only console. Chat content cannot change authority.')
         ttk.Label(root,textvariable=self.notice).pack(anchor='w',padx=12,pady=6)
         ttk.Label(root,text='F1: policy · F2: exact approvals · F3: telemetry · F4: draft controls · F5: refresh').pack(anchor='w',padx=12)
@@ -112,6 +120,26 @@ class Panel:
                 if allowed:approve(store,jid,principal)
                 else:store.journal.transition(jid,principal,'Denied')
         self.authenticated(commit)
+    def selected_draft(self):
+        selected=self.draft_list.selection()
+        if len(selected)!=1:raise AXRError('select_one_reply_draft')
+        return selected[0]
+    def select_draft(self,event=None):
+        self.draft_text.configure(state='normal');self.draft_text.delete('1.0','end')
+        try:
+            from .manual_reply import review_draft
+            with self.store() as store:value=review_draft(store,self.selected_draft())
+            self.draft_text.insert('1.0',value['display_name']+'\n'+value['conversation_id']+'\n\n'+value['text'])
+        except AXRError as exc:self.notice.set(str(exc))
+        finally:self.draft_text.configure(state='disabled')
+    def copy_draft(self):
+        try:
+            from .manual_reply import review_draft
+            with self.store() as store:value=review_draft(store,self.selected_draft())
+            # Re-read the sealed draft immediately before the explicit human copy.
+            self.root.clipboard_clear();self.root.clipboard_append(value['text'])
+            self.notice.set('Draft copied. Verify the target in WeChat and submit yourself; nothing was sent by AXR.')
+        except AXRError as exc:self.notice.set(str(exc))
     def refresh(self):
         previous=self.job_list.selection()
         with self.store() as store:
@@ -126,6 +154,17 @@ class Panel:
             self.job_list.focus(selected);self.job_list.selection_set(selected);self.job_list.see(selected)
             self.select_job()
         else:self.show_intent('')
+        from .manual_reply import list_drafts
+        previous=self.draft_list.selection()
+        with self.store() as store:drafts=list_drafts(store)
+        self.draft_list.delete(*self.draft_list.get_children())
+        for draft in drafts:self.draft_list.insert('',tk.END,iid=draft['job_id'],text=draft['job_id'],values=(draft['display_name'],))
+        ids=self.draft_list.get_children()
+        if ids:
+            selected=previous[0] if previous and previous[0] in ids else ids[0]
+            self.draft_list.selection_set(selected);self.select_draft()
+        else:
+            self.draft_text.configure(state='normal');self.draft_text.delete('1.0','end');self.draft_text.configure(state='disabled')
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--state',required=True);parser.add_argument('--helper',required=True);args=parser.parse_args()
