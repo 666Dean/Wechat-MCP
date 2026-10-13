@@ -42,3 +42,53 @@ class ReplySubmission(unittest.TestCase):
         with patch.object(self.s.adapter,'status',return_value={'send_available':False}):
             with self.assertRaisesRegex(AXRError,'not_qualified'):self.s.submit_reply_task(self.task_id)
         self.assertEqual(self.s.journal.db.execute('SELECT count(*) FROM reply_submissions').fetchone()[0],0)
+
+    def test_raw_send_entry_rejects_unqualified_status_without_creating_jobs(self):
+        s=self.s;draft=s.inbox.get(self.task_id)['draft_job']
+        draft_id=s.journal.result(draft,s.principal,s.guard.version)['draft_id']
+        before=s.journal.db.execute('SELECT count(*) FROM jobs').fetchone()[0]
+        for status in ({'send_available':False},{'send_available':'true'},
+                       {'send_available':1},{},None,[]):
+            with self.subTest(status=status),patch.object(s.adapter,'status',return_value=status):
+                with self.assertRaisesRegex(AXRError,'send_backend_not_qualified'):
+                    s.propose_send('friend',draft_id)
+                with self.assertRaisesRegex(AXRError,'send_backend_not_qualified'):
+                    s.submit_reply_task(self.task_id)
+        with patch.object(s.adapter,'status',side_effect=RuntimeError('synthetic status failure')):
+            with self.assertRaisesRegex(AXRError,'send_backend_not_qualified'):s.propose_send('friend',draft_id)
+            with self.assertRaisesRegex(AXRError,'send_backend_not_qualified'):s.submit_reply_task(self.task_id)
+        self.assertEqual(s.journal.db.execute('SELECT count(*) FROM jobs').fetchone()[0],before)
+        self.assertEqual(s.journal.db.execute('SELECT count(*) FROM reply_submissions').fetchone()[0],0)
+
+    def test_database_mode_cannot_be_upgraded_by_adapter_status(self):
+        s=self.s;s.config['mode']='wcdb';s.initial_policy_digest=digest(s.config)
+        before=s.journal.db.execute('SELECT count(*) FROM jobs').fetchone()[0]
+        with self.assertRaisesRegex(AXRError,'send_backend_not_qualified'):s.propose_send('friend','unused')
+        with self.assertRaisesRegex(AXRError,'send_backend_not_qualified'):s.submit_reply_task(self.task_id)
+        self.assertEqual(s.journal.db.execute('SELECT count(*) FROM jobs').fetchone()[0],before)
+
+    def test_raw_proposal_revalidates_policy_and_keeps_exact_send_approval(self):
+        s=self.s;draft=s.inbox.get(self.task_id)['draft_job']
+        draft_id=s.journal.result(draft,s.principal,s.guard.version)['draft_id']
+        before=s.journal.db.execute('SELECT count(*) FROM jobs').fetchone()[0]
+        with patch.object(s.store,'config',return_value={**s.config,'purpose':'changed'}):
+            with self.assertRaisesRegex(AXRError,'owner_policy_changed'):s.propose_send('friend',draft_id)
+        self.assertEqual(s.journal.db.execute('SELECT count(*) FROM jobs').fetchone()[0],before)
+        job=s.propose_send('friend',draft_id)
+        self.assertEqual(job['state'],'AwaitingApproval')
+        with patch.object(s.adapter,'send',create=True) as send:
+            with self.assertRaises(AXRError):s.execute(job['id'])
+            send.assert_not_called()
+
+    def test_capability_lost_after_approval_cannot_reach_send_or_retry(self):
+        s=self.s;jid=s.submit_reply_task(self.task_id)['send_job']['id'];approve(s.store,jid,s.principal)
+        with patch.object(s.adapter,'status',return_value={'send_available':False}),\
+                patch.object(s.adapter,'send',create=True) as send:
+            # Execute an already sealed job: commit still checks current capabilities.
+            result=s.execute(jid);self.assertEqual(result['state'],'Unknown')
+            self.assertEqual(s.execute(jid)['state'],'Unknown');send.assert_not_called()
+        with patch.object(s.adapter,'send',create=True) as send:
+            repeated=s.submit_reply_task(self.task_id)
+            self.assertEqual(repeated['send_job']['id'],jid)
+            self.assertEqual(repeated['send_job']['state'],'Unknown');send.assert_not_called()
+        self.assertFalse(repeated['retry']);self.assertTrue(s.journal.verify_audit())
