@@ -111,7 +111,7 @@ class UIAdapter:
     def send(self, action, check, epoch):
         binding=self.bindings[action.resource.conversation_id]
         identity=binding.get("identity_witness")
-        if not identity or not identity.get("platform_verified",False):
+        if not identity or identity.get("platform_verified") is not True:
             raise AXRError("stable_target_identity_not_qualified_preview_only")
         structure=self.structure()
         layout=binding["layout"]

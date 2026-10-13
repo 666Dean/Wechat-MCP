@@ -54,6 +54,11 @@ jobs:
       - name: Compile read-only native process eligibility probe (macOS)
         if: runner.os == 'macOS'
         run: swiftc adapters/macos/native_runtime_probe.swift -o .local-private/build/wechat-native-runtime-probe
+      - name: Build experimental pinned-input proof fixture (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          python scripts/build_pinned_input.py
+          echo "AXR_TEST_PINNED_INPUT=$PWD/.local-private/build/wechat-pinned-input-experimental" >> "$GITHUB_ENV"
       - name: Root helpers and native tests (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

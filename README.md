@@ -19,6 +19,10 @@
 本轮合成与官方文件选择器可捕获，但指定私聊经官方选择器仍为空帧；
 [Mac 实机复核与限制](docs/MAC_TRANSPORTS.md)不等于自动回复验收。SDK 正式说明见 [Stellaria AXR](AXR/README.md)。
 
+2026-10-14：[固定窗口输入实验](docs/PINNED_INPUT_EXPERIMENT.md)已在一个授权私聊
+完成 Agent 单次发送及独立数据库记录核对，无人工复制/提交、OCR 或注入。
+实验适配器默认未接入 MCP；后台自动回复、本人私聊和对端送达尚未验收。
+
 原账号自动回复须分别满足平台接入依据、后端实机验收与所有者精确授权，
 详见 [接入条件与验收](docs/INTEGRATION_REQUIREMENTS.md)。当前 Mac 发送未通过；
 官方 Bot/公众号渠道不能代替原账号既有私聊，用户与系统授权也不能代替平台许可。
