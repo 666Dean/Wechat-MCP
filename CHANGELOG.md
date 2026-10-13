@@ -1,5 +1,11 @@
 # 更新日志
 
+### 2026-10-13 — Windows 原生环境部署包
+
+- Windows CI 在原生构建、CTest、回归和私有文件检查成功后，额外生成 Python 3.12 x64 AXR wheel、原生 helper/UIA、SQLCipher/OpenSSL/SQLite 运行库及许可证部署包；仅固定清单产品，不包含 owner state、配置、数据库或日志。
+- 清单绑定精确源码提交与源码链接，逐文件记录 SHA-256；CI artifact 保留 7 天。源码和第三方许可证随产品保留，部署不授予权限、不初始化所有者状态、不改全局 Codex 设置。
+- 新增 3 项打包回归，覆盖私有数据排除、完整产品哈希、缺失产品/旧输出拒绝、错误 Python ABI/未绑定提交拒绝；本机通过。部署包及本机原生环境结果在实际验证后另记。
+
 ### 2026-10-13 — 显式 SQLite3mc 只读连接与近期实机读取
 
 - 将已验证的独立引擎整理为可选连接实现，显式 `database.engine="sqlite3mc"`；默认 SQLCipher 保留，不自动回退。固定 APSW/Multiple Ciphers 版本，仅接受 SQLCipher-4 原始页密钥，避免对已归一化密钥再次 PBKDF2。联系人资格 CLI 与更换联系人使用同一引擎。

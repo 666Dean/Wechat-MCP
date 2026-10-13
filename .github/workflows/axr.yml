@@ -83,3 +83,19 @@ jobs:
         shell: bash
         run: |
           if git ls-files | grep -E '(^\.local-private/|^\.venv/|\.sqlite3($|-)|\.db$|\.dpapi$|\.sealed\.json$|\.(so|pyd|dylib|dll|exe)$)'; then exit 1; fi
+      - name: Package qualified Windows runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python -m pip wheel --no-deps --wheel-dir "$env:RUNNER_TEMP/axr-runtime-wheels" ./AXR
+          if ($LASTEXITCODE -ne 0) { throw 'SDK wheel build failed' }
+          python scripts/package_windows_runtime.py --wheels "$env:RUNNER_TEMP/axr-runtime-wheels" --build .local-private/build --dependencies "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows" --output "$env:RUNNER_TEMP/windows-axr-runtime" --revision "$env:GITHUB_SHA" --repository "$env:GITHUB_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime packaging failed' }
+      - name: Upload qualified Windows runtime
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-axr-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/windows-axr-runtime
+          if-no-files-found: error
+          retention-days: 7

@@ -17,6 +17,8 @@ vcpkg install openssl:x64-windows sqlite3:x64-windows nlohmann-json:x64-windows 
 
 成功后生成被 Git 忽略的 `codex-axr.toml`，包含 Windows 路径、`--axr-state --listener --manual-replies` 和读取/任务/草稿工具名单。安装器不会修改 Codex 全局设置、初始化 owner state 或授予读取/披露权限。不要同时为同一 state 启动两个 broker。
 
+Windows CI 另在全部检查成功后生成 `windows-axr-runtime-<源码提交>` artifact，供 Python 3.12 x64 环境部署。包只包含 SDK wheel、原生 helper/UIA、SQLCipher/OpenSSL/SQLite 运行库和许可证；`manifest.json` 绑定源码提交/链接与逐文件 SHA-256，不包含所有者配置或状态。下载时核对 workflow 的提交和 Windows job 成功状态、GitHub artifact digest，再核对清单中的全部文件；保留许可证。运行库位于 bin，SDK wheel 可在选定虚拟环境安装。该方式不替代 Hello、所有者初始化或设备测试；部署不自动修改全局设置或发放权限。
+
 ```powershell
 $TaskPython = Join-Path $PWD '.venv\Scripts\python.exe'
 $TaskState = "$env:LOCALAPPDATA\wechat-codex-mcp\axr-owner-state"
