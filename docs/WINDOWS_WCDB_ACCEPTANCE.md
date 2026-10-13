@@ -1,5 +1,19 @@
 # 2026-10-13 Windows WCDB 实机测试日记
 
+## 本机原生环境验证
+
+| 检查 | 实际结果 |
+| --- | --- |
+| 原生 SDK | Python 3.12 x64 导入实际 AXR 原生模块成功；C++ 加密、Guard、持久化、状态和 worker 核心测试通过 |
+| 原 SQLCipher C ABI | 使用真实 SQLCipher DLL 和逐库原始页密钥，三个分库扫描 20 条、返回 17 条文本（对方 7、本人 10）；重复页相等、实际后续一条无重复、连接释放与有限主库/WAL 指纹一致。未注入临时连接工厂 |
+| Hello 可用性 | Windows UserConsentVerifier::CheckAvailabilityAsync 返回 Available；只进行了可用性查询，owner_authenticated=false，没有本人认证或权限签发 |
+| Windows 凭据后端 | 实际 keyring.backends.Windows 可加载；没有借此导入新的数据库密钥 |
+| MCP 程序入口 | MCP/owner CLI 导入与 --help 通过，人工模式 TOML 解析/路径/工具范围检查通过；本机 owner state 仍未初始化 |
+| 沙箱排障 | 初次全量 254 项有一项合成沙箱探针失败；同一文件英文路径可读、中文路径不可读，定位到探针 std::ifstream 的窄字符串路径处理。改为 std::filesystem::u8path，本机 MSVC 编译后中文路径可读；中文/空格 staged 根允许读取、private 拒绝、loopback 拒绝的原断言全部通过 |
+| 修复后全量 | 本机 Python 3.12、真实原生 SDK/SQLCipher/helper 下发现 254 项，246 执行通过、8 平台跳过。没有缺 SDK 跳过、没有模拟原生 Guard，也没有跳过沙箱断言 |
+
+本轮验证的是本机原生环境、合成安全流程和既有私聊的原库只读连接。Hello 的实际本人确认、所有者状态初始化、真实数据的 MCP 披露/草稿和新入站仍需后续验收；没有创建发送权限、运行微信写入或修改 Codex 全局设置。以下保留前轮当时的证据和边界。
+
 ## 本轮增量：显式 SQLite3mc 连接实现
 
 自主适配器已新增显式 `engine=sqlite3mc`，由 [MultipleCipherConnection](../adapters/sqlite3mc.py) 处理只读连接；本次实机调用不再注入临时 connection_factory。既有 DPAPI 凭据只在内存中用于逐库 HMAC 校验和口令归一化，正式连接只接收每库原始页密钥，不再次派生、不保存原始口令。
@@ -63,7 +77,7 @@
 
 ## 尚未通过的范围
 
-- 本机正式 SQLCipher C ABI、原生 Guard/helper、Windows Hello、真实 stdio MCP 与人工回信闭环尚未验收。
+- 前轮的正式 SQLCipher C ABI、原生 SDK/helper 限制已由本页顶部本机验证更新；Windows Hello 本人认证、真实数据 stdio MCP 与人工回信闭环仍未验收。
 - 绑定测试私聊在观察窗口没有新入站，因此新入站增量发现、实时延迟、持续写 WAL、后台失焦/最小化、锁屏和重启均未验证；不能把该私聊的结果外推为整个账号没有新记录。
 - 本轮主要查询的是升序首个有界页，不是完整聊天历史；最新时间元数据另行核对，不能把旧页稳定等同于最新消息增量正常。
 - 单分库单页快照不是跨分库同一时刻快照；历史补录、压缩字典、密钥变化、大库性能及长期运行仍需独立验证。

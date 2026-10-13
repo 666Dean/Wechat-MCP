@@ -4,6 +4,8 @@
 
 ## AXR 本轮状态
 
+2026-10-13 本机原生环境验证通过：真实 AXR 原生模块导入、C++ 加密/Guard/持久化/worker 核心测试和原 SQLCipher C ABI 的三个分库有界读取通过（20 记录/17 文本，对方 7、本人 10）。Hello 可用性返回 Available，Windows keyring 后端可用；没有本人认证、owner state 初始化或全局 MCP 设置修改。发现并修复合成 WorkerProbe 的中文路径读取问题，保留并扩展中文/空格目录的 AppContainer 原断言；本机 MSVC 编译后全量 254/246/8 通过。真实数据经 MCP 的披露/草稿及新入站仍未验收，见 [日记](WINDOWS_WCDB_ACCEPTANCE.md)。下方按各轮当时结果保留。
+
 2026-10-13 可选引擎增量：新增显式 SQLite3mc 连接实现、固定版本和原始页密钥语义，联系人资格/更换目标复用相同引擎。适配器层实机调用不再注入临时工厂，三个分库有界扫描 20/文本 17；近 24 小时文本 4（对方 1、本人 3），30.562 秒额外 10 次查询零错误/零变化页，连接释放与有限文件指纹核对通过。新引擎合成回归 8 项本机隔离通过、1 跨引擎原生用例跳过；连同快照回归为 13/12/1。Python 3.12 全量 125/115/10，原生 Guard/helper/MCP/Hello 和实际新入站仍未设备验收。详见 [测试日记](WINDOWS_WCDB_ACCEPTANCE.md)。
 
 代码 1b6a38f 的 [Windows CI](https://github.com/666Dean/wechat-codex-mcp/actions/runs/38412711545/job/115348928102) 原生安装器、构建、CTest 通过；251/243/8，新增 9 项引擎测试全部执行，双向 SQLCipher/SQLite3mc 加密合成库与已提交 WAL 兼容通过。后续本线程专注 Windows；CI 不替代本机 Hello/真实 MCP 闭环。
