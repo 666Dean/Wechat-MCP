@@ -900,7 +900,7 @@ class CipherTests(unittest.TestCase):
                     writer.query('INSERT INTO sample VALUES(3,?)',('uncommitted fixture',))
                     self.assertEqual(len(reader.query('SELECT text FROM sample')),2)
                     writer.query('ROLLBACK')
-                    with self.assertRaises(AXRError):reader.query('INSERT INTO sample VALUES(2,?)',('write denied',))
+                    with self.assertRaises(AXRError):reader.query('INSERT INTO sample VALUES(4,?)',('write denied',))
                 finally:reader.close()
                 with self.assertRaises(AXRError):CipherConnection(path,library,'cd'*32,'sqlcipher4')
             finally:writer.close()
