@@ -94,15 +94,32 @@ ApplicationWindow {
         }
     }
     component PageScroll: ScrollView { clip: true; contentWidth: availableWidth; ScrollBar.horizontal.policy: ScrollBar.AlwaysOff }
+    component WindowDrag: DragHandler {
+        target: null
+        acceptedButtons: Qt.LeftButton
+        onActiveChanged: if (active) window.startSystemMove()
+    }
+
+    // Expanded client areas need an explicit non-interactive move surface.
+    // Keep native window buttons and page controls outside this region.
+    Item {
+        objectName: "windowMoveSurface"
+        z: 10
+        x: Qt.platform.os === "osx" ? 84 : 0
+        width: window.width - x - (Qt.platform.os === "windows" ? 150 : 0)
+        height: 30
+        WindowDrag { }
+    }
 
     RowLayout {
-        anchors.fill: parent; spacing: 0
+        anchors.fill: parent; anchors.topMargin: 30; spacing: 0
         Item {
             objectName: "sidebar"; Layout.preferredWidth: Theme.sidebarWidth; Layout.fillHeight: true
             Rectangle { anchors.fill: parent; anchors.margins: 12; anchors.topMargin: 18; radius: 20; color: "#06000000" }
             Rectangle { anchors.fill: parent; anchors.margins: 12; radius: 20; color: Theme.glass; border.color: Theme.glassBorder }
             ColumnLayout { anchors.fill: parent; anchors.margins: 26; spacing: 7
                 RowLayout { Layout.fillWidth: true; Layout.topMargin: 18; Layout.bottomMargin: 28; spacing: 12
+                    WindowDrag { }
                     Rectangle { width: 36; height: 36; radius: 10; color: Theme.brand; Icon { anchors.centerIn: parent; name: "message"; ink: "white"; width: 23; height: 23 } }
                     Column { spacing: 4
                         Copy { text: "WeChat MCP"; font.pixelSize: 18; font.weight: Font.DemiBold }
@@ -140,10 +157,11 @@ ApplicationWindow {
         ColumnLayout { Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
             RowLayout { Layout.fillWidth: true; Layout.preferredHeight: 88; Layout.leftMargin: Theme.margin; Layout.rightMargin: Theme.margin
                 Column { spacing: 5
+                    WindowDrag { }
                     Copy { text: window.tabs[window.page]; font.pixelSize: Theme.heading; font.weight: Font.DemiBold }
                     Caption { text: ["今天需要关注的事情", "让助理处理你的消息", "回复与待处理事项", "掌握会话与内容的访问范围", "查看任务进展与结果", "查阅会话中的本地文件", "按你的习惯使用", "由你核对并提交回复", "会话重点与工作摘要", "由你决定哪些操作可以继续"][window.page] }
                 }
-                Item { Layout.fillWidth: true }
+                Item { Layout.fillWidth: true; Layout.fillHeight: true; WindowDrag { } }
                 ButtonX { visible: window.inSettings && window.page!==6; text: "返回设置"; onClicked: window.page=6 }
                 BusyIndicator { running: window.backend.loading === true; visible: running; implicitWidth: 22; implicitHeight: 22 }
                 ButtonX { text: "刷新"; enabled: window.backend.loading !== true; onClicked: owner.refresh() }
