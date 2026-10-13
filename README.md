@@ -15,7 +15,9 @@
 `wechat_submit_reply_task` 可通过已资格、精确授权的 Adapter 提交任务草稿，
 不依赖人工复制；当前原版 macOS 微信发送后端仍未通过设备验收，默认禁止发送。
 合成流程测试不能替代真实私聊发送证明。App 为需要本机 Python/Qt 的开发交付，
-不是已签名、免运行时安装包。SDK 正式说明见 [Stellaria AXR](AXR/README.md)。
+不是已签名、免运行时安装包。窗口顶部、页面标题及品牌区支持拖动。
+本轮合成与官方文件选择器可捕获，但指定私聊经官方选择器仍为空帧；
+[Mac 实机复核与限制](docs/MAC_TRANSPORTS.md)不等于自动回复验收。SDK 正式说明见 [Stellaria AXR](AXR/README.md)。
 
 **实验性原型 · 小范围读取、入站回信草稿与人工提交读回已验证 · Agent 主动发送未验证**
 

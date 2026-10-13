@@ -13,6 +13,10 @@ Primary navigation provides the workbench, briefings, tasks, pending approvals a
 manual replies. Connection setup, permissions, attachments and execution records
 are managed through Settings. Product pages contain no protocol test entry or raw
 configuration/diagnostic viewer. Developer checks remain separate from the app UI.
+Drag the top area, page title, adjacent header space or brand area to move the
+window using the system window manager. Buttons and content keep their normal
+interaction behavior.
+
 The app reads actual broker/journal state;
 empty or expired results are not replaced with demonstration data. `--fixture`
 explicitly labels a synthetic visual preview and never connects to WeChat.
