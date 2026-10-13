@@ -283,7 +283,7 @@ class KeyTests(unittest.TestCase):
     def test_contact_binding_rejects_duplicates_and_closes_on_failure(self):
         class DB:
             closed=False
-            def __init__(self,*args):pass
+            def __init__(self,*args,**kwargs):pass
             def query(self,sql,args=()):
                 if sql.startswith('PRAGMA'):return [{'name':x} for x in ('username','nick_name','remark','delete_flag')]
                 if 'username IN (' in sql:return [{'username':name} for name in DB.account_matches]
@@ -294,7 +294,7 @@ class KeyTests(unittest.TestCase):
                 return [{'username':name,'nick_name':'fixture','remark':''} for name in DB.matches]
             def close(self):DB.closed=True
         self_outer=self
-        with patch('adapters.wcdb_keys.CipherConnection',DB):
+        with patch('adapters.wcdb_keys.open_database',DB):
             for matches in ([],['first','second'],['group@chatroom']):
                 DB.matches=matches;DB.closed=False
                 with self.assertRaises(AXRError):qualify_contacts('fixture','fixture',b'k'*32,'fixture-owner',['fixture'])

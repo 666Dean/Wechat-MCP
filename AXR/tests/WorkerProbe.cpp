@@ -13,7 +13,7 @@
 int main(){using namespace Stellaria::AXR;Json output;try{
     std::string line;std::getline(std::cin,line);if(line.size()>4096)return 2;auto request=Json::parse(line);
     if(request.at("op")=="read"){
-        std::ifstream file(request.at("path").get<std::string>(),std::ios::binary);
+        std::ifstream file(std::filesystem::u8path(request.at("path").get<std::string>()),std::ios::binary);
         output={{"allowed",bool(file)}};
     }else if(request.at("op")=="network"){
 #ifdef _WIN32

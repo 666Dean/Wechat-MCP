@@ -20,7 +20,7 @@ from axr.aet import AXRError, canonical, digest
 from axr.host import Lease
 from axr.owner import authenticate
 from axr.policy import OwnerStore
-from .wcdb import CipherConnection
+from .wcdb import open_database
 from .wcdb_keys import inventory, provision_verified, qualify_contacts
 
 
@@ -167,9 +167,12 @@ def main():
                    help='Explicit credential semantics; password derives a per-database page key')
     p=commands.add_parser('observe-mac');p.add_argument('--observer',required=True)
     p.add_argument('--allow-temporary-copy',action='store_true',required=True)
-    p=commands.add_parser('qualify');p.add_argument('--sqlcipher-library',required=True)
+    p=commands.add_parser('qualify');p.add_argument('--sqlcipher-library')
+    p.add_argument('--engine',choices=('sqlcipher','sqlite3mc'),default='sqlcipher')
     p.add_argument('--account-id',required=True);p.add_argument('--contact',action='append',required=True)
     args=parser.parse_args()
+    if args.command=='qualify' and args.engine=='sqlcipher' and not args.sqlcipher_library:
+        parser.error('--sqlcipher-library is required for --engine sqlcipher')
     try:
         # Mutations require a real owner terminal and OS authentication, never stdin secrets from an agent.
         if not sys.stdin.isatty() or not sys.stdout.isatty():raise AXRError('owner_interactive_terminal_required')
@@ -198,16 +201,18 @@ def main():
                     item=keys.get('contact/contact.db')
                     if not item:raise AXRError('verified_contact_key_required')
                     bound=qualify_contacts(rows['contact/contact.db']['path'],args.sqlcipher_library,
-                        store.secrets.get(item['key_reference']),args.account_id,args.contact,account_root=root)
+                        store.secrets.get(item['key_reference']),args.account_id,args.contact,account_root=root,engine=args.engine)
                     shards=[]
                     for rel,item in keys.items():
                         if Path(rel).parent==Path('message') and Path(rel).stem.removeprefix('message_').isdigit():
-                            db=CipherConnection(rows[rel]['path'],args.sqlcipher_library,
-                                store.secrets.get(item['key_reference']).hex(),item['cipher_profile'])
+                            db=open_database(rows[rel]['path'],store.secrets.get(item['key_reference']).hex(),
+                                item['cipher_profile'],engine=args.engine,library=args.sqlcipher_library)
                             db.close();shards.append({'path':str(rows[rel]['path']),**item})
                     if not shards:raise AXRError('verified_message_shard_required')
                     template={'account_id':args.account_id,'conversations':bound,'mode':'wcdb',
-                        'database':{'sqlcipher_library':str(Path(args.sqlcipher_library).resolve(strict=True)),'shards':shards}}
+                        'database':{'engine':args.engine,'shards':shards}}
+                    if args.engine=='sqlcipher':
+                        template['database']['sqlcipher_library']=str(Path(args.sqlcipher_library).resolve(strict=True))
                     if not native.durable_write(str(store.directory/'wcdb-qualified-local.json'),canonical(template)):
                         raise AXRError('qualified_binding_durable_write_failed')
                     print(json.dumps({'qualified_private_contacts':len(bound),'readonly_message_shards':len(shards)}))

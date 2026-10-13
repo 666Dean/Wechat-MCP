@@ -46,7 +46,11 @@ MCP 工具发现/状态查询现在与独占执行器分离，多个 Codex 客�
 新增 [全账号内容复核与自动回复草稿](docs/ACCOUNT_REVIEW.md)：所有者认证后枚举当前账号可识别的私聊/群聊/服务会话，固定时间上界和共享预算进行 MCP 分页读取，摘要加密、缺失/截断独立计数。可在同一限时认证内切换独立回复 Agent，测试不带关键词的新入站消息自动生成草稿。发送仍由人提交；本机已完成全目录、全部会话的近 14 天首屏概览，以及普通入站自动草稿→人工提交→精确记录核对。首屏不是全部历史，非文本未解码，原生自动发送未资格。
 
 Windows 更新见 [Windows AXR 安装与人工回信](docs/WINDOWS_UPDATE.md)：`setup.ps1 -AXR` 构建原生 helper、运行 CTest 并生成独立人工提交 MCP 配置；本地 WCDB 导入支持显式 `--key-mode password`，逐库派生并验证后只保存页密钥。复用 Mac 的读取/任务/草稿流程，Windows 设备验收另行记录。
+Windows 本机原生环境已验证：AXR 原生模块/Guard 核心回归、原 SQLCipher C ABI 有界读取及 254/246/8 全量回归通过；Hello 可用性为 Available。本人认证、所有者初始化和真实数据经 MCP 的披露/草稿仍待验收，详见 [Windows 日记](docs/WINDOWS_WCDB_ACCEPTANCE.md)。
 新增 [WeFlow 主项目参考与自主组件设计](docs/WEFLOW_REFERENCE.md)：复用开源 SQLCipher 原生引擎，读取业务独立实现；legacy DLL 增加按需导出检测和能力报告，缺失消息接口不再阻断会话诊断。WeFlow 公共仓库此 revision 不内置解密组件，游标/HTTP/SSE 接入仍待验证。
+自主 WCDB 读取现在按分库页开启只读事务，表结构、账号、消息和发送者共享已提交 WAL 快照；每页关闭连接释放事务。并发提交与未提交隔离已有合成回归，跨分库同一时刻快照、历史补录及 Windows 完整 AXR 流程仍待验证。
+新增 [Windows WCDB 实机测试日记](docs/WINDOWS_WCDB_ACCEPTANCE.md)：已有密钥校验三个分库，独立 SQLite3mc 引擎配合自主适配器返回既有私聊的 17 条文本，重复页、后续游标和 10 次短时查询通过。正式 AXR/MCP、实时新入站和发送仍未验收。
+可显式选择 `database.engine="sqlite3mc"`，使用固定可选依赖和已归一化页密钥，由适配器直接创建只读连接；默认仍使用 SQLCipher，不自动回退。近 24 小时实际读取 4 条文本、10 次重复查询通过；[选择方法](docs/WINDOWS_UPDATE.md#显式选择-sqlite3mc-只读引擎)和完整验收边界见日记。
 
 新增 [Codex 读取、回信任务与人工提交](docs/CODEX_MANUAL_REPLY.md)：有界 WCDB 读取、加密持久化任务收件箱、MCP 状态等待、获准正文披露、回复草稿及本地人工复制。没有外部 runner 时也保留回信任务。支持一次 OS 认证建立最多一小时/12 批的本地所有者工作会话，每批仍使用精确单次披露批准；人工模式在执行前拒绝所有微信发送。实际 Codex 读取/新回信草稿、本地核对复制及人工提交后的唯一数据库记录观察已通过小范围实机验收，详见 [实机记录](docs/AXR_MAC_ACCEPTANCE.md)；不代表对方送达、全天运行或 Windows 微信硬件。
 

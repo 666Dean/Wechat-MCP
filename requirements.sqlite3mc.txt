@@ -1,0 +1,2 @@
+# Explicit optional AXR database engine; never an automatic SQLCipher fallback.
+apsw-sqlite3mc==3.53.4.0
