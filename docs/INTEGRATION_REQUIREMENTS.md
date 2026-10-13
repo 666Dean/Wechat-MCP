@@ -26,6 +26,8 @@
 参考：[腾讯 iLink 协议](https://github.com/Tencent/openclaw-weixin/blob/main/docs/protocol_zh_CN.md)、
 [腾讯元器公众号发布说明](https://yuanqi.tencent.com/guide/publish-agent-wechat-official-account)。
 未找到合格入口不等于证明永远不存在；新入口须取得明确契约与实际见证。
+重新固定五份 GitHub 源码、非 OCR 输入路径与专用 Computer Use 条件见
+[Mac 发送研究](MAC_SEND_RESEARCH.md)。
 
 ## 原账号合作接口所需信息
 
