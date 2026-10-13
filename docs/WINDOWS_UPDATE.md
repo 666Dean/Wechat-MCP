@@ -1,5 +1,7 @@
 # Windows 更新与 AXR 人工回信
 
+最新小范围设备结果见 [2026-10-13 Windows WCDB 实机测试日记](WINDOWS_WCDB_ACCEPTANCE.md)：已有密钥和独立只读引擎的有界正文读取通过，完整 AXR/MCP/Hello 与实时新入站仍未设备验收。
+
 以已合并的 Mac AXR 方案为基础，复用有界 WCDB 读取、加密收件箱、所有者批准披露、Codex 草稿和人工提交流程。Windows 使用 Credential Manager、Hello helper 和 C++ UIA；Mac 的 Keychain、Swift helper 和启动观察不能直接移植。旧 legacy 的 DLL `-100` 未因此修复；新 AXR 使用 SQLCipher 原生只读 pager。
 
 ## 安装
@@ -61,6 +63,6 @@ $TaskHelper = Join-Path $PWD '.local-private\build\AXR\Release\axr-owner-auth.ex
 
 本次 Windows 本地回归覆盖口令归一化、salt 绑定、错误/篡改页拒绝，以及含中文、空格、美元符号和引号的路径生成 TOML。AXR 缺失时原生用例明确跳过，不使用替代 Guard。原生 SQLCipher 合成口令库的页密钥只读重开/拒写测试交由双平台 CI。
 
-本机当前 Python 为 3.14，未配置 C++/CMake 原生构建工具，不能据此称为 Python 3.12 安装或 Hello/微信设备验收。Windows 真实后台读、压缩正文、重启/锁屏、人工提交记录和长时监听仍需分别验收。本次没有读取真实聊天、取钥或发送。
+2026-10-12 的本机回归使用 Python 3.14，原生构建工具未在当轮验证，不能据此称为 Python 3.12 或 Hello/微信设备验收。该轮没有读取真实聊天、取钥或发送。后续 Python 3.12 和小范围读取结果见本页顶部测试日记；后台失焦、重启/锁屏、人工提交记录和长时监听仍需分别验收。
 
 `6c674f7` 的 [Mac/Windows CI](https://github.com/666Dean/wechat-codex-mcp/actions/runs/38267106329) 已通过，Windows runner 实际执行完整安装器、SDK 导入和配置/helper 检查。自主读取组件与 WeFlow 主项目的参考定位见 [WEFLOW_REFERENCE.md](WEFLOW_REFERENCE.md)。
