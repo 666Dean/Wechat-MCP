@@ -63,6 +63,12 @@ class Controller(QObject):
                 'authority_missing_expired_revoked_or_exhausted':'当前操作需要授权，或原授权已到期。',
                 'owner_os_authentication_failed':'系统身份认证未完成，本次操作未获准。',
                 'owner_policy_changed_restart_required':'权限配置已更新，请重新连接本地服务。'}.get(result['error'],'操作未完成，请核对授权与本地服务。')
+            if result['error'].startswith('owner_os_authentication_failed'):
+                self._notice=('系统取消了身份认证，请保持认证窗口在前台后重试。'
+                    if result['error']=='owner_os_authentication_failed:owner_auth_denied:os_error_-4' else
+                    '身份认证已超时，请重新发起。' if ':owner_auth_timed_out' in result['error'] else
+                    '暂时无法进行本机身份认证，请检查系统状态。' if ':owner_auth_unavailable' in result['error'] else
+                    '系统身份认证未完成，本次操作未获准。')
             self.noticeChanged.emit()
             if result['name']=='refresh':
                 self._data.update(connected=False,jobs=[],drafts=[],summaries=[],grants=[])
