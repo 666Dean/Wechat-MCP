@@ -217,6 +217,10 @@ class DatabaseAdapter:
         for shard in self.config["shards"]:
             db,generation=self._connection(shard)
             try:
+                # Pin one committed snapshot before reading schema or identity.
+                # Separate autocommit SELECTs can mix Name2Id/message versions
+                # while WeChat commits WAL changes between those queries.
+                db.query("BEGIN")
                 if not db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?",(table,)):
                     continue
                 columns={x["name"] for x in db.query('PRAGMA table_info("'+table+'")')}
@@ -273,8 +277,9 @@ class DatabaseAdapter:
                         "generation":generation,"text":text,"sender":actual_sender,"outgoing":outgoing,
                         "matches":bool(text is not None and query in text and (sender is None or sender==actual_sender))})
             finally:
-                # Release the page handle, especially FILE_SHARE_DELETE constraints on Windows.
-                # Native pager/WAL queries avoid full plaintext export, without pinning a live shard.
+                # Close rolls back the read transaction on success, empty tables,
+                # cancellation and decoding errors; never keep snapshots between pages.
+                # Release FILE_SHARE_DELETE constraints on Windows too.
                 db.close()
                 self.connections.pop(str(Path(shard["path"]).resolve()),None)
         incoming.sort(key=lambda x:(x["created"],x["local_id"],x["generation"]))
