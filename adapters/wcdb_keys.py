@@ -10,7 +10,7 @@ import hmac
 import os
 from pathlib import Path
 from axr.aet import AXRError, identifier, digest
-from .wcdb import CipherConnection
+from .wcdb import open_database
 from database_key_probe import verified_page_key
 
 
@@ -76,13 +76,13 @@ def provision_verified(root, relative, key, secret_store, expected_salt, *, key_
     return {'key_reference':ref,'salt':expected_salt,'cipher_profile':'wcdb4-raw'}
 
 
-def qualify_contacts(path, library, key, account_id, labels, *, profile='wcdb4-raw', account_root=None):
+def qualify_contacts(path, library, key, account_id, labels, *, profile='wcdb4-raw', account_root=None, engine='sqlcipher'):
     """Exact owner labels -> stable usernames, never first-of-duplicate matches."""
     identifier(account_id)
     if not labels or len(labels)>32 or len(set(labels))!=len(labels):
         raise AXRError('explicit_unique_contact_labels_required')
     for label in labels:identifier(label)
-    db=CipherConnection(path,library,key.hex(),profile)
+    db=open_database(path,key.hex(),profile,engine=engine,library=library)
     try:
         columns={r['name'] for r in db.query('PRAGMA table_info("contact")')}
         if not {'username','nick_name','remark','delete_flag'}<=columns:raise AXRError('contact_schema_unqualified')
