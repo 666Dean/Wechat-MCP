@@ -690,7 +690,7 @@ class Workers(unittest.TestCase):
         binary=os.environ.get('AXR_TEST_WORKER');launcher=os.environ.get('AXR_TEST_WINDOWS_LAUNCHER')
         if not binary or not launcher:self.skipTest('native Windows witnesses not provided')
         self.assertTrue(Path(binary).is_file());self.assertTrue(Path(launcher).is_file())
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(prefix='AXR 中文 sandbox ') as tmp:
             root=Path(tmp);staged=root/'runtime';staged.mkdir()
             worker=staged/Path(binary).name;shutil.copy2(binary,worker)
             for directory in os.environ.get('AXR_TEST_RUNTIME_ROOTS','').split(os.pathsep):

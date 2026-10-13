@@ -1,5 +1,12 @@
 # 更新日志
 
+### 2026-10-13 — Windows 本机原生验证与中文路径探针修复
+
+- 本机实际 AXR 原生模块导入、C++ 加密/Guard/持久化/worker 核心测试通过；原 SQLCipher C ABI 读取既有绑定三个分库，扫描 20/文本 17（对方 7、本人 10），重复页/实际后续一条/连接释放/有限源指纹一致，无临时连接工厂。
+- Hello 可用性返回 Available，Windows keyring 后端可加载，MCP/owner CLI 及人工模式配置检查通过；没有本人认证、所有者状态初始化、发送或全局 Codex 设置修改。
+- 初次全量暴露 WorkerProbe 窄字符串打开 UTF-8 中文路径失败，同一文件英文路径控制组可读；改用 std::filesystem::u8path，原沙箱回归明确使用中文/空格目录。本机 MSVC 编译后允许 staged 读取、private 拒绝、loopback 拒绝均通过，不放宽 ACL、不跳过断言。
+- 修复后本机 Python 3.12/实际 SDK/SQLCipher/helper 全量发现 254 项、246 执行通过、8 平台跳过；没有缺 SDK 跳过。日记/README/STATUS 同步，只记录测试结果。本人 Hello、真实数据的 MCP 披露/草稿和新入站仍待验收。
+
 ### 2026-10-13 — Windows 原生环境部署包
 
 - Windows CI 在原生构建、CTest、回归和私有文件检查成功后，额外生成 Python 3.12 x64 AXR wheel、原生 helper/UIA、SQLCipher/OpenSSL/SQLite 运行库及许可证部署包；仅固定清单产品，不包含 owner state、配置、数据库或日志。
