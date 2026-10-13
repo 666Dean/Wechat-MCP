@@ -735,6 +735,22 @@ class Workers(unittest.TestCase):
             with self.assertRaisesRegex(AXRError,'stable_account'):adapter.search('fixture-chat')
         adapter.close()
 
+    def test_ui_send_rejects_malformed_identity_before_native_access(self):
+        from adapters.ui import UIAdapter
+        from unittest.mock import patch
+        resource=Resource('test','fixture-account','fixture-chat')
+        action=Action('fixture-agent',resource,'messages.send','fixture-purpose',{'text':'fixture reply'})
+        for verified in (None, False, 1, "true", "false", {"verified": True}):
+            with self.subTest(verified=verified):
+                adapter=UIAdapter({'native_helper':'not-launched',
+                    'conversations':[{'conversation_id':resource.conversation_id,
+                        'identity_witness':{'platform_verified':verified}}]})
+                with patch.object(adapter,'_request',side_effect=AssertionError('native access forbidden')) as request:
+                    with self.assertRaisesRegex(AXRError,'stable_target_identity_not_qualified'):
+                        adapter.send(action,lambda:None,'fixture')
+                    request.assert_not_called()
+                adapter.close()
+
     def test_ui_health_never_qualifies_send_and_does_not_request_labels(self):
         from adapters.ui import UIAdapter
         from unittest.mock import patch
