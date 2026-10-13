@@ -358,26 +358,36 @@ class Service:
                       "automatic_send":False}}
 
     def propose_send(self,conversation_id,draft_id):
+        with self.runtime.lock:
+            self.ensure_policy()
+            self._require_qualified_sender()
+            resource=self.resource(conversation_id)
+            data=self.journal.context(draft_id,self.principal,resource,self.guard.version)
+            draft=Action.from_dict(data["draft"])
+            return self.runtime.propose(self._action(conversation_id,"messages.send",draft.payload,
+                sources=tuple({(p.resource.key,p.reference):p for p in (*draft.sources,*self._sources(resource))}.values()),
+                destination="wechat:"+resource.key,workflow=draft.workflow))
+
+    def _require_qualified_sender(self):
+        """Technical availability only; this neither grants authority nor vendor permission."""
         if self.manual_replies:raise AXRError('human_submission_only')
-        resource=self.resource(conversation_id)
-        data=self.journal.context(draft_id,self.principal,resource,self.guard.version)
-        draft=Action.from_dict(data["draft"])
-        return self.runtime.propose(self._action(conversation_id,"messages.send",draft.payload,
-            sources=tuple({(p.resource.key,p.reference):p for p in (*draft.sources,*self._sources(resource))}.values()),
-            destination="wechat:"+resource.key,workflow=draft.workflow))
+        if self.config['mode'] not in {'ui','hybrid'}:raise AXRError('send_backend_not_qualified')
+        try:status=self.adapter.status()
+        except Exception:raise AXRError('send_backend_not_qualified') from None
+        if not isinstance(status,dict) or status.get('send_available') is not True:
+            raise AXRError('send_backend_not_qualified')
 
     def _send(self,action,check,epoch):
-        if self.manual_replies:raise AXRError('human_submission_only')
-        if self.config["mode"] not in {"ui","hybrid"}:raise AXRError("database_read_mode_has_no_send_authority")
+        check()
+        self.ensure_policy()
+        self._require_qualified_sender()
         return self.adapter.send(action,check,epoch)
 
     def submit_reply_task(self,task_id):
         """Submit a sealed task through the approved adapter, without clipboard handoff."""
         with self.runtime.lock:
             self.ensure_policy()
-            if self.manual_replies:raise AXRError('human_submission_only')
-            if self.config['mode'] not in {'ui','hybrid'} or self.adapter.status().get('send_available') is not True:
-                raise AXRError('send_backend_not_qualified')
+            self._require_qualified_sender()
             existing=self.journal.db.execute('SELECT job_id FROM reply_submissions WHERE task_id=? AND principal=?',
                 (task_id,self.principal)).fetchone()
             if existing:
