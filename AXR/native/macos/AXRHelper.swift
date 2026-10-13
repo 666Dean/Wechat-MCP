@@ -99,19 +99,60 @@ func main() throws -> [String:Any] {
           let req = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String:Any],
           let op = req["op"] as? String else { throw Failure("bad_request") }
     if op == "owner_auth" {
+        // A CLI must service Cocoa's main run loop while the system presents
+        // authentication. Keep a transient foreground host;
+        // never interact with SecurityAgent or reuse a previous evaluation.
+        let authenticationApp=NSApplication.shared
+        authenticationApp.setActivationPolicy(.accessory)
+        let authenticationWindow=NSWindow(contentRect:NSRect(x:0,y:0,width:390,height:140),
+            styleMask:[.titled,.closable],backing:.buffered,defer:false)
+        authenticationWindow.isReleasedWhenClosed=false
+        authenticationWindow.title="本机身份认证"
+        let explanation=NSTextField(wrappingLabelWithString:
+            "请在系统对话框中完成认证。授权范围以本地所有者界面的精确操作为准；取消认证不会授予权限。")
+        explanation.frame=NSRect(x:24,y:30,width:342,height:72)
+        authenticationWindow.contentView?.addSubview(explanation)
+        authenticationWindow.center()
+        authenticationWindow.makeKeyAndOrderFront(nil)
+        defer { authenticationWindow.close() }
+        authenticationApp.activate(ignoringOtherApps:true)
+        let activationDeadline=Date().addingTimeInterval(2)
+        while !authenticationApp.isActive && Date()<activationDeadline {
+            RunLoop.current.run(until:Date().addingTimeInterval(0.05))
+        }
         let context = LAContext()
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
-            throw Failure("owner_auth_unavailable")
+            return ["verified":false,"error":"owner_auth_unavailable",
+                    "os_error_code":error?.code ?? 0]
         }
         let semaphore = DispatchSemaphore(value: 0)
         var verified = false
+        var authenticationError: NSError?
         context.evaluatePolicy(.deviceOwnerAuthentication,
-            localizedReason: "Authorize the exact AXR operation shown in your local owner terminal.") { success, _ in
+            localizedReason: "Authorize the exact AXR operation shown in your local owner terminal.") { success, failure in
             verified = success
+            authenticationError = failure as NSError?
             semaphore.signal()
         }
-        guard semaphore.wait(timeout: .now()+60) == .success, verified else { throw Failure("owner_auth_denied") }
+        let deadline=Date().addingTimeInterval(60)
+        var completed=false
+        while Date()<deadline {
+            if semaphore.wait(timeout:.now()) == .success { completed=true;break }
+            if !authenticationWindow.isVisible {
+                context.invalidate()
+                return ["verified":false,"error":"owner_auth_denied"]
+            }
+            RunLoop.current.run(until:Date().addingTimeInterval(0.05))
+        }
+        guard completed else {
+            context.invalidate()
+            return ["verified":false,"error":"owner_auth_timed_out"]
+        }
+        guard verified else {
+            return ["verified":false,"error":"owner_auth_denied",
+                    "os_error_code":authenticationError?.code ?? 0]
+        }
         return ["verified":true]
     }
     guard let bundle = req["bundle"] as? String, !bundle.isEmpty else { throw Failure("bundle_required") }
@@ -178,9 +219,35 @@ func main() throws -> [String:Any] {
             walk(window,0)
         } }
         else { truncated = true }
+        // Some applications omit the focused control from AXChildren. Inspect
+        // only its type and writability, never AXValue/Title/Description/text.
+        var focus: [String:Any] = ["available":false,"window_bound":false,
+            "editable":false,"value_writable":false,"content_read":false]
+        if let raw=metadata(root,kAXFocusedUIElementAttribute), CFGetTypeID(raw)==AXUIElementGetTypeID() {
+            let node=raw as! AXUIElement
+            var actual:pid_t=0
+            if AXUIElementGetPid(node,&actual) == .success && actual == app.processIdentifier {
+                focus["available"]=true
+                let role=metadata(node,kAXRoleAttribute) as? String ?? ""
+                let subrole=metadata(node,kAXSubroleAttribute) as? String ?? ""
+                focus["role"]=String(role.prefix(120))
+                let secure=subrole == "AXSecureTextField"
+                focus["secure"]=secure
+                let windowRaw=(role == "AXWindow" ? raw : metadata(node,kAXWindowAttribute))
+                if let windowRaw,CFGetTypeID(windowRaw)==AXUIElementGetTypeID(),
+                   let windows,windows.contains(where:{CFEqual($0,windowRaw)}) {
+                    focus["window_bound"]=true
+                    let editable = !secure && ["AXTextArea","AXTextField","AXComboBox"].contains(role)
+                    focus["editable"]=editable
+                    var writable:DarwinBoolean=false
+                    let code=AXUIElementIsAttributeSettable(node,kAXValueAttribute as CFString,&writable)
+                    focus["value_writable"]=editable && code == .success && writable.boolValue
+                }
+            }
+        }
         return ["pid":app.processIdentifier,"nodes_visited":visited,"editable_nodes":editable,
             "text_nodes":text,"window_count":windows?.count ?? 0,"scope":"application_windows",
-            "truncated":truncated,"attribute_errors":errors,"content_read":false]
+            "truncated":truncated,"attribute_errors":errors,"content_read":false,"focused_control":focus]
             .merging(["cycle_nodes_skipped":traversal.cycles,"foreign_nodes_skipped":traversal.foreign,
                       "invalid_window_roots":invalidRoots]) { _,new in new }
     }

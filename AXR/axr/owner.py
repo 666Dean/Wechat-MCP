@@ -15,7 +15,14 @@ def authenticate(helper):
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         raise AXRError("owner_interactive_terminal_required")
     result=Supervisor(timeout=65).invoke([str(Path(helper).resolve(strict=True))],{"op":"owner_auth"})["result"]
-    if result.get("verified") is not True:raise AXRError("owner_os_authentication_failed")
+    if not isinstance(result,dict) or result.get("verified") is not True or "error" in result:
+        # Keep cancellation/unavailability distinct from expiry. Never forward
+        # arbitrary helper descriptions, usernames or OS userInfo in an error.
+        reason=result.get('error') if isinstance(result,dict) else None
+        suffix=':'+reason if isinstance(reason,str) and reason in {'owner_auth_denied','owner_auth_unavailable','owner_auth_timed_out'} else ''
+        code=result.get('os_error_code') if isinstance(result,dict) else None
+        if suffix and type(code) is int and -100000<=code<=100000:suffix+=':os_error_'+str(code)
+        raise AXRError('owner_os_authentication_failed'+suffix)
 
 def review(store,jid,principal):
     action=store.journal.action(store.journal.get(jid,principal))
