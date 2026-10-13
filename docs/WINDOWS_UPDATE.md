@@ -1,5 +1,7 @@
 # Windows 更新与 AXR 人工回信
 
+最新小范围设备结果见 [2026-10-13 Windows WCDB 实机测试日记](WINDOWS_WCDB_ACCEPTANCE.md)：已有密钥和独立只读引擎的有界正文读取通过，完整 AXR/MCP/Hello 与实时新入站仍未设备验收。
+
 以已合并的 Mac AXR 方案为基础，复用有界 WCDB 读取、加密收件箱、所有者批准披露、Codex 草稿和人工提交流程。Windows 使用 Credential Manager、Hello helper 和 C++ UIA；Mac 的 Keychain、Swift helper 和启动观察不能直接移植。旧 legacy 的 DLL `-100` 未因此修复；新 AXR 使用 SQLCipher 原生只读 pager。
 
 ## 安装
@@ -14,6 +16,8 @@ vcpkg install openssl:x64-windows sqlite3:x64-windows nlohmann-json:x64-windows 
 把 vcpkg 路径替换为实际目录；也可用 `-OpenSSLRoot` 指定 OpenSSL 3，但仍需提供其余 CMake 依赖。安装器先安装 SDK，再构建 helper/UIA 并执行 CTest；任一步失败不会生成新的 MCP 配置。不带 `-AXR` 继续安装 legacy。
 
 成功后生成被 Git 忽略的 `codex-axr.toml`，包含 Windows 路径、`--axr-state --listener --manual-replies` 和读取/任务/草稿工具名单。安装器不会修改 Codex 全局设置、初始化 owner state 或授予读取/披露权限。不要同时为同一 state 启动两个 broker。
+
+Windows CI 另在全部检查成功后生成 `windows-axr-runtime-<源码提交>` artifact，供 Python 3.12 x64 环境部署。包只包含 SDK wheel、原生 helper/UIA、SQLCipher/OpenSSL/SQLite 运行库和许可证；`manifest.json` 绑定源码提交/链接与逐文件 SHA-256，不包含所有者配置或状态。下载时核对 workflow 的提交和 Windows job 成功状态、GitHub artifact digest，再核对清单中的全部文件；保留许可证。运行库位于 bin，SDK wheel 可在选定虚拟环境安装。该方式不替代 Hello、所有者初始化或设备测试；部署不自动修改全局设置或发放权限。
 
 ```powershell
 $TaskPython = Join-Path $PWD '.venv\Scripts\python.exe'
@@ -45,6 +49,19 @@ $TaskHelper = Join-Path $PWD '.local-private\build\AXR\Release\axr-owner-auth.ex
 
 将私有 `wcdb-qualified-local.json` 的账号、绑定和数据库配置合入 policy，经本地 `configure` 认证后重启 broker。示例账号和路径均为占位符；工具不自动绑定全部好友、取钥或开启发送。
 
+## 显式选择 SQLite3mc 只读引擎
+
+已安装 AXR 的环境可额外安装 [固定依赖](../requirements.sqlite3mc.txt)，然后在本地 `qualify` 时显式选择引擎；原生 Guard/helper 和所有者认证仍是完整 AXR 流程的必要条件。
+
+```powershell
+& $TaskPython -m pip install -r .\requirements.sqlite3mc.txt
+& $TaskPython -m adapters.wcdb_owner --state $TaskState --helper $TaskHelper --account-root 'C:\private\ACCOUNT\db_storage' qualify --engine sqlite3mc --account-id 'OWNER_ACCOUNT_ID' --contact 'OWNER_EXACT_CONTACT'
+```
+
+生成的私有配置使用 `database.engine="sqlite3mc"`，无需 SQLCipher DLL 路径；不填写 engine 时仍为原 `sqlcipher`。密钥仍须由本地 import-key 验证并保存，连接只使用已归一化的原始页密钥；`hexkey` 的口令派生语义不能直接用于这些页密钥。该语义参照 [SQLite3mc 官方 key 文档](https://utelle.github.io/SQLite3MultipleCiphers/docs/configuration/config_sql_pragmas/)。
+
+当前仅接受 apsw-sqlite3mc 3.53.4.0 / Multiple Ciphers 2.4.0 和 SQLCipher-4 配置；依赖缺失、普通 APSW、其他版本/配置都明确失败，不自动回退。查询保留 5 秒 VM 预算、1001 行/单元格 1 MiB 预算、事务关闭与即时取消。本机适配器的小范围与近期只读测试通过，完整 AXR/MCP/Hello 仍未设备验收；见本页顶部日记。
+
 ## 草稿与人工提交
 
 按 [人工回信指南](CODEX_MANUAL_REPLY.md) 在本地终端启动所有者限时会话，另用新 Codex worker 或生成的 MCP 配置。两个 broker 入口择一：
@@ -61,6 +78,6 @@ $TaskHelper = Join-Path $PWD '.local-private\build\AXR\Release\axr-owner-auth.ex
 
 本次 Windows 本地回归覆盖口令归一化、salt 绑定、错误/篡改页拒绝，以及含中文、空格、美元符号和引号的路径生成 TOML。AXR 缺失时原生用例明确跳过，不使用替代 Guard。原生 SQLCipher 合成口令库的页密钥只读重开/拒写测试交由双平台 CI。
 
-本机当前 Python 为 3.14，未配置 C++/CMake 原生构建工具，不能据此称为 Python 3.12 安装或 Hello/微信设备验收。Windows 真实后台读、压缩正文、重启/锁屏、人工提交记录和长时监听仍需分别验收。本次没有读取真实聊天、取钥或发送。
+2026-10-12 的本机回归使用 Python 3.14，原生构建工具未在当轮验证，不能据此称为 Python 3.12 或 Hello/微信设备验收。该轮没有读取真实聊天、取钥或发送。后续 Python 3.12 和小范围读取结果见本页顶部测试日记；后台失焦、重启/锁屏、人工提交记录和长时监听仍需分别验收。
 
 `6c674f7` 的 [Mac/Windows CI](https://github.com/666Dean/wechat-codex-mcp/actions/runs/38267106329) 已通过，Windows runner 实际执行完整安装器、SDK 导入和配置/helper 检查。自主读取组件与 WeFlow 主项目的参考定位见 [WEFLOW_REFERENCE.md](WEFLOW_REFERENCE.md)。

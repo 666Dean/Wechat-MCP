@@ -699,7 +699,7 @@ class Workers(unittest.TestCase):
         binary=os.environ.get('AXR_TEST_WORKER');launcher=os.environ.get('AXR_TEST_WINDOWS_LAUNCHER')
         if not binary or not launcher:self.skipTest('native Windows witnesses not provided')
         self.assertTrue(Path(binary).is_file());self.assertTrue(Path(launcher).is_file())
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(prefix='AXR 中文 sandbox ') as tmp:
             root=Path(tmp);staged=root/'runtime';staged.mkdir()
             worker=staged/Path(binary).name;shutil.copy2(binary,worker)
             for directory in os.environ.get('AXR_TEST_RUNTIME_ROOTS','').split(os.pathsep):
@@ -926,7 +926,17 @@ class CipherTests(unittest.TestCase):
                 reader=CipherConnection(path,library,key,'sqlcipher4')
                 try:
                     self.assertEqual(reader.query('SELECT text FROM sample')[0]['text'],'synthetic private fixture')
-                    with self.assertRaises(AXRError):reader.query('INSERT INTO sample VALUES(2,?)',('write denied',))
+                    reader.query('BEGIN')
+                    self.assertEqual(len(reader.query('SELECT text FROM sample')),1)
+                    writer.query('INSERT INTO sample VALUES(2,?)',('new committed fixture',))
+                    self.assertEqual(len(reader.query('SELECT text FROM sample')),1)
+                    reader.query('ROLLBACK')
+                    self.assertEqual(len(reader.query('SELECT text FROM sample')),2)
+                    writer.query('BEGIN')
+                    writer.query('INSERT INTO sample VALUES(3,?)',('uncommitted fixture',))
+                    self.assertEqual(len(reader.query('SELECT text FROM sample')),2)
+                    writer.query('ROLLBACK')
+                    with self.assertRaises(AXRError):reader.query('INSERT INTO sample VALUES(4,?)',('write denied',))
                 finally:reader.close()
                 with self.assertRaises(AXRError):CipherConnection(path,library,'cd'*32,'sqlcipher4')
             finally:writer.close()

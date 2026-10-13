@@ -49,7 +49,7 @@ MCP 授权、账号推断、联系人搜索、自动回复会话或持久去重�
 ```sh
 python scripts/build_pinned_input.py --build .local-private/build
 AXR_TEST_PINNED_INPUT="$PWD/.local-private/build/wechat-pinned-input-experimental" \
-  python -m unittest test_pinned_input -v
+  python -m unittest test.test_pinned_input -v
 ```
 
 四项原生证明回归使用合成身份和 `validate_scope`，不访问微信或 GUI：验证成功

@@ -23,11 +23,13 @@ WeFlow 此 revision 的 [LICENSE](https://github.com/hicccc77/WeFlow/blob/2f23e7
 |---|---|---|
 | Windows 安装 | helper/UIA、SDK 构建及人工模式配置；Python 3.12 Windows CI 完整安装通过 | 本机 Hello/目录权限/设备安装 |
 | 口令与页密钥 | 显式 password/raw 语义，逐库 salt 派生/HMAC 后只存页密钥，缓存再次复核 | 本机必要分库及更新后的 salt |
-| 读取 | READONLY、query_only、参数绑定、查询/单元格预算、关闭连接 | 本机正文、压缩、持续写 WAL/重启 |
+| 读取 | READONLY、query_only、参数绑定、查询/单元格预算、分库页只读事务、关闭连接 | 本机正文、压缩、持续写 WAL/重启 |
 | 身份与排序 | 精确 contact 绑定、Name2Id 方向、分库代次与跨库合并 | 新分库、改名、同秒消息、历史补录、大库性能 |
 | 任务与草稿 | AXR 精确能力、限时加密任务、持久去重、获准披露、人工提交 | Windows 完整回信/人工提交记录闭环 |
 
 自主业务实现无需重写 SQLCipher 密码算法。若以后需要兼容 WeFlow 的 `wcdb_*` 协议，应另写只读 ABI 包装并逐项资格验证；当前 AXR 适配器不是可直接填入 WeFlow 的 DLL。
+
+2026-10-13 增量：每个分库页在读取表结构前 BEGIN，身份、消息与 Name2Id 解析共享同一已提交快照；关闭连接释放只读事务，下一页才能看到后续提交。合成 SQLite WAL 已覆盖查询间身份变化、提交追加、未提交隔离与错误清理；原生 SQLCipher 回归补充同样的事务可见性验证并交由 CI。各分库仍依次获取自己的快照，不能称为跨分库统一快照；游标之前的历史补录与真实微信持续写入仍待验证。
 
 ## 本次落地的 legacy 能力诊断
 
