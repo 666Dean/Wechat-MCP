@@ -6,7 +6,8 @@
 - READONLY/query_only、HMAC、参数绑定、VM/结果/单元格预算、串行查询、事务释放及即时取消；不提供 MCP 任意 SQL、取钥或写入接口，不改变 Guard/Hello/披露权限。固定依赖额外安装，Windows CI 增加真实可选引擎及双向原生 SQLCipher/WAL 合成回归。
 - 新增 9 项测试；本机隔离加载实际 AET 合约执行 8 项通过、1 跨引擎原生依赖缺失跳过；加上既有快照为 13/12/1。Python 3.12 全量发现 125 项，115 执行通过、10 可选 AXR 缺失跳过。
 - 实机不再注入临时工厂：三个分库扫描 20 条/返回文本 17（对方 7、本人 10），重复页、实际后续一条和连接释放通过；同一绑定近 24 小时实际文本 4（对方 1、本人 3），30.562 秒额外 10 次查询零错误/零变化，有限主库/WAL 指纹一致。日记/README/STATUS/指南同步；不记录安装下载过程或私人数据。
-- 本机原生 Guard/helper、Hello、stdio MCP 与实际新入站仍未验收，未发送，legacy -100 未修复；原生跨引擎回归由双平台 CI 分别验证。
+- 代码 1b6a38f 的 [Windows CI](https://github.com/666Dean/wechat-codex-mcp/actions/runs/38412711545/job/115348928102) 已通过原生安装器/构建/CTest：251 项发现、243 执行通过、8 平台跳过；新增 9 项引擎用例全部执行，双向 SQLCipher/SQLite3mc 加密库与已提交 WAL 兼容通过。后续本线程专注 Windows。
+- 本机原生 Guard/helper、Hello、stdio MCP 与实际新入站仍未验收，未发送，legacy -100 未修复；Windows CI 合成回归不替代本机完整设备验收。
 
 ### 2026-10-13 — Windows 有界实机只读测试日记
 
