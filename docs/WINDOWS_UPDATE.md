@@ -47,6 +47,19 @@ $TaskHelper = Join-Path $PWD '.local-private\build\AXR\Release\axr-owner-auth.ex
 
 将私有 `wcdb-qualified-local.json` 的账号、绑定和数据库配置合入 policy，经本地 `configure` 认证后重启 broker。示例账号和路径均为占位符；工具不自动绑定全部好友、取钥或开启发送。
 
+## 显式选择 SQLite3mc 只读引擎
+
+已安装 AXR 的环境可额外安装 [固定依赖](../requirements.sqlite3mc.txt)，然后在本地 `qualify` 时显式选择引擎；原生 Guard/helper 和所有者认证仍是完整 AXR 流程的必要条件。
+
+```powershell
+& $TaskPython -m pip install -r .\requirements.sqlite3mc.txt
+& $TaskPython -m adapters.wcdb_owner --state $TaskState --helper $TaskHelper --account-root 'C:\private\ACCOUNT\db_storage' qualify --engine sqlite3mc --account-id 'OWNER_ACCOUNT_ID' --contact 'OWNER_EXACT_CONTACT'
+```
+
+生成的私有配置使用 `database.engine="sqlite3mc"`，无需 SQLCipher DLL 路径；不填写 engine 时仍为原 `sqlcipher`。密钥仍须由本地 import-key 验证并保存，连接只使用已归一化的原始页密钥；`hexkey` 的口令派生语义不能直接用于这些页密钥。该语义参照 [SQLite3mc 官方 key 文档](https://utelle.github.io/SQLite3MultipleCiphers/docs/configuration/config_sql_pragmas/)。
+
+当前仅接受 apsw-sqlite3mc 3.53.4.0 / Multiple Ciphers 2.4.0 和 SQLCipher-4 配置；依赖缺失、普通 APSW、其他版本/配置都明确失败，不自动回退。查询保留 5 秒 VM 预算、1001 行/单元格 1 MiB 预算、事务关闭与即时取消。本机适配器的小范围与近期只读测试通过，完整 AXR/MCP/Hello 仍未设备验收；见本页顶部日记。
+
 ## 草稿与人工提交
 
 按 [人工回信指南](CODEX_MANUAL_REPLY.md) 在本地终端启动所有者限时会话，另用新 Codex worker 或生成的 MCP 配置。两个 broker 入口择一：

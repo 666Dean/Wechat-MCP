@@ -23,8 +23,9 @@ def qualify_existing_contacts(store,policy,labels):
     root=roots.pop();rows=inventory(root);keys=verified_cached(store,root,rows)
     item=keys.get('contact/contact.db')
     if not item:raise AXRError('verified_contact_key_required')
-    return qualify_contacts(rows['contact/contact.db']['path'],policy['database']['sqlcipher_library'],
-        store.secrets.get(item['key_reference']),policy['account_id'],labels,account_root=root)
+    return qualify_contacts(rows['contact/contact.db']['path'],policy['database'].get('sqlcipher_library'),
+        store.secrets.get(item['key_reference']),policy['account_id'],labels,account_root=root,
+        engine=policy['database'].get('engine','sqlcipher'))
 
 
 def setup(store,ttl,uses,contacts=None):

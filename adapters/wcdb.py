@@ -17,7 +17,7 @@ from axr.aet import AXRError, canonical, digest
 
 class CipherConnection:
     def __init__(self, path, library, key, profile):
-        if not Path(library).is_absolute() or not Path(library).is_file():
+        if not isinstance(library, (str, Path)) or not Path(library).is_absolute() or not Path(library).is_file():
             raise AXRError("sqlcipher_library_not_configured")
         if not re.fullmatch(r"[0-9a-fA-F]{64}", key):
             raise AXRError("invalid_database_key")
@@ -171,9 +171,20 @@ SCHEMAS = {
 }
 
 
+def open_database(path, key, profile, *, engine='sqlcipher', library=None):
+    if engine == 'sqlcipher':
+        return CipherConnection(path, library, key, profile)
+    if engine == 'sqlite3mc':
+        from .sqlite3mc import MultipleCipherConnection
+        return MultipleCipherConnection(path, key, profile)
+    raise AXRError('database_engine_not_supported')
+
+
 class DatabaseAdapter:
     def __init__(self, config, secret_store, *, connection_factory=None):
         self.config,self.secret_store=config,secret_store
+        if config.get('engine', 'sqlcipher') not in ('sqlcipher', 'sqlite3mc'):
+            raise AXRError('database_engine_not_supported')
         self.factory=connection_factory
         self.bindings={b["conversation_id"]:b for b in config["conversations"]}
         self.connections={}
@@ -194,12 +205,14 @@ class DatabaseAdapter:
                 connection=self.factory(path)
             else:
                 key=self.secret_store.get(shard["key_reference"]).hex()
-                connection=CipherConnection(path,self.config["sqlcipher_library"],key,shard["cipher_profile"])
+                connection=open_database(path,key,shard["cipher_profile"],
+                    engine=self.config.get('engine','sqlcipher'),library=self.config.get('sqlcipher_library'))
             self.connections[str(path)]=connection
         return self.connections[str(path)],generation
 
     def status(self):
-        return {"mode":"wcdb", "coverage":"explicit_conversation_tables_and_shards",
+        return {"mode":"wcdb", "engine":self.config.get('engine','sqlcipher'),
+                "coverage":"explicit_conversation_tables_and_shards",
                 "background_read":True, "send_available":False, "key_extraction":False,
                 "conversations":len(self.bindings), "shards":len(self.config.get("shards",[]))}
 

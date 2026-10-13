@@ -48,6 +48,9 @@ jobs:
           key: axr-vcpkg-windows-20261011
       - name: Python and editable C++ SDK
         run: python -m pip install -r requirements.axr.txt pybind11==3.0.1
+      - name: Optional SQLite3mc reader (Windows)
+        if: runner.os == 'Windows'
+        run: python -m pip install -r requirements.sqlite3mc.txt
       - name: Root helpers and native tests (macOS)
         if: runner.os == 'macOS'
         run: python scripts/build_axr.py --openssl "$OPENSSL_ROOT_DIR" --mac-selection-probe

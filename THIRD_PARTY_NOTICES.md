@@ -5,6 +5,18 @@ AXR/ is separately AGPL-3.0-only. Combining or distributing a program that links
 AXR may impose AGPL obligations on the combined program; an MIT header does not
 remove those obligations. See AXR/THIRD_PARTY_NOTICES.md for SDK dependencies.
 
+## Optional SQLite3 Multiple Ciphers reader
+
+`requirements.sqlite3mc.txt` selects [apsw-sqlite3mc](https://github.com/utelle/apsw-sqlite3mc)
+3.53.4.0, combining [APSW](https://github.com/rogerbinns/apsw) and
+[SQLite3 Multiple Ciphers](https://github.com/utelle/SQLite3MultipleCiphers).
+The integration independently uses their public APIs; no upstream source or
+wheel is vendored here. Dependencies and their bundled cryptographic components
+retain their own license notices, including the wheel's original LICENSE file.
+Distributions must preserve those notices; the integration's MIT header does
+not relicense dependency code. The verified wheel identifies its APSW license
+as `any-OSI`, with the original terms retained in the installed distribution.
+
 ## WeChat AX layout utilities
 
 adapters/macos/layout.py adapts selected identifiers and title normalization
