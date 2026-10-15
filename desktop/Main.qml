@@ -8,6 +8,7 @@ ApplicationWindow {
     width: 1280; height: 800; minimumWidth: 1024; minimumHeight: 680
     visible: true; title: "WeChat MCP"
     flags: Qt.Window | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint
+    topPadding: 0; bottomPadding: 0; leftPadding: 0; rightPadding: 0
     color: Theme.canvas
     palette.window: Theme.surface; palette.windowText: Theme.ink; palette.text: Theme.ink; palette.base: Theme.surface; palette.button: Theme.surface; palette.buttonText: Theme.ink; palette.highlight: Theme.brand; palette.highlightedText: "white"
     font.family: Qt.platform.os === "osx" ? "PingFang SC" : "Microsoft YaHei UI"
@@ -112,11 +113,10 @@ ApplicationWindow {
     }
 
     RowLayout {
-        anchors.fill: parent; anchors.topMargin: 30; spacing: 0
+        anchors.fill: parent; spacing: 0
         Item {
             objectName: "sidebar"; Layout.preferredWidth: Theme.sidebarWidth; Layout.fillHeight: true
-            Rectangle { anchors.fill: parent; anchors.margins: 12; anchors.topMargin: 18; radius: 20; color: "#06000000" }
-            Rectangle { anchors.fill: parent; anchors.margins: 12; radius: 20; color: Theme.glass; border.color: Theme.glassBorder }
+            Rectangle { objectName: "sidebarCard"; anchors.fill: parent; anchors.margins: 12; radius: 20; color: Theme.glass; border.color: Theme.glassBorder }
             ColumnLayout { anchors.fill: parent; anchors.margins: 26; spacing: 7
                 RowLayout { Layout.fillWidth: true; Layout.topMargin: 18; Layout.bottomMargin: 28; spacing: 12
                     WindowDrag { }
@@ -154,7 +154,7 @@ ApplicationWindow {
                 Item { Layout.preferredHeight: 10 }
             }
         }
-        ColumnLayout { Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
+        ColumnLayout { Layout.fillWidth: true; Layout.fillHeight: true; Layout.topMargin: Qt.platform.os === "windows" ? 30 : 0; spacing: 0
             RowLayout { Layout.fillWidth: true; Layout.preferredHeight: 88; Layout.leftMargin: Theme.margin; Layout.rightMargin: Theme.margin
                 Column { spacing: 5
                     WindowDrag { }
