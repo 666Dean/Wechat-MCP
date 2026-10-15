@@ -9,6 +9,7 @@ from pathlib import Path
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build',default='.local-private/build')
+    parser.add_argument('--navigation',action='store_true',help='Build the experimental main-window menu search helper instead')
     args=parser.parse_args()
     if sys.platform!='darwin':parser.error('experimental input adapter is macOS-only')
     root=Path(__file__).resolve().parents[1]
@@ -19,9 +20,10 @@ def main():
     if len(libraries)!=1:parser.error('build AXR with its explicit OpenSSL dependency first')
     crypto=Path(libraries[0]).resolve(strict=True)
     core=(build/'AXR/libaxr.a').resolve(strict=True)
-    output=build/'wechat-pinned-input-experimental'
+    source='experimental_chat_navigation.swift' if args.navigation else 'experimental_pinned_input.swift'
+    output=build/('wechat-chat-navigation-experimental' if args.navigation else 'wechat-pinned-input-experimental')
     subprocess.run(['swiftc','-I',str(root/'AXR/native/bridge'),
-        str(root/'adapters/macos/experimental_pinned_input.swift'),
+        str(root/'adapters/macos'/source),
         '-Xlinker',str(core),'-Xlinker',str(crypto),'-lsqlite3','-lc++',
         '-o',str(output)],check=True)
     print('Experimental adapter compiled; not installed or enabled.')

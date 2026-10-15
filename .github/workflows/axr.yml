@@ -61,7 +61,9 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           python scripts/build_pinned_input.py
+          python scripts/build_pinned_input.py --navigation
           echo "AXR_TEST_PINNED_INPUT=$PWD/.local-private/build/wechat-pinned-input-experimental" >> "$GITHUB_ENV"
+          echo "AXR_TEST_CHAT_NAVIGATION=$PWD/.local-private/build/wechat-chat-navigation-experimental" >> "$GITHUB_ENV"
       - name: Root helpers and native tests (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

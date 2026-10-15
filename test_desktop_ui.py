@@ -6,7 +6,7 @@ os.environ.setdefault('QT_QUICK_BACKEND','software')
 import unittest
 from pathlib import Path
 try:
-    from PySide6.QtCore import QUrl,QCoreApplication,QEvent,Qt,QObject
+    from PySide6.QtCore import QUrl,QCoreApplication,QEvent,Qt,QObject,QPointF
     from PySide6.QtWidgets import QApplication
     from PySide6.QtQml import QQmlApplicationEngine
     from PySide6.QtQuick import QQuickWindow
@@ -52,6 +52,11 @@ class DesktopUI(unittest.TestCase):
                         self.assertEqual(round(footer.property('height')),32)
                         self.assertLessEqual(viewport.property('y')+viewport.property('height'),footer.property('y')+1)
                         self.assertFalse(w.property('connected'));self.assertFalse(w.property('sendAvailable'))
+                        card=self.visual(w,'sidebarCard');self.assertIsNotNone(card)
+                        top=card.mapToItem(w.contentItem(),QPointF(0,0)).y()
+                        bottom=w.contentItem().height()-top-card.height()
+                        self.assertAlmostEqual(top,bottom,delta=1)
+                        self.assertLessEqual(top,16)
                         if page==7:
                             manual=self.visual(w,'manualDraftText');self.assertIsNotNone(manual)
                             self.assertGreater(manual.width(),200)
