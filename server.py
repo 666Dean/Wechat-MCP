@@ -11,6 +11,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=str(Path(__file__).with_name("config.json")))
     parser.add_argument("--demo", action="store_true")
+    parser.add_argument("--broker", action="store_true", help="AXR mode: connect to the shared local Desktop broker")
     parser.add_argument("--axr-state", help="Use independently owner-sealed AXR policy and journal")
     parser.add_argument("--listener", action="store_true",help="Run the local listener; owner policy switches still apply")
     parser.add_argument("--manual-replies", action="store_true",help="AXR mode: forbid all adapter sends; replies are human-submitted drafts")
@@ -39,8 +40,14 @@ def main():
                 or args.import_keeper_key is not None):
             parser.error("AXR mode cannot mix legacy/demo/owner-management switches")
         from axr_integration.service import Service,register
+        from axr_integration.lifecycle import DeferredService
         from mcp.server import MCPServer
-        service=Service(args.axr_state,manual_replies=args.manual_replies)
+        if args.broker:
+            if args.listener or args.doctor:parser.error('--broker listener and doctor belong to the broker process')
+            from axr_integration.broker import RemoteService
+            service=RemoteService(args.axr_state)
+        else:
+            service=(Service if args.doctor else DeferredService)(args.axr_state,manual_replies=args.manual_replies)
         try:
             if args.doctor:
                 print(json.dumps(service.status(),ensure_ascii=False,indent=2));return
@@ -50,6 +57,7 @@ def main():
             mcp.run(transport="stdio")
         finally:service.close()
         return
+    if args.broker:parser.error("--broker requires --axr-state")
     if args.listener:parser.error("--listener requires --axr-state")
     if args.manual_replies:parser.error("--manual-replies requires --axr-state")
     if args.import_keeper_key is not None:

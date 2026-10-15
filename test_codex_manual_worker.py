@@ -8,6 +8,36 @@ from scripts import run_codex_manual as worker
 
 
 class CodexManualWorker(unittest.TestCase):
+    def test_overview_cannot_enable_manual_reply_worker(self):
+        with self.assertRaisesRegex(ValueError,'requires_review'):
+            worker.run(Path('/fixture'),Path('/state'),60,overview=True)
+    def test_review_worker_cannot_prepare_reply_or_send(self):
+        with patch.object(worker.shutil,'which',return_value='codex'):
+            args=worker.command(Path('/fixture'),Path('/state'),60,review=True)
+        settings=[args[i+1] for i,v in enumerate(args) if v=='-c']
+        enabled=next(v.split('=',1)[1] for v in settings if v.startswith('mcp_servers.wechat_axr.enabled_tools='))
+        self.assertEqual(json.loads(enabled),worker.REVIEW_TOOLS)
+        self.assertNotIn('wechat_prepare_reply',json.loads(enabled))
+        self.assertNotIn('wechat_finish_task',json.loads(enabled))
+        self.assertIn('wechat_acknowledge_review',json.loads(enabled))
+        server_args=json.loads(next(v.split('=',1)[1] for v in settings if v.startswith('mcp_servers.wechat_axr.args=')))
+        self.assertNotIn('--listener',server_args)
+
+    def test_review_rejects_unexpected_reply_event_without_logging_body(self):
+        class Process:
+            pid=1
+            stdin=io.StringIO()
+            stdout=io.StringIO(json.dumps({'type':'item.completed','item':{'type':'mcp_tool_call',
+                'tool':'wechat_prepare_reply','status':'completed','result':{'private':'fixture secret'}}})+'\n')
+            stderr=io.StringIO()
+            def poll(self):return 0
+            def wait(self,timeout):return 0
+        output=io.StringIO()
+        with patch.object(worker,'command',return_value=['fixture']),patch.object(worker.subprocess,'Popen',return_value=Process()),patch.object(worker.sys,'stdout',output):
+            with self.assertRaisesRegex(ValueError,'unexpected_codex_tool'):
+                worker.run(Path('/fixture'),Path('/state'),60,review=True)
+        self.assertNotIn('fixture secret',output.getvalue())
+
     def test_only_scoped_manual_mcp_without_external_tools(self):
         with patch.object(worker.shutil,'which',return_value='codex'):
             args=worker.command(Path('/fixture'),Path('/state'),60)

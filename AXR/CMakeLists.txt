@@ -90,6 +90,14 @@ if(APPLE)
       DEPENDS axr tests/MacSelectionProbe.swift native/bridge/module.modulemap include/axr/Commit.h VERBATIM)
     add_custom_target(axr-mac-selection-probe-build ALL
       DEPENDS "${AXR_PICKER_APP}/Contents/MacOS/axr-selection-probe")
+    # Compile alongside manual picker tools; never capture in CTest or install
+    # a developer qualification entry in the customer application.
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/axr-mac-capture-control"
+      COMMAND "${AXR_SWIFTC}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/MacCaptureControl.swift"
+        -o "${CMAKE_CURRENT_BINARY_DIR}/axr-mac-capture-control"
+      DEPENDS tests/MacCaptureControl.swift VERBATIM)
+    add_custom_target(axr-mac-capture-control-build ALL
+      DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/axr-mac-capture-control")
   endif()
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/axr-helper"
     COMMAND "${AXR_SWIFTC}" -I "${CMAKE_CURRENT_SOURCE_DIR}/native/bridge"

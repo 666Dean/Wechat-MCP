@@ -118,3 +118,19 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+## Desktop and bounded attachment dependencies
+
+- PySide6-Essentials / Shiboken 6.10.2: LGPL-3.0-only OR GPL-2.0-only OR
+  GPL-3.0-only, with Qt modules under their respective licenses. This repository
+  does not relicense Qt or distribute a commercial Qt entitlement.
+  [Qt for Python licensing](https://doc.qt.io/qtforpython-6/licenses.html).
+- defusedxml 0.7.1: Python Software Foundation License.
+  [Project license](https://github.com/tiran/defusedxml/blob/main/LICENSE).
+- pypdf 6.6.0: BSD-3-Clause.
+  [Project license](https://github.com/py-pdf/pypdf/blob/main/LICENSE).
+
+The WCDB compound-kind normalization was independently implemented after
+reviewing the MIT chatlog-keeper reader already attributed above. No third-party
+sending installer, binary hook, privacy bypass or private framework is included.

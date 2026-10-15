@@ -57,6 +57,13 @@ jobs:
       - name: Compile read-only native process eligibility probe (macOS)
         if: runner.os == 'macOS'
         run: swiftc adapters/macos/native_runtime_probe.swift -o .local-private/build/wechat-native-runtime-probe
+      - name: Build experimental pinned-input proof fixture (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          python scripts/build_pinned_input.py
+          python scripts/build_pinned_input.py --navigation
+          echo "AXR_TEST_PINNED_INPUT=$PWD/.local-private/build/wechat-pinned-input-experimental" >> "$GITHUB_ENV"
+          echo "AXR_TEST_CHAT_NAVIGATION=$PWD/.local-private/build/wechat-chat-navigation-experimental" >> "$GITHUB_ENV"
       - name: Root helpers and native tests (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -77,8 +84,15 @@ jobs:
           "AXR_TEST_WORKER=$env:GITHUB_WORKSPACE/.local-private/build/AXR/Release/axr-worker-probe.exe" >> $env:GITHUB_ENV
           "AXR_TEST_WINDOWS_LAUNCHER=$env:GITHUB_WORKSPACE/.local-private/build/AXR/Release/axr-sandbox.exe" >> $env:GITHUB_ENV
           "AXR_TEST_RUNTIME_ROOTS=$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/debug/bin;$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin" >> $env:GITHUB_ENV
+      - name: Qt Quick desktop runtime
+        run: python -m pip install PySide6-Essentials==6.10.2
       - name: Security and legacy regressions
         run: python -m unittest discover -q
+      - name: Desktop 125 and 150 percent render simulation
+        shell: bash
+        run: |
+          QT_SCALE_FACTOR=1.25 python -m unittest test_desktop_ui -q
+          QT_SCALE_FACTOR=1.5 python -m unittest test_desktop_ui -q
       - name: Confirm private files are absent
         shell: bash
         run: |

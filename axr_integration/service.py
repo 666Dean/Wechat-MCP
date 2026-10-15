@@ -13,6 +13,7 @@ from axr.runtime import Runtime
 from axr.workspace import Workspace
 from axr.admission import Budget,Admission
 from .policy import validate_controls
+from .content_safety import mask_credentials
 
 class Service:
     def __init__(self,state,*,store=None,adapter=None,leases=None,manual_replies=False):
@@ -29,11 +30,14 @@ class Service:
         self.destination=self.config["agent_destination"]
         if self.destination=="local":raise AXRError("model_disclosure_destination_must_be_explicit")
         self.bindings={b["conversation_id"]:b for b in self.config["conversations"]}
-        if not self.bindings or len(self.bindings)>32:raise AXRError("explicit_conversation_bindings_required")
+        maximum=4096 if self.config.get('account_review',{}).get('enabled') else 32
+        if not self.bindings or len(self.bindings)>maximum:raise AXRError("explicit_conversation_bindings_required")
         # Global per-user lease root independent of journal/config locations.
         lease_root=Path(leases) if leases else Path.home()/".stellaria-axr"/"leases"
         self.lifetime=Lease(lease_root,["journal",str(self.store.directory)])
-        self.lifetime.__enter__()
+        try:self.lifetime.__enter__()
+        except BaseException:
+            self.store.close();raise
         try:
             if not self.journal.verify_audit():raise AXRError("journal_audit_integrity_failed")
             self.journal.recover();self.journal.purge()
@@ -41,7 +45,8 @@ class Service:
             elif self.config["mode"] in {"wcdb","hybrid"}:
                 from adapters.wcdb import DatabaseAdapter
                 self.adapter=DatabaseAdapter({**self.config["database"],"account_id":self.account,
-                    "conversations":self.config["conversations"]},self.store.secrets)
+                    "conversations":self.config["conversations"],
+                    "attachments_enabled":self.config.get("attachments",{}).get("enabled",False)},self.store.secrets)
                 if self.config["mode"]=="hybrid":
                     from adapters.ui import UIAdapter
                     from adapters.hybrid import HybridAdapter
@@ -56,6 +61,8 @@ class Service:
             else:raise AXRError("unknown_data_mode")
             handlers={"messages.read":self._read,"messages.search":self._read,
                       "disclosure.send":self._disclose,"reply.prepare":self._prepare,"messages.send":self._send}
+            if self.config.get('attachments',{}).get('enabled'):
+                handlers['files.read']=self._read_attachment
             self.navigation=None
             if "navigation" in self.config:
                 from adapters.macos.navigation import NavigationAdapter
@@ -72,6 +79,10 @@ class Service:
             self.active_policy_version=self.guard.version
             from .inbox import Inbox
             self.inbox=Inbox(self.journal,self.guard,self.principal)
+            self.journal.db.execute('CREATE TABLE IF NOT EXISTS reply_submissions(task_id TEXT,principal TEXT,job_id TEXT,PRIMARY KEY(task_id,principal))')
+            self.journal.db.execute('CREATE TABLE IF NOT EXISTS review_read_budget(principal TEXT PRIMARY KEY,pages INTEGER)')
+            self.journal.db.execute('CREATE TABLE IF NOT EXISTS review_notes(id TEXT PRIMARY KEY,principal TEXT,resource TEXT,version INTEGER,expires REAL,payload BLOB)')
+            self.journal.db.execute('DELETE FROM review_notes WHERE expires<=? OR version!=?',(self.journal.clock(),self.guard.version))
             self.listener_since=int(self.journal.clock())
         except BaseException:
             self.lifetime.__exit__();self.store.close();raise
@@ -106,9 +117,16 @@ class Service:
         # Always return the proposal. Approval belongs to the local owner CLI.
         return self.runtime.propose(action)
 
-    def conversations(self):
-        return {"conversations":[{"conversation_id":k,"display_name":v["display_name"]} for k,v in self.bindings.items()],
-                "coverage":"explicit_owner_bindings"}
+    def conversations(self,offset=0,limit=100):
+        if type(offset) is not int or offset<0 or type(limit) is not int or not 1<=limit<=100:raise AXRError('invalid_catalog_page')
+        self.ensure_policy();items=list(self.bindings.items())[offset:offset+limit]
+        if self.config.get('account_review',{}).get('enabled'):
+            for cid,_ in items:self.guard.check(self._read_action(cid,{'catalog_metadata':True}))
+        return {"conversations":[{"conversation_id":k,"display_name":v["display_name"],
+                    **{f:v[f] for f in ('kind','records','text_records') if f in v}} for k,v in items],
+                'total':len(self.bindings),'next_offset':offset+limit if offset+limit<len(self.bindings) else None,
+                "coverage":"explicit_owner_bindings",
+                'account_review':self.config.get('account_review',{}).get('coverage')}
 
     def _action(self,conversation_id,operation,payload,*,sources=(),destination="local",workflow="manual"):
         self.ensure_policy()
@@ -124,8 +142,21 @@ class Service:
         return replace(action,sources=(Provenance(action.resource,"query:"+digest(payload),data_class),))
 
     def read(self,conversation_id,query="",sender=None,since=0,until=2**63-1,cursor=None,limit=20):
+        with self.runtime.lock:
+            return self._read_context_locked(conversation_id,query,sender,since,until,cursor,limit)
+
+    def _read_context_locked(self,conversation_id,query="",sender=None,since=0,until=2**63-1,cursor=None,limit=20):
         if not isinstance(query,str) or len(query)>256 or type(limit) is not int or not 1<=limit<=100:
             raise AXRError("invalid_context_budget")
+        self.ensure_policy();review=self.config.get('account_review',{})
+        if review.get('enabled'):
+            if self.journal.clock()>=review['deadline']:raise AXRError('account_review_expired')
+            if until==2**63-1:until=review['snapshot_until']
+            if until>review['snapshot_until']:raise AXRError('account_review_snapshot_range')
+            limit=min(limit,6)
+            self.journal.db.execute('INSERT OR IGNORE INTO review_read_budget VALUES(?,0)',(self.principal,))
+            if self.journal.db.execute('UPDATE review_read_budget SET pages=pages+1 WHERE principal=? AND pages<?',
+                    (self.principal,review['max_pages'])).rowcount!=1:raise AXRError('account_review_page_budget_exhausted')
         after=None
         resource=self.resource(conversation_id)
         if cursor:
@@ -145,7 +176,16 @@ class Service:
         readback_job=options.pop("readback_job",None)
         manual_readback=options.pop('manual_readback_job',None)
         if self.config["mode"]=="ui":options["guard_context"]=check.commit_proof()
-        page=self.adapter.search(action.resource.conversation_id,**options)
+        try:page=self.adapter.search(action.resource.conversation_id,**options)
+        except AXRError as error:
+            # Static codes only: never persist exception text, SQL or bodies.
+            codes={'sender_identity_unknown','private_chat_sender_identity_mismatch',
+                'wcdb_compression_dictionary_required','message_compression_invalid',
+                'wcdb_schema_not_qualified','group_sender_not_resolved','unknown_wcdb_compression',
+                'database_query_failed_not_empty_result'}
+            code=str(error) if str(error) in codes else 'unclassified'
+            self.journal.meter('read_failure_'+code)
+            raise
         check() # A changed policy cannot disclose or persist a newly fetched page.
         self.journal.meter("pages_read")
         if readback_job is not None or manual_readback is not None:
@@ -165,23 +205,102 @@ class Service:
         for message in page["messages"]:
             text=message.get("text")
             if not isinstance(text,str):continue
-            clipped=text.encode("utf8")[:min(remaining,4000)].decode("utf8","ignore")
+            safe_text,masked=mask_credentials(text)
+            clipped=safe_text.encode("utf8")[:min(remaining,4000)].decode("utf8","ignore")
             if not clipped:break
             remaining-=len(clipped.encode("utf8"))
-            messages.append({**message,"text":clipped,"truncated":clipped!=text,
+            messages.append({**message,"text":clipped,"truncated":clipped!=safe_text,"credentials_redacted":masked,
                 "data_class":self.bindings[action.resource.conversation_id].get("data_class","personal"),
                 "trust":"untrusted-external"})
         context={"messages":messages,"coverage":page["coverage"],"complete_history":False,
+                 "read_scope":{k:action.payload[k] for k in ('since','until','limit')},
+                 "scanned":page.get('scanned'),"has_more":bool(page.get('has_more')),
                  "budget_truncated":len(messages)<len([m for m in page["messages"] if isinstance(m.get("text"),str)]) or any(m["truncated"] for m in messages)}
         cid=self.journal.remember(self.principal,action.resource,context,self.guard.version,ttl=900)
         next_cursor=None
         if page.get("cursor"):
             next_cursor=self.journal.remember(self.principal,action.resource,
                 {"filters":[action.payload[k] for k in ("query","sender","since","until")],"after":page["cursor"]},
-                self.guard.version,ttl=300)
+                self.guard.version,ttl=min(3600,max(1,self.config['account_review']['deadline']-self.journal.clock()))
+                    if self.config.get('account_review',{}).get('enabled') else 300)
         return {"epoch":epoch,"verified":True,"evidence_digest":digest([cid,len(messages)]),
             "output":{"context_id":cid,"count":len(messages),"cursor":next_cursor,"has_more":bool(page.get("has_more")),
+                      'scanned':page.get('scanned'),'budget_truncated':context['budget_truncated'],
+                      'effective_limit':action.payload['limit'],
                       "coverage":page["coverage"],"complete_history":False,"body_disclosed":False}}
+
+    def find_attachments(self,conversation_id,since=0,until=2**63-1,limit=6):
+        with self.runtime.lock:
+            if not self.config.get('attachments',{}).get('enabled'):raise AXRError('attachment_access_disabled')
+            if type(limit) is not int or not 1<=limit<=6:raise AXRError('attachment_page_budget')
+            self.ensure_policy();review=self.config.get('account_review',{})
+            if review.get('enabled'):
+                if self.journal.clock()>=review['deadline']:raise AXRError('account_review_expired')
+                if until==2**63-1:until=review['snapshot_until']
+                if until>review['snapshot_until']:raise AXRError('account_review_snapshot_range')
+                self.journal.db.execute('INSERT OR IGNORE INTO review_read_budget VALUES(?,0)',(self.principal,))
+                if self.journal.db.execute('UPDATE review_read_budget SET pages=pages+1 WHERE principal=? AND pages<?',
+                        (self.principal,review['max_pages'])).rowcount!=1:raise AXRError('account_review_page_budget_exhausted')
+            action=self._read_action(conversation_id,{'query':'','sender':None,'since':since,'until':until,
+                'limit':limit,'after':None,'attachments_only':True})
+            receipt=self.runtime.propose(action)
+            return self.execute(receipt['id']) if receipt['state']=='Ready' else receipt
+
+    def read_attachment(self,conversation_id,context_id,reference):
+        with self.runtime.lock:
+            self.ensure_policy()
+            if not self.config.get('attachments',{}).get('enabled'):raise AXRError('attachment_access_disabled')
+            resource=self.resource(conversation_id)
+            context=self.journal.context(context_id,self.principal,resource,self.guard.version)
+            matches=[m for m in context.get('messages',[]) if m['reference']==reference and m.get('attachment')]
+            if len(matches)!=1:raise AXRError('attachment_source_not_owned_or_ambiguous')
+            message=matches[0]
+            action=self._action(conversation_id,'files.read',
+                {'context_id':context_id,'reference':reference,'metadata':message['attachment']},
+                sources=(Provenance(resource,reference,message['data_class']),))
+            job=self.runtime.propose(action)
+            return self.execute(job['id']) if job['state']=='Ready' else job
+
+    def _read_attachment(self,action,check,epoch):
+        import base64,sys
+        from adapters.attachments import AttachmentResolver
+        check()
+        context=self.journal.context(action.payload['context_id'],self.principal,action.resource,self.guard.version)
+        matches=[m for m in context['messages'] if m['reference']==action.payload['reference']
+                 and m.get('attachment')==action.payload['metadata']]
+        if len(matches)!=1:raise AXRError('attachment_source_changed')
+        resolved=AttachmentResolver(self.config['attachments']).resolve(action.payload['metadata'])
+        # Spawn only our pinned parser; filenames never become argv or shell code.
+        request={'content':base64.b64encode(resolved['content']).decode('ascii'),
+                 'filename':action.payload['metadata']['filename']}
+        try:
+            worker=Path(__file__).resolve().parent.parent/'adapters/attachment_worker.py'
+            extracted=Supervisor(timeout=10).invoke([sys.executable,str(worker)],request)['result']
+            text,masked=mask_credentials(extracted['text'])
+        except Exception as exc:raise AXRError('attachment_parser_failed_safe') from exc
+        check()
+        message={'reference':action.payload['reference'],'text':text,'data_class':action.sources[0].data_class,
+                 'trust':'untrusted-external','credentials_redacted':masked,'attachment_sha256':resolved['sha256'],
+                 'attachment':action.payload['metadata'],'truncated':extracted['truncated']}
+        cid=self.journal.remember(self.principal,action.resource,{'messages':[message],
+            'coverage':'verified_local_attachment','complete_history':False,'budget_truncated':extracted['truncated']},
+            self.guard.version,ttl=900)
+        return {'epoch':epoch,'verified':True,'evidence_digest':resolved['sha256'],
+                'output':{'context_id':cid,'count':1,'local_content_verified':True,
+                          'format':extracted['format'],'body_disclosed':False,'truncated':extracted['truncated']}}
+
+    def receipt(self,job_id):
+        with self.runtime.lock:return self.journal.receipt(job_id,self.principal)
+
+    def cancel_job(self,job_id):
+        with self.runtime.lock:return self.runtime.cancel(job_id,self.principal)
+
+    def run_batch(self,job_id):
+        from .runner import execute_batch
+        with self.runtime.lock:return execute_batch(self,job_id)
+
+    def read_all(self):
+        return {'jobs':[self.read(cid) for cid in self.bindings]}
 
     def _sources(self,resource,context_ids=()):
         # Conservative session taint: callers cannot launder read data by omitting context IDs.
@@ -239,18 +358,62 @@ class Service:
                       "automatic_send":False}}
 
     def propose_send(self,conversation_id,draft_id):
+        with self.runtime.lock:
+            self.ensure_policy()
+            self._require_qualified_sender()
+            resource=self.resource(conversation_id)
+            data=self.journal.context(draft_id,self.principal,resource,self.guard.version)
+            draft=Action.from_dict(data["draft"])
+            return self.runtime.propose(self._action(conversation_id,"messages.send",draft.payload,
+                sources=tuple({(p.resource.key,p.reference):p for p in (*draft.sources,*self._sources(resource))}.values()),
+                destination="wechat:"+resource.key,workflow=draft.workflow))
+
+    def _require_qualified_sender(self):
+        """Technical availability only; this neither grants authority nor vendor permission."""
         if self.manual_replies:raise AXRError('human_submission_only')
-        resource=self.resource(conversation_id)
-        data=self.journal.context(draft_id,self.principal,resource,self.guard.version)
-        draft=Action.from_dict(data["draft"])
-        return self.runtime.propose(self._action(conversation_id,"messages.send",draft.payload,
-            sources=tuple({(p.resource.key,p.reference):p for p in (*draft.sources,*self._sources(resource))}.values()),
-            destination="wechat:"+resource.key,workflow=draft.workflow))
+        if self.config['mode'] not in {'ui','hybrid'}:raise AXRError('send_backend_not_qualified')
+        try:status=self.adapter.status()
+        except Exception:raise AXRError('send_backend_not_qualified') from None
+        if not isinstance(status,dict) or status.get('send_available') is not True:
+            raise AXRError('send_backend_not_qualified')
 
     def _send(self,action,check,epoch):
-        if self.manual_replies:raise AXRError('human_submission_only')
-        if self.config["mode"] not in {"ui","hybrid"}:raise AXRError("database_read_mode_has_no_send_authority")
+        check()
+        self.ensure_policy()
+        self._require_qualified_sender()
         return self.adapter.send(action,check,epoch)
+
+    def submit_reply_task(self,task_id):
+        """Submit a sealed task through the approved adapter, without clipboard handoff."""
+        with self.runtime.lock:
+            self.ensure_policy()
+            self._require_qualified_sender()
+            existing=self.journal.db.execute('SELECT job_id FROM reply_submissions WHERE task_id=? AND principal=?',
+                (task_id,self.principal)).fetchone()
+            if existing:
+                job=self.journal.receipt(existing['job_id'],self.principal)
+            else:
+                task=self.inbox.get(task_id)
+                if not task.get('draft_job'):raise AXRError('completed_task_draft_required')
+                row=self.journal.get(task['draft_job'],self.principal)
+                draft=self.journal.action(row);resource=self.resource(task['conversation_id'])
+                if row['state']!='Completed' or draft.operation!='reply.prepare' or draft.resource!=resource:
+                    raise AXRError('completed_matching_reply_draft_required')
+                self.guard.revalidate(draft,row['grant_id'],row['policy_version'])
+                # Replay claim is persisted atomically with proposal. A crash
+                # before linking cannot issue a second task submission.
+                action=self._action(task['conversation_id'],'messages.send',draft.payload,
+                    sources=tuple({(p.resource.key,p.reference):p for p in (*draft.sources,*self._sources(resource))}.values()),
+                    destination='wechat:'+resource.key,workflow=draft.workflow)
+                action=replace(action,execution_id=digest(['reply-task-send',self.principal,task_id]))
+                job=self.runtime.propose(action)
+                self.journal.db.execute('INSERT INTO reply_submissions VALUES(?,?,?)',(task_id,self.principal,job['id']))
+            if job['state'] in {'Ready','AwaitingApproval'}:
+                try:self.guard.check(self.journal.action(self.journal.get(job['id'],self.principal)))
+                except AXRError:return {'send_job':job,'automatic_send':False,'retry':False,'delivery_confirmed':False}
+                job=self.execute(job['id'])
+            return {'send_job':job,'automatic_send':job['state']=='Completed',
+                    'retry':False,'delivery_confirmed':False,'submission':'approved_adapter'}
 
     def observe_send_record(self,jid):
         """Separate read AET; never retry a send or promote an Unknown receipt."""
@@ -344,16 +507,37 @@ class Service:
                     'origin':task.get('origin','incoming_reply')})
             return {'tasks':tasks,'submission':'human','automatic_send':False}
 
-    def request_task(self,conversation_id,since=0,limit=6):
+    def request_task(self,conversation_id,since=0,limit=6,cursor=None,until=2**63-1):
         """Explicit bounded context task, distinct from a newly received message."""
         with self.runtime.lock:
             if type(limit) is not int or not 1<=limit<=6:raise AXRError('reply_task_page_limit')
-            read=self.read(conversation_id,since=since,limit=limit)
+            read=self.read(conversation_id,since=since,limit=limit,cursor=cursor,until=until)
             if read['state']!='Completed':return {'read_job':read,'body_disclosed':False}
             handle=read['result']['context_id'];proposal=self.disclose(conversation_id,handle)
             task_id=self.inbox.create(self.resource(conversation_id),handle,proposal['id'],origin='explicit_read')
             return {'task_id':task_id,'disclosure_job':proposal['id'],'read_job':read,
                     'body_disclosed':False,'automatic_send':False,'origin':'explicit_read'}
+
+    def acknowledge_review(self,task_id,summary):
+        with self.runtime.lock:
+            self.ensure_policy();review=self.config.get('account_review',{})
+            if not review.get('enabled') or self.journal.clock()>=review['deadline']:raise AXRError('account_review_not_active')
+            if not isinstance(summary,str) or len(summary.encode('utf8'))>16000:raise AXRError('review_summary_budget')
+            task=self.inbox.get(task_id);row=self.journal.get(task['disclosure_job'],self.principal)
+            if row['state']!='Completed':raise AXRError('reply_task_context_not_disclosed')
+            action=self.journal.action(row);self.guard.revalidate(action,row['grant_id'],row['policy_version'])
+            context=self.journal.context(task['context_id'],self.principal,action.resource,self.guard.version)
+            data={'id':task_id,'principal':self.principal,'resource':action.resource.key,'version':self.guard.version,
+                  'expires':review['deadline'],'summary':summary,'context_digest':digest(context),
+                  'text_records':len(context['messages']),'budget_truncated':context.get('budget_truncated',False)}
+            data.update(read_scope=context.get('read_scope'),scanned=context.get('scanned'),has_more=context.get('has_more'))
+            self.journal.db.execute('INSERT INTO review_notes VALUES(?,?,?,?,?,?)',
+                (task_id,self.principal,action.resource.key,self.guard.version,review['deadline'],self.journal.vault.seal(data,task_id+':review')))
+            self.journal.db.execute('DELETE FROM reply_tasks WHERE id=? AND principal=?',(task_id,self.principal))
+            self.journal.db.execute('DELETE FROM contexts WHERE id=? AND principal=?',(task['context_id'],self.principal))
+            self.journal.meter('review_pages_acknowledged')
+            return {'state':'Reviewed','text_records':data['text_records'],'summary_stored_encrypted':True,
+                    'budget_truncated':data['budget_truncated'],'agent_sent':False}
 
     def wait_tasks(self,timeout=40,after=None):
         if type(timeout) is not int or not 0<=timeout<=45:raise AXRError('invalid_task_wait_timeout')
@@ -419,6 +603,7 @@ class Service:
             # Purge never reads WeChat or deletes an active commit's payload.
             self.journal.purge()
             self.inbox.purge()
+            self.journal.db.execute('DELETE FROM review_notes WHERE expires<=? OR version!=?',(self.journal.clock(),self.guard.version))
             policy=self.config.get("listener",{})
             if not policy.get("listen",False):self.admission.clear();return {"state":"listener_off"}
             if policy.get("auto_execute",False):
@@ -504,7 +689,7 @@ def register(mcp,service):
     @mcp.tool(annotations={"readOnlyHint":True})
     def wechat_status()->dict:return service.status()
     @mcp.tool(annotations={"readOnlyHint":True})
-    def wechat_find_conversations()->dict:return service.conversations()
+    def wechat_find_conversations(offset:int=0,limit:int=100)->dict:return service.conversations(offset,limit)
     @mcp.tool()
     def wechat_ui_navigate(command:str)->dict:
         """Propose an owner-allowlisted menu action. No contact selection, reading or sending."""
@@ -514,6 +699,14 @@ def register(mcp,service):
                             until:int=2**63-1,cursor:str|None=None,limit:int=20)->dict:
         """Read a bounded local context. Returns handles; body needs a separate disclosure approval."""
         return service.read(conversation_id,query,sender,since,until,cursor,limit)
+    @mcp.tool()
+    def wechat_find_attachments(conversation_id:str,since:int=0,until:int=2**63-1,limit:int=6)->dict:
+        """Find bounded source-bound file records. Metadata stays encrypted until disclosure approval."""
+        return service.find_attachments(conversation_id,since,until,limit)
+    @mcp.tool()
+    def wechat_read_attachment(conversation_id:str,context_id:str,reference:str)->dict:
+        """Read a source-bound cached file; returns encrypted handle, not body. Disclosure is separate."""
+        return service.read_attachment(conversation_id,context_id,reference)
     @mcp.tool()
     def wechat_disclose_context(conversation_id:str,context_id:str)->dict:
         """Propose disclosure to the owner-pinned model destination. Never self-approve."""
@@ -526,9 +719,9 @@ def register(mcp,service):
         """List scoped reply tasks without message bodies; approval stays with the local owner."""
         return service.poll_tasks()
     @mcp.tool()
-    def wechat_request_task(conversation_id:str,since:int=0,limit:int=6)->dict:
+    def wechat_request_task(conversation_id:str,since:int=0,limit:int=6,cursor:str|None=None,until:int=2**63-1)->dict:
         """Request a bounded context task; old content is not a newly received reply."""
-        return service.request_task(conversation_id,since,limit)
+        return service.request_task(conversation_id,since,limit,cursor,until)
     @mcp.tool(annotations={"readOnlyHint":True})
     def wechat_wait_for_tasks(timeout:int=40,after:dict[str,str]|None=None)->dict:
         """Wait up to 45 seconds for metadata only. Requires a running, authorized listener."""
@@ -542,9 +735,17 @@ def register(mcp,service):
         """Associate a completed reply draft with its task. Human submission remains pending."""
         return service.finish_task(task_id,draft_job)
     @mcp.tool()
+    def wechat_submit_reply_task(task_id:str)->dict:
+        """Submit a completed task draft via its exact-approved adapter. Never copy manually or retry Unknown."""
+        return service.submit_reply_task(task_id)
+    @mcp.tool()
     def wechat_observe_manual_reply(draft_job:str)->dict:
         """Read WCDB for an exact human-submitted draft. Counts only; no send or delivery claim."""
         return service.observe_manual_reply(draft_job)
+    @mcp.tool()
+    def wechat_acknowledge_review(task_id:str,summary:str)->dict:
+        """Store a bounded encrypted review note after exact disclosure; never send or grant."""
+        return service.acknowledge_review(task_id,summary)
     @mcp.tool()
     def wechat_propose_send(conversation_id:str,draft_id:str)->dict:
         return service.propose_send(conversation_id,draft_id)
@@ -556,9 +757,9 @@ def register(mcp,service):
     @mcp.tool()
     def axr_execute(job_id:str,dry_run:bool=False)->dict:return service.execute(job_id,dry_run)
     @mcp.tool()
-    def axr_job_status(job_id:str)->dict:return service.journal.receipt(job_id,service.principal)
+    def axr_job_status(job_id:str)->dict:return service.receipt(job_id)
     @mcp.tool()
-    def axr_cancel(job_id:str)->dict:return service.runtime.cancel(job_id,service.principal)
+    def axr_cancel(job_id:str)->dict:return service.cancel_job(job_id)
     @mcp.tool()
     def axr_policy_simulate(conversation_id:str,events:list[dict])->dict:return service.simulate(conversation_id,events)
     @mcp.tool()
@@ -566,12 +767,11 @@ def register(mcp,service):
         return service.write_workspace(conversation_id,path,text,context_ids)
     @mcp.tool()
     def axr_run_approved_batch(job_id:str)->dict:
-        from .runner import execute_batch
-        with service.runtime.lock:return execute_batch(service,job_id)
+        return service.run_batch(job_id)
     @mcp.tool()
     def poll_messages()->dict:
         """Compatibility name: bounded authorized reads via AET; never bypass Guard."""
-        return {"jobs":[service.read(cid) for cid in service.bindings]}
+        return service.read_all()
     @mcp.tool()
     def reply_to_message(conversation_id:str,text:str,context_ids:list[str])->dict:
         """AXR compatibility entry prepares a draft; explicit AET approval required to send."""

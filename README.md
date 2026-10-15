@@ -1,6 +1,35 @@
 # wechat-codex-mcp
 
-**实验性原型 · 小范围读取、入站回信草稿与人工提交读回已验证 · Agent 主动发送未验证**
+
+## WeChat MCP Desktop · 工作与日常助手
+
+![Qt Desktop light theme — synthetic preview](docs/assets/desktop-light.png)
+
+[深色主题设计预览](docs/assets/desktop-dark.png) · 图中仅为合成界面，无真实微信数据。
+
+新增 Qt 6 / QML 本地 App：[运行与权限中心](docs/DESKTOP.md)。连接 Codex、
+查看真实回执、核对精确意图、管理限时授权和已批准摘要，共享一个本地执行 Broker。
+[缓存附件读取](docs/ATTACHMENTS.md)支持有界文本、Word 与 PDF；解析结果与聊天正文
+一样保留来源并单独批准模型披露。第一阶段不包含支付、朋友圈、小程序和账号管理。
+
+`wechat_submit_reply_task` 可通过已资格、精确授权的 Adapter 提交任务草稿，
+不依赖人工复制；正常 MCP 仍默认人工提交。新增 Mac 所有者限次计划已通过两个
+真实私聊的自主选聊、单次发送及数据库记录核对，持续自动发信尚未接入。
+合成流程测试不能替代真实私聊发送证明。App 为需要本机 Python/Qt 的开发交付，
+不是已签名、免运行时安装包。窗口顶部、页面标题及品牌区支持拖动。
+本轮合成与官方文件选择器可捕获，但指定私聊经官方选择器仍为空帧；
+[Mac 实机复核与限制](docs/MAC_TRANSPORTS.md)不等于自动回复验收。SDK 正式说明见 [Stellaria AXR](AXR/README.md)。
+
+2026-10-14：[固定窗口输入实验](docs/PINNED_INPUT_EXPERIMENT.md)已在一个授权私聊
+完成 Agent 单次发送及独立数据库记录核对，无人工复制/提交、OCR 或注入。
+该旧实验默认未接入 MCP。2026-10-15 的[自主选聊计划](docs/AUTONOMOUS_CHAT_PLAN.md)
+已对联系人及本人真实 ID 验收；无焦点后台、持续自动回复与对端送达仍未验收。
+
+原账号自动回复须分别满足平台接入依据、后端实机验收与所有者精确授权，
+详见 [接入条件与验收](docs/INTEGRATION_REQUIREMENTS.md)。当前 Mac 仅有限计划通过；
+官方 Bot/公众号渠道不能代替原账号既有私聊，用户与系统授权也不能代替平台许可。
+
+**实验性原型 · 读取、入站草稿与限次原号发送已验证 · 持续自动回复未验收**
 
 把 macOS / Windows 个人微信客户端的当前可见私人聊天，或显式绑定的 WCDB 数据库会话，包装为 MCP 工具。
 目标是让 AI 以明确标注的助理身份回复，而不是冒充微信号主人。
@@ -8,7 +37,17 @@
 本仓库 `AXR/` 内 Stellaria AXR SDK 使用 [AGPL v3](AXR/LICENSE)；其他项目源码保持 [MIT](LICENSE)，第三方依赖保持各自协议。组合发行的 AGPL 义务见 [许可证边界](LICENSES.md)。
 项目不是微信、腾讯或 OpenAI 的官方产品。Codex 是默认助理称呼，不代表官方集成或认证。
 
+桌面主导航围绕工作台、简报、待办、待授权及人工回复组织；连接与权限管理收于设置。
+人工面板支持核对目标、重新校验后复制草稿，以及只读核对已发出记录。
+界面采用统一底色和浮动圆角侧栏，原生标题栏同步主题；开发诊断与测试不出现在产品页面。
+
 ## Stellaria AXR SDK Gen1 合作开发
+
+新增 [Mac 自主选聊与限次发送](docs/AUTONOMOUS_CHAT_PLAN.md)：两个既有私聊已完成主窗口自动选聊、精确草稿关联、单次提交及独立数据库记录观察，无需人工打开独立窗口或复制发送。提供 OS 认证的本地精确计划入口；它需要前台窗口，正常 MCP 的人工模式仍保留，持续入站自动发信和全天运行尚未验收。
+
+MCP 工具发现/状态查询现在与独占执行器分离，多个 Codex 客户端可以正常初始化；业务执行仍使用一个 journal 租约，冲突会明确报告 busy，不会并行恢复或放宽发送规则。
+
+新增 [全账号内容复核与自动回复草稿](docs/ACCOUNT_REVIEW.md)：所有者认证后枚举当前账号可识别的私聊/群聊/服务会话，固定时间上界和共享预算进行 MCP 分页读取，摘要加密、缺失/截断独立计数。可在同一限时认证内切换独立回复 Agent，测试不带关键词的新入站消息自动生成草稿。发送仍由人提交；本机已完成全目录、全部会话的近 14 天首屏概览，以及普通入站自动草稿→人工提交→精确记录核对。首屏不是全部历史，非文本未解码，原生自动发送未资格。
 
 Windows 更新见 [Windows AXR 安装与人工回信](docs/WINDOWS_UPDATE.md)：`setup.ps1 -AXR` 构建原生 helper、运行 CTest 并生成独立人工提交 MCP 配置；本地 WCDB 导入支持显式 `--key-mode password`，逐库派生并验证后只保存页密钥。复用 Mac 的读取/任务/草稿流程，Windows 设备验收另行记录。
 Windows 本机原生环境已验证：AXR 原生模块/Guard 核心回归、原 SQLCipher C ABI 有界读取及 254/246/8 全量回归通过；Hello 可用性为 Available。本人认证、所有者初始化和真实数据经 MCP 的披露/草稿仍待验收，详见 [Windows 日记](docs/WINDOWS_WCDB_ACCEPTANCE.md)。

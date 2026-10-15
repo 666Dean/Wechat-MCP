@@ -427,7 +427,7 @@ class ServiceTests(unittest.TestCase):
         from unittest.mock import patch
         from axr.aet import digest
         s=self.service;s.config['mode']='hybrid';s.initial_policy_digest=digest(s.config)
-        with patch.object(s.store,'config',return_value=s.config),patch.object(s.adapter,'send',create=True,
+        with patch.object(s.store,'config',return_value=s.config),patch.object(s.adapter,'status',return_value={'send_available':True}),patch.object(s.adapter,'send',create=True,
                 side_effect=lambda action,check,epoch:{'epoch':epoch,'verified':False}) as send:
             action=s._action('friend','messages.send',{'text':'synthetic reply'},destination='wechat:'+self.resource.key)
             job=s.runtime.propose(action);approve(s.store,job['id'],'agent')
@@ -452,7 +452,7 @@ class ServiceTests(unittest.TestCase):
         from unittest.mock import patch
         from axr.aet import digest
         s=self.service;s.config['mode']='hybrid';s.initial_policy_digest=digest(s.config)
-        with patch.object(s.store,'config',return_value=s.config),patch.object(s.adapter,'send',create=True,
+        with patch.object(s.store,'config',return_value=s.config),patch.object(s.adapter,'status',return_value={'send_available':True}),patch.object(s.adapter,'send',create=True,
                 side_effect=lambda action,check,epoch:{'epoch':epoch,'verified':False}):
             action=s._action('friend','messages.send',{'text':'synthetic reply'},destination='wechat:'+self.resource.key)
             job=s.runtime.propose(action);approve(s.store,job['id'],'agent');s.execute(job['id'])
@@ -472,7 +472,7 @@ class ServiceTests(unittest.TestCase):
         s=self.service;s.config['mode']='hybrid';s.initial_policy_digest=digest(s.config)
         s.guard._issue_owner(principal='agent',resource=self.resource,operations=['messages.read'],purpose='purpose',
             expires_at=time.time()+100,max_uses=10,classes=['sensitive'])
-        with patch.object(s.store,'config',return_value=s.config),patch.object(s.adapter,'send',create=True,
+        with patch.object(s.store,'config',return_value=s.config),patch.object(s.adapter,'status',return_value={'send_available':True}),patch.object(s.adapter,'send',create=True,
                 side_effect=lambda action,check,epoch:{'epoch':epoch,'verified':False}):
             action=s._action('friend','messages.send',{'text':'synthetic sensitive reply'},
                 sources=(Provenance(self.resource,'sensitive-source','sensitive'),),destination='wechat:'+self.resource.key)
@@ -531,16 +531,25 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(expired['state'],'Expired');self.assertIsNone(expired['payload'])
         self.assertTrue(s.journal.verify_audit());self.assertEqual(s.journal.metrics()['pages_read'],1)
     def test_taint_cannot_be_omitted_in_send_draft(self):
+        from unittest.mock import patch
+        from axr.aet import digest
         s=self.service;s.read('friend');draft=s.prepare('friend','generated summary',[])
-        self.assertEqual(draft['state'],'Completed');job=s.propose_send('friend',draft['result']['draft_id'])
+        s.config['mode']='hybrid';s.initial_policy_digest=digest(s.config)
+        with patch.object(s.store,'config',return_value=s.config),patch.object(s.adapter,'status',return_value={'send_available':True}):
+            self.assertEqual(draft['state'],'Completed');job=s.propose_send('friend',draft['result']['draft_id'])
         action=s.journal.action(s.journal.get(job['id'],'agent'));self.assertEqual(len(action.sources),1)
         self.assertEqual(action.sources[0].data_class,'personal');self.assertTrue(action.payload['text'].startswith('【自动回复 · AI 助理】'))
         self.assertEqual(job['state'],'AwaitingApproval')
     def test_expired_body_context_cannot_clean_disclosed_source_scope(self):
+        from unittest.mock import patch
+        from axr.aet import digest
         s=self.service;result=s.read('friend');job=s.disclose('friend',result['result']['context_id'])
         approve(s.store,job['id'],'agent');s.execute(job['id'])
         s.journal.db.execute('UPDATE contexts SET expires=0');s.journal.purge()
-        draft=s.prepare('friend','later summary',[]);send=s.propose_send('friend',draft['result']['draft_id'])
+        draft=s.prepare('friend','later summary',[])
+        s.config['mode']='hybrid';s.initial_policy_digest=digest(s.config)
+        with patch.object(s.store,'config',return_value=s.config),patch.object(s.adapter,'status',return_value={'send_available':True}):
+            send=s.propose_send('friend',draft['result']['draft_id'])
         action=s.journal.action(s.journal.get(send['id'],'agent'))
         self.assertTrue(any(p.reference.startswith('disclosed-scope:') and p.data_class=='personal' for p in action.sources))
     def test_unauthorized_scope_and_forged_context(self):
@@ -726,6 +735,22 @@ class Workers(unittest.TestCase):
             with self.assertRaisesRegex(AXRError,'stable_account'):adapter.search('fixture-chat')
         adapter.close()
 
+    def test_ui_send_rejects_malformed_identity_before_native_access(self):
+        from adapters.ui import UIAdapter
+        from unittest.mock import patch
+        resource=Resource('test','fixture-account','fixture-chat')
+        action=Action('fixture-agent',resource,'messages.send','fixture-purpose',{'text':'fixture reply'})
+        for verified in (None, False, 1, "true", "false", {"verified": True}):
+            with self.subTest(verified=verified):
+                adapter=UIAdapter({'native_helper':'not-launched',
+                    'conversations':[{'conversation_id':resource.conversation_id,
+                        'identity_witness':{'platform_verified':verified}}]})
+                with patch.object(adapter,'_request',side_effect=AssertionError('native access forbidden')) as request:
+                    with self.assertRaisesRegex(AXRError,'stable_target_identity_not_qualified'):
+                        adapter.send(action,lambda:None,'fixture')
+                    request.assert_not_called()
+                adapter.close()
+
     def test_ui_health_never_qualifies_send_and_does_not_request_labels(self):
         from adapters.ui import UIAdapter
         from unittest.mock import patch
@@ -867,6 +892,17 @@ class DatabasePages(unittest.TestCase):
         with self.assertRaisesRegex(AXRError,'account_identity'):self.adapter.search(self.chat)
         self.adapter.config['account_id']='fixture-self';db=sqlite3.connect(self.paths[0]);db.execute(f'UPDATE "{self.table}" SET real_sender_id=999');db.commit();db.close()
         with self.assertRaisesRegex(AXRError,'sender_identity'):self.adapter.search(self.chat)
+    def test_nontext_unknown_sender_advances_without_inventing_identity(self):
+        db=sqlite3.connect(self.paths[0])
+        db.execute(f'INSERT INTO "{self.table}" VALUES(3,30,10000,99,0,?)',('synthetic private system body',))
+        db.commit();db.close()
+        page=self.adapter.search(self.chat,limit=1)
+        self.assertEqual(page['scanned'],1);self.assertTrue(page['has_more'])
+        self.assertEqual(page['messages'],[])
+        following=self.adapter.search(self.chat,after=page['cursor'],limit=6)
+        self.assertEqual(len(following['messages']),2)
+        self.assertTrue(all(m['sender']==self.chat for m in following['messages']))
+        self.assertNotIn('private system body',json.dumps(page))
     def test_database_replacement_requires_new_baseline(self):
         self.adapter.search(self.chat)
         path=self.paths[0];replacement=self.root/'new.db';replacement.write_bytes(path.read_bytes());os.replace(replacement,path)

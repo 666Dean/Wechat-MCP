@@ -17,6 +17,19 @@ func children(_ node: AXUIElement) -> [AXUIElement] {
     return attr(node, kAXChildrenAttribute) as? [AXUIElement] ?? []
 }
 func string(_ node: AXUIElement, _ key: String) -> String { return attr(node, key) as? String ?? "" }
+final class MetadataTraversal {
+    var seen: [CFHashCode:[AXUIElement]] = [:]
+    var cycles = 0
+    var foreign = 0
+    func accept(_ node:AXUIElement, pid:pid_t) -> Bool {
+        var actual:pid_t = 0
+        guard AXUIElementGetPid(node,&actual) == .success, actual == pid else { foreign += 1; return false }
+        let key=CFHash(node)
+        if seen[key,default:[]].contains(where:{ CFEqual($0,node) }) { cycles += 1; return false }
+        seen[key,default:[]].append(node)
+        return true
+    }
+}
 func value(_ node: AXUIElement) -> String {
     for key in [kAXValueAttribute, kAXTitleAttribute, kAXDescriptionAttribute] {
         let v = string(node, key)
@@ -86,19 +99,60 @@ func main() throws -> [String:Any] {
           let req = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String:Any],
           let op = req["op"] as? String else { throw Failure("bad_request") }
     if op == "owner_auth" {
+        // A CLI must service Cocoa's main run loop while the system presents
+        // authentication. Keep a transient foreground host;
+        // never interact with SecurityAgent or reuse a previous evaluation.
+        let authenticationApp=NSApplication.shared
+        authenticationApp.setActivationPolicy(.accessory)
+        let authenticationWindow=NSWindow(contentRect:NSRect(x:0,y:0,width:390,height:140),
+            styleMask:[.titled,.closable],backing:.buffered,defer:false)
+        authenticationWindow.isReleasedWhenClosed=false
+        authenticationWindow.title="本机身份认证"
+        let explanation=NSTextField(wrappingLabelWithString:
+            "请在系统对话框中完成认证。授权范围以本地所有者界面的精确操作为准；取消认证不会授予权限。")
+        explanation.frame=NSRect(x:24,y:30,width:342,height:72)
+        authenticationWindow.contentView?.addSubview(explanation)
+        authenticationWindow.center()
+        authenticationWindow.makeKeyAndOrderFront(nil)
+        defer { authenticationWindow.close() }
+        authenticationApp.activate(ignoringOtherApps:true)
+        let activationDeadline=Date().addingTimeInterval(2)
+        while !authenticationApp.isActive && Date()<activationDeadline {
+            RunLoop.current.run(until:Date().addingTimeInterval(0.05))
+        }
         let context = LAContext()
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
-            throw Failure("owner_auth_unavailable")
+            return ["verified":false,"error":"owner_auth_unavailable",
+                    "os_error_code":error?.code ?? 0]
         }
         let semaphore = DispatchSemaphore(value: 0)
         var verified = false
+        var authenticationError: NSError?
         context.evaluatePolicy(.deviceOwnerAuthentication,
-            localizedReason: "Authorize the exact AXR operation shown in your local owner terminal.") { success, _ in
+            localizedReason: "Authorize the exact AXR operation shown in your local owner terminal.") { success, failure in
             verified = success
+            authenticationError = failure as NSError?
             semaphore.signal()
         }
-        guard semaphore.wait(timeout: .now()+60) == .success, verified else { throw Failure("owner_auth_denied") }
+        let deadline=Date().addingTimeInterval(60)
+        var completed=false
+        while Date()<deadline {
+            if semaphore.wait(timeout:.now()) == .success { completed=true;break }
+            if !authenticationWindow.isVisible {
+                context.invalidate()
+                return ["verified":false,"error":"owner_auth_denied"]
+            }
+            RunLoop.current.run(until:Date().addingTimeInterval(0.05))
+        }
+        guard completed else {
+            context.invalidate()
+            return ["verified":false,"error":"owner_auth_timed_out"]
+        }
+        guard verified else {
+            return ["verified":false,"error":"owner_auth_denied",
+                    "os_error_code":authenticationError?.code ?? 0]
+        }
         return ["verified":true]
     }
     guard let bundle = req["bundle"] as? String, !bundle.isEmpty else { throw Failure("bundle_required") }
@@ -140,6 +194,8 @@ func main() throws -> [String:Any] {
         // Window health excludes menu search fields; never ask for content.
         var visited = 0, editable = 0, text = 0, truncated = false
         var errors: [String:Int] = [:]
+        let traversal=MetadataTraversal()
+        var invalidRoots=0
         func metadata(_ node: AXUIElement, _ key: String) -> CFTypeRef? {
             var result: CFTypeRef?
             let code = AXUIElementCopyAttributeValue(node,key as CFString,&result)
@@ -147,26 +203,62 @@ func main() throws -> [String:Any] {
             return result
         }
         func walk(_ node: AXUIElement, _ depth: Int) {
+            guard traversal.accept(node,pid:app.processIdentifier) else { return }
             guard visited < 1500, depth <= 16 else { truncated = true; return }
             visited += 1
             let role = metadata(node,kAXRoleAttribute) as? String ?? ""
+            if ["AXApplication","AXMenuBar","AXMenuBarItem","AXMenu","AXMenuItem"].contains(role) { return }
             if ["AXTextArea","AXTextField","AXComboBox"].contains(role) { editable += 1 }
             if role == "AXStaticText" { text += 1 }
             let descendants = metadata(node,kAXChildrenAttribute) as? [AXUIElement] ?? []
             for child in descendants { walk(child,depth+1) }
         }
         let windows = metadata(root,kAXWindowsAttribute) as? [AXUIElement]
-        if let windows { for window in windows { walk(window,0) } }
+        if let windows { for window in windows {
+            guard string(window,kAXRoleAttribute)=="AXWindow" else { invalidRoots += 1; truncated=true; continue }
+            walk(window,0)
+        } }
         else { truncated = true }
+        // Some applications omit the focused control from AXChildren. Inspect
+        // only its type and writability, never AXValue/Title/Description/text.
+        var focus: [String:Any] = ["available":false,"window_bound":false,
+            "editable":false,"value_writable":false,"content_read":false]
+        if let raw=metadata(root,kAXFocusedUIElementAttribute), CFGetTypeID(raw)==AXUIElementGetTypeID() {
+            let node=raw as! AXUIElement
+            var actual:pid_t=0
+            if AXUIElementGetPid(node,&actual) == .success && actual == app.processIdentifier {
+                focus["available"]=true
+                let role=metadata(node,kAXRoleAttribute) as? String ?? ""
+                let subrole=metadata(node,kAXSubroleAttribute) as? String ?? ""
+                focus["role"]=String(role.prefix(120))
+                let secure=subrole == "AXSecureTextField"
+                focus["secure"]=secure
+                let windowRaw=(role == "AXWindow" ? raw : metadata(node,kAXWindowAttribute))
+                if let windowRaw,CFGetTypeID(windowRaw)==AXUIElementGetTypeID(),
+                   let windows,windows.contains(where:{CFEqual($0,windowRaw)}) {
+                    focus["window_bound"]=true
+                    let editable = !secure && ["AXTextArea","AXTextField","AXComboBox"].contains(role)
+                    focus["editable"]=editable
+                    var writable:DarwinBoolean=false
+                    let code=AXUIElementIsAttributeSettable(node,kAXValueAttribute as CFString,&writable)
+                    focus["value_writable"]=editable && code == .success && writable.boolValue
+                }
+            }
+        }
         return ["pid":app.processIdentifier,"nodes_visited":visited,"editable_nodes":editable,
             "text_nodes":text,"window_count":windows?.count ?? 0,"scope":"application_windows",
-            "truncated":truncated,"attribute_errors":errors,"content_read":false]
+            "truncated":truncated,"attribute_errors":errors,"content_read":false,"focused_control":focus]
+            .merging(["cycle_nodes_skipped":traversal.cycles,"foreign_nodes_skipped":traversal.foreign,
+                      "invalid_window_roots":invalidRoots]) { _,new in new }
     }
     if op == "structure" {
         // Selector metadata only. Redacting after fetching text is insufficient.
         var records: [[String:Any]] = []
+        let traversal=MetadataTraversal()
+        var truncated=false
         func walk(_ n: AXUIElement, _ p: [Int], _ depth: Int) {
-            guard records.count < 1500, depth <= 16 else { return }
+            guard traversal.accept(n,pid:app.processIdentifier) else { return }
+            guard records.count < 1500, depth <= 16 else { truncated=true; return }
             let c = children(n)
             let item: [String:Any] = ["path":p, "role":string(n,kAXRoleAttribute), "children":c.count,
                 "identifier":string(n,kAXIdentifierAttribute)]
@@ -174,7 +266,8 @@ func main() throws -> [String:Any] {
             for (i,ch) in c.enumerated() { walk(ch,p+[i],depth+1) }
         }
         walk(root,[],0)
-        return ["nodes":records, "pid":app.processIdentifier, "text_redacted":true]
+        return ["nodes":records, "pid":app.processIdentifier, "text_redacted":true,
+                "cycle_nodes_skipped":traversal.cycles,"foreign_nodes_skipped":traversal.foreign,"truncated":truncated]
     }
     if op == "visual_capabilities" { return visualCapabilities(pid: app.processIdentifier) }
     if op == "read_ocr" {
