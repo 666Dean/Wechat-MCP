@@ -95,10 +95,11 @@ class Router(unittest.TestCase):
         active=True;pending=True
         auto=SimpleNamespace(status=lambda:{'active':active},has_pending=lambda:pending)
         b.service._delegate=SimpleNamespace(automatic=auto,inbox=SimpleNamespace(list=lambda:[]))
+        r.cached_pending=True
         self.assertTrue(r.event('fixture','Stop','turn')['continue_pending']);self.assertEqual(r.state,'busy')
         r.event('fixture','Interrupt','turn');self.assertEqual(r.state,'paused')
-        pending=False;self.assertFalse(r.event('fixture','Stop','turn')['continue_pending']);self.assertEqual(r.state,'idle')
-        pending=True;active=False
+        r.cached_pending=False;self.assertFalse(r.event('fixture','Stop','turn')['continue_pending']);self.assertEqual(r.state,'idle')
+        r.cached_pending=True;active=False
         self.assertFalse(r.event('fixture','Stop','turn')['continue_pending'])
     def test_idle_handoff_waits_for_quiet_period_then_resumes_exact_thread(self):
         import threading

@@ -132,6 +132,10 @@ class Broker:
         if type(args) is not list or type(kwargs) is not dict:raise AXRError('broker_arguments_invalid')
         if method.startswith('control.'):
             if not owner or method[8:] not in CONTROL:raise AXRError('broker_owner_channel_required')
+            if method[8:]=='codex_lifecycle':
+                # Hooks have a short deadline and carry metadata only. Do not
+                # queue a user's priority/Stop event behind database or GUI work.
+                return self.router.event(*args,**kwargs)
             if method[8:] in {'approve','grant_local','configure_cache','start_automatic','approve_authorization'}:
                 return self.authenticated_control(method[8:],*args,**kwargs)
             if method[8:] in {'stop_automatic','revoke_all'}:

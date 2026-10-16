@@ -185,8 +185,13 @@ class AutomaticReply:
             s.journal.db.execute('UPDATE automatic_reply_claims SET job=? WHERE task=? AND principal=?',(jid,task_id,s.principal))
             s.journal.db.execute('INSERT INTO reply_submissions VALUES(?,?,?)',(task_id,s.principal,jid))
         try:
+            # Retain the owner's original qualified switching pair when the
+            # scope expands; an arbitrary historical contact may not be searchable.
+            parking=next((b['conversation_id'] for b in s.config['conversations']
+                if b['conversation_id'] in self.targets and b['conversation_id']!=task['conversation_id']),
+                next(c for c in self.targets if c!=task['conversation_id']))
             plan={'version':1,'messages':[{'conversation_id':task['conversation_id'],
-                'parking_conversation_id':next(c for c in self.targets if c!=task['conversation_id']), 'text':draft.payload['text']}]}
+                'parking_conversation_id':parking, 'text':draft.payload['text']}]}
             results=execute_plan(s.store,s.store.directory,self.helper,plan,principal=s.principal,
                 action_purpose=s.purpose,sources=sources,ttl=max(1,min(180,(self.expires or time.time()+180)-time.time())),binding_catalog=s.bindings,
                 attribution=self.preferences.get("attribution",True),attempt_id=task_id,

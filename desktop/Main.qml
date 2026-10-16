@@ -50,7 +50,7 @@ ApplicationWindow {
     function targetName(cid){var list=window.backend.conversations || [];for(var i=0;i<list.length;i++)if(list[i].conversation_id===cid)return list[i].display_name;return cid || "本地操作"}
     function timeLabel(value){return value ? new Date(value*1000).toLocaleString(Qt.locale(),"MM-dd HH:mm") : "—"}
     function grantsFor(cid){return (window.backend.grants || []).filter(function(g){return g.conversation_id===cid})}
-    function permitted(cid,op){return grantsFor(cid).some(function(g){return g.operations.indexOf(op)>=0 && g.remaining>0})}
+    function permitted(cid,op){return (window.autoReply.active && (window.autoReply.targets || []).indexOf(cid)>=0 && ["messages.read","messages.search","reply.prepare"].indexOf(op)>=0) || grantsFor(cid).some(function(g){return g.operations.indexOf(op)>=0 && g.remaining>0})}
 
     component Copy: Text { color: Theme.ink; textFormat: Text.PlainText; wrapMode: Text.WordWrap; font.pixelSize: Theme.body }
     component Caption: Copy { color: Theme.muted; font.pixelSize: Theme.caption }
@@ -319,7 +319,7 @@ ButtonX { text: "查看消息任务"; onClicked: window.page=2 } }
                                 }
                                 RowLayout { Layout.fillWidth: true; spacing: 30
                                     ColumnLayout { Layout.fillWidth: true; spacing: 6; Caption { text: "本地消息与草稿" }
-Copy { text: window.permitted(modelData.conversation_id,"messages.read") ? "已限时授权" : "未授权" } }
+Copy { text: window.permitted(modelData.conversation_id,"messages.read") ? "已允许读取" : "未授权" } }
                                     ColumnLayout { Layout.fillWidth: true; spacing: 6; Caption { text: "发送给模型分析" }
 Copy { text: window.permitted(modelData.conversation_id,"disclosure.send") ? "本次已批准" : "使用前确认" } }
                                     ColumnLayout { Layout.fillWidth: true; spacing: 6; Caption { text: "自动发送消息" }

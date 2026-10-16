@@ -33,6 +33,7 @@ WeChat MCP Desktop 在 macOS 原版微信主窗口上提供所有者授权的文
 对话目录使用官方 App Server 元数据接口；侧车返回的 `notLoaded` 不能证明桌面空闲。
 只有受信任的 `SessionStart`、`UserPromptSubmit`、`Stop`、`Interrupt` 事件推进交接。
 未知状态保持排队，中断保持暂停；用户新任务优先，回复进程收到终止，不自动重发。
+生命周期事件通过独立元数据通道确认，不等待数据库/GUI 锁；排队快照由监听调度维护。
 Hook 的审核方式见 [Codex 官方文档](https://learn.chatgpt.com/docs/hooks)。
 
 MCP 新增 `wechat_assistant_profile`、`wechat_request_authorization` 和

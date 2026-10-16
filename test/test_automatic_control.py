@@ -15,6 +15,24 @@ except ModuleNotFoundError as exc:
 
 
 class PendingAutomaticAuthorization(unittest.TestCase):
+    def test_lifecycle_ack_bypasses_database_and_operation_locks(self):
+        fixture=test_axr.ServiceTests();fixture.setUp();service=fixture.service
+        class Wrapper:
+            _delegate=service
+            def _active(self):return self._delegate
+            def close(self):pass
+        with tempfile.TemporaryDirectory() as tmp:
+            broker=Broker(tmp,service=Wrapper());broker.router.bind('fixture')
+            thread=threading.Thread(target=broker.serve);thread.start()
+            try:
+                with broker.control_lock,service.runtime.lock:
+                    event=call(tmp,'control.codex_lifecycle',('fixture','UserPromptSubmit','turn','codex_hook_v1'),owner=True,timeout=1)
+                    self.assertTrue(event['recorded'])
+                    self.assertEqual(broker.router.status()['state'],'busy')
+                    stopped=call(tmp,'control.codex_lifecycle',('fixture','Stop','turn','codex_hook_v1'),owner=True,timeout=1)
+                    self.assertFalse(stopped['continue_pending'])
+            finally:
+                broker.server.shutdown();thread.join();broker.close();fixture.tearDown()
     def test_stop_cancels_pending_auth_before_session_exists(self):
         fixture=test_axr.ServiceTests();fixture.setUp();service=fixture.service
         entered=threading.Event();release=threading.Event();result={}

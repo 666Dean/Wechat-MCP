@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Owner-selected conversation routing with explicit lifecycle busy/idle handoff."""
-import hmac,json,os,shlex,sys,time
+import hmac,json,os,shlex,sys,time,threading
 from pathlib import Path
 from axr.aet import AXRError
 from axr import _axr_native as native
@@ -8,12 +8,15 @@ from axr import _axr_native as native
 class ThreadRouter:
     def __init__(self,broker):
         self.broker=broker;self.thread_id='';self.state='unpaired';self.ready_at=0;self.turn_id=None
-        self.pending=False;self.hooks_observed=False
+        self.pending=False;self.cached_pending=False;self.hooks_observed=False;self.lock=threading.RLock()
     def bind(self,thread_id):
-        if self.thread_id!=thread_id:
-            self.thread_id=thread_id;self.state='awaiting_lifecycle' if thread_id else 'unpaired'
-            self.hooks_observed=False;self.pending=False
+        with self.lock:
+            if self.thread_id!=thread_id:
+                self.thread_id=thread_id;self.state='awaiting_lifecycle' if thread_id else 'unpaired'
+                self.hooks_observed=False;self.pending=False;self.cached_pending=False
     def event(self,thread_id,event,turn,source=None,worker_token=None):
+        with self.lock:return self._event(thread_id,event,turn,source,worker_token)
+    def _event(self,thread_id,event,turn,source,worker_token):
         if thread_id!=self.thread_id:return {'ignored':True}
         if source=='codex_hook_v1':self.hooks_observed=True
         # A headless resume may itself run the trusted hooks. Its lifecycle must
@@ -30,29 +33,36 @@ class ThreadRouter:
             # for pending tasks rather than inserting a new user input mid-turn.
             service=getattr(self.broker.service,'_delegate',None)
             self.pending=False
+            # schedule() maintains this metadata projection outside the event
+            # lock. If a new task arrives after this snapshot, an idle schedule
+            # resumes the same chat after the quiet interval instead.
             if service and service.automatic and service.automatic.status()['active']:
-                self.pending=service.automatic.has_pending() or any(not t['draft_job'] and t.get('origin')=='incoming_reply' for t in service.inbox.list())
+                self.pending=bool(self.cached_pending)
             self.state='busy' if self.pending else 'idle';self.ready_at=time.monotonic()+2
             return {'continue_pending':self.pending}
         return {'recorded':True}
     def status(self):
-        return {'thread_id':self.thread_id,'state':self.state,'pending':self.pending,'hooks_observed':self.hooks_observed}
+        with self.lock:return {'thread_id':self.thread_id,'state':self.state,'pending':self.pending,'hooks_observed':self.hooks_observed}
     def schedule(self):
         if not self.thread_id:return
         service=getattr(self.broker.service,'_delegate',None)
         if not service or not service.automatic or not service.automatic.status()['active']:return
         with service.runtime.lock:
-            self.pending=service.automatic.has_pending() or any(not t['draft_job'] and t.get('origin')=='incoming_reply' for t in service.inbox.list())
-        if not self.pending:return
-        if self.state!='idle' or time.monotonic()<self.ready_at:return
-        process=self.broker.automatic_worker
-        if process is not None and process.poll() is None:return
-        self.state='worker';self.broker.start_worker(300,self.thread_id)
-    def worker_finished(self):
-        if self.state=='worker':
+            if not service.automatic or not service.automatic.status()['active']:return
+            pending=service.automatic.has_pending() or any(not t['draft_job'] and t.get('origin')=='incoming_reply' for t in service.inbox.list())
+        with self.lock:
+            self.pending=pending;self.cached_pending=pending
+            if not self.pending:return
+            if self.state!='idle' or time.monotonic()<self.ready_at:return
             process=self.broker.automatic_worker
-            self.state='paused' if process is not None and process.returncode else 'idle'
-            self.ready_at=time.monotonic()+2
+            if process is not None and process.poll() is None:return
+            self.state='worker';self.broker.start_worker(300,self.thread_id)
+    def worker_finished(self):
+        with self.lock:
+            if self.state=='worker':
+                process=self.broker.automatic_worker
+                self.state='paused' if process is not None and process.returncode else 'idle'
+                self.ready_at=time.monotonic()+2
 
 def install_hooks(state,root,python):
     """Preserve existing definitions; Codex itself handles review/trust, never bypass it."""
