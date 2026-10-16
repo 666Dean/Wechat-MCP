@@ -11,8 +11,9 @@ from . import _axr_native as native
 
 
 class Journal:
-    def __init__(self, path, vault, clock=time.time):
+    def __init__(self, path, vault, clock=time.time, *, checkpoint=None):
         self.vault, self.clock = vault, clock
+        self.checkpoint=checkpoint
         self.db = sqlite3.connect(path, timeout=5, isolation_level=None, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.executescript("""
@@ -80,6 +81,12 @@ class Journal:
         record = native.commit_record(previous, canonical({"id":jid,"state":state}).decode(),
                                       "aet-transition", self.clock())
         self.db.execute("INSERT INTO audit_records VALUES(?,?,?)", (json.loads(record)["sequence"],record,native.hmac(self.vault.key,record)))
+
+    def security_event(self, kind, metadata):
+        # Metadata must be digests/decisions, never a message or credential body.
+        previous=self.db.execute("SELECT record FROM audit_records ORDER BY seq DESC LIMIT 1").fetchone()
+        record=native.commit_record(previous[0] if previous else "{}",canonical(metadata).decode(),kind,self.clock())
+        self.db.execute("INSERT INTO audit_records VALUES(?,?,?)",(json.loads(record)["sequence"],record,native.hmac(self.vault.key,record)))
 
     def save_result(self, jid, principal, result, policy_version, ttl=300):
         self.db.execute("INSERT OR REPLACE INTO results VALUES(?,?,?,?,?)",(
@@ -178,13 +185,23 @@ class Journal:
         # Retain recent deduplication hashes only; first-start listener baseline avoids replay.
         self.db.execute("DELETE FROM events WHERE created<?", (self.clock()-86400*30,))
 
-    def verify_audit(self):
+    def verify_audit(self, *, check_checkpoint=True):
         previous="{}"
-        for row in self.db.execute("SELECT record,mac FROM audit_records ORDER BY seq"):
-            if not hmac.compare_digest(row[1],native.hmac(self.vault.key,row[0])) or not native.verify_record(row[0],previous):
-                return False
-            previous=row[0]
+        try:
+            for row in self.db.execute("SELECT record,mac,seq FROM audit_records ORDER BY seq"):
+                sequence=json.loads(row[0]).get('sequence')
+                if type(sequence) is not int or sequence!=row[2] or not hmac.compare_digest(row[1],native.hmac(self.vault.key,row[0])) or not native.verify_record(row[0],previous):return False
+                previous=row[0]
+        except Exception:return False
+        if check_checkpoint and self.checkpoint is not None:
+            try:return self.checkpoint.verify(self.db)
+            except Exception:return False
         return True
+
+    def anchor(self):
+        if self.checkpoint is None:raise AXRError("independent_audit_checkpoint_required")
+        if not self.verify_audit():raise AXRError("journal_audit_integrity_failed")
+        return self.checkpoint.anchor(self.db)
 
     def close(self):
         self.db.close()

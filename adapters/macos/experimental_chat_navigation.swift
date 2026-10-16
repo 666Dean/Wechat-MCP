@@ -44,14 +44,23 @@ func run() throws -> [String:Any] {
  if operation=="messages.send" {
   guard binding["recipient_assurance"] as? String=="cached_exact_draft_and_fresh_search",let witness=binding["recipient_witness"] as? String,witness.count==64,witness.allSatisfy({"0123456789abcdef".contains($0)}) else{throw Stop("recipient_witness_required")}
  }
- func proof() throws {
-  guard let c=req["guard_context"] as? [String:String],let store=c["store"],let encoded=c["proof"],
+ func authority(_ claim:Bool=false) throws {
+  guard let c=req["guard_context"] as? [String:String],let encoded=c["proof"],
         let account=req["account"] as? String,let identity=req["identity"] as? String else{throw Stop("sealed_scope_required")}
   var scope:[String:Any]=["operations":[operation],"resource":["platform":"wechat","account_id":account,"conversation_id":identity],"text":text,"visual_binding":binding]
   if operation=="application.navigate" {scope["navigation_binding"]=["menu_path":["编辑","搜索"],"main_window_id":windowID,"query":text] as [String:Any]}
   let json=String(decoding:try JSONSerialization.data(withJSONObject:scope),as:UTF8.self)
-  guard store.withCString({p in encoded.withCString({q in json.withCString({r in axr_check_scoped_commit(p,q,r)})})})==1 else{throw Stop("authority_or_scope_changed")}
+  let allowed:Int32
+  if let endpoint=c["authority_endpoint"] {
+   allowed=endpoint.withCString{p in encoded.withCString{q in json.withCString{r in claim ? axr_authority_claim(p,q,r) : axr_authority_preflight(p,q,r)}}}
+  } else {
+   // Gen1 reference profile only. Native formal builds reject this C ABI.
+   guard let store=c["store"] else{throw Stop("authority_endpoint_required")}
+   allowed=store.withCString{p in encoded.withCString{q in json.withCString{r in axr_check_scoped_commit(p,q,r)}}}
+  }
+  guard allowed==1 else{throw Stop("authority_or_scope_changed")}
  }
+ func proof() throws {try authority()}
  try proof()
  if mode=="validate_scope" {return ["scope_valid":true,"ui_accessed":false,"send_available":false,"send_invoked":false]}
  guard AXIsProcessTrusted() else{throw Stop("accessibility_required")}
@@ -90,6 +99,9 @@ func run() throws -> [String:Any] {
   }
  }
  try verify()
+ // Non-send transactions claim before their first UI/clipboard operation.
+ // Send keeps all input comparisons in preflight and claims at final Return.
+ if mode != "send" {try authority(true)}
  let pb=NSPasteboard.general;let before=pb.changeCount;let items=pb.pasteboardItems ?? []
  guard items.count<=32,items.allSatisfy({$0.types.count<=32}) else{throw Stop("clipboard_budget")}
  var bytes=0
@@ -138,6 +150,7 @@ func run() throws -> [String:Any] {
  if mode=="send" && exact {
   guard try echo() else{throw Stop("draft_changed_before_commit")}
   try verify();guard pb.changeCount==owned else{throw Stop("clipboard_changed_before_commit")}
+  try authority(true)
   submitted=true;try key(36)
  }
  return ["draft_match":exact,"stage_invoked":staged,"send_invoked":submitted,"delivery_confirmed":false,"content_disclosed":false]

@@ -47,7 +47,7 @@ jobs:
           path: ~/AppData/Local/vcpkg/archives
           key: axr-vcpkg-windows-20261011
       - name: Python and editable C++ SDK
-        run: python -m pip install -r requirements.axr.txt pybind11==3.0.1
+        run: python -m pip install -r requirements.axr.txt -r requirements.security-test.txt pybind11==3.0.1
       - name: Optional SQLite3mc reader (Windows)
         if: runner.os == 'Windows'
         run: python -m pip install -r requirements.sqlite3mc.txt
@@ -84,6 +84,13 @@ jobs:
           "AXR_TEST_WORKER=$env:GITHUB_WORKSPACE/.local-private/build/AXR/Release/axr-worker-probe.exe" >> $env:GITHUB_ENV
           "AXR_TEST_WINDOWS_LAUNCHER=$env:GITHUB_WORKSPACE/.local-private/build/AXR/Release/axr-sandbox.exe" >> $env:GITHUB_ENV
           "AXR_TEST_RUNTIME_ROOTS=$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/debug/bin;$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin" >> $env:GITHUB_ENV
+      - name: Formal security profile rejects legacy commits
+        shell: bash
+        run: |
+          cmake -S AXR -B .local-private/security-release -DAXR_SECURITY_RELEASE=ON -DAXR_AUTHORITY_HOST=ON -DAXR_PLATFORM_HELPERS=OFF -DBUILD_TESTING=ON $CMAKE_ARGS
+          cmake --build .local-private/security-release --config Release --target axr-security-release-tests axr-authority --parallel 4
+          ctest --test-dir .local-private/security-release -C Release -R AXRSecurityRelease --output-on-failure
+          python scripts/validate_security_host.py .local-private/security-release
       - name: Qt Quick desktop runtime
         run: python -m pip install PySide6-Essentials==6.10.2
       - name: Security and legacy regressions
@@ -113,3 +120,16 @@ jobs:
           path: ${{ runner.temp }}/windows-axr-runtime
           if-no-files-found: error
           retention-days: 7
+
+  native-fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compiler and native dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-rt-dev libssl-dev libsqlite3-dev
+      - name: Build instrumented policy fuzzer
+        run: |
+          cmake -S AXR -B .local-private/fuzz -DCMAKE_CXX_COMPILER=clang++ -DAXR_FUZZ=ON -DBUILD_TESTING=OFF -DAXR_PLATFORM_HELPERS=OFF
+          cmake --build .local-private/fuzz --target axr-security-fuzz --parallel 4
+      - name: Bounded address and undefined behavior fuzz run
+        run: .local-private/fuzz/axr-security-fuzz -runs=30000 -max_len=24000 -timeout=3

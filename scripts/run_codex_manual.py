@@ -32,7 +32,7 @@ def command(root,state,duration,model=None,*,review=False,broker=False,automatic
             'default_tools_approval_mode':'approve'}
     args=[binary,'exec','--ignore-user-config','--ephemeral','--skip-git-repo-check',
           '--sandbox','read-only','--disable','apps','--disable','plugins','--disable','shell_tool',
-          '--disable','unified_exec','-c','web_search="disabled"','-c','approval_policy="never"',
+          '--disable','unified_exec','--disable','multi_agent','--disable','hooks','--disable','memories','-c','web_search="disabled"','-c','approval_policy="never"',
           '--json','-C',str(root)]
     if model:args+=['--model',model]
     for key,value in server.items():
@@ -40,7 +40,9 @@ def command(root,state,duration,model=None,*,review=False,broker=False,automatic
     if thread_id:
         from axr_integration.assistant_settings import valid_thread
         if not broker or not automatic or not valid_thread(thread_id):raise ValueError('bound_thread_requires_automatic_broker')
-        args.remove('--ephemeral');args+=['resume',thread_id,'-']
+        # Binding is activity routing only. Never resume the owner's developer
+        # history for an incoming task, even with shell tools disabled.
+        # A fresh ephemeral context receives only the approved source batch.
     return args
 
 
@@ -87,7 +89,7 @@ never prepare another reply to the same batch. Empty polls are normal; wait
 until the host stops you. End if the owner session stops. Final output is
 counts/status only; never echo private bodies or identifiers."""
     if thread_id:
-        prompt+='\nHandle currently pending batches, then end this turn when no unfinished incoming tasks remain. Do not wait forever or restart existing user work.'
+        prompt+='\nThis is a fresh isolated reply context. The parent conversation receives status only, never inherited history. Handle pending authorized batches, then end when no unfinished incoming tasks remain.'
     if review:
         prompt=f'''Review all locally readable WeChat conversations for at most {duration} seconds.
 Use only wechat_axr MCP tools. Never use shell, files, web, send, navigation,

@@ -1,5 +1,15 @@
 # Stellaria AXR SDK Gen1
 
+## Security Architecture 2
+
+新增统一 TaskContract、原生策略判定、受认证的独立权限服务协议、隔离内容解析、
+受保护审计检查点、局部遏制和签名更新防回退。**目前为开发整合，整套安全发行
+尚未通过准入。** 独立原生服务部署、应用执行/凭据桥接及入站隔离 Agent 仍是
+发布阻断项；微信自动回复保持关闭，不能通过旧令牌或 Gen1 提交路径降级开启。
+现有 AET、Guard、Host、Journal 继续保留。实现、威胁边界与验收缺口见
+[Security Architecture 2](SECURITY_ARCHITECTURE.md)。
+
+
 **面向 Agent 应用的授权执行基础设施。**
 
 Stellaria AXR 为产品开发团队提供统一的权限校验、执行事务、来源追踪与审计能力，

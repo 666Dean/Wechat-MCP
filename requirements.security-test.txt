@@ -1,0 +1,2 @@
+# Isolated security protocol fixtures; not imported by product workers.
+cryptography==46.0.7

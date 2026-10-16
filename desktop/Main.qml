@@ -379,6 +379,7 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                         Panel { Layout.fillWidth: true; implicitHeight: autoRows.implicitHeight+40
                             ColumnLayout { id: autoRows; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 20; spacing: 14
                                 Copy { text: "自动回复"; font.pixelSize: 18; font.weight: Font.Medium }
+                                Caption { Layout.fillWidth: true; visible: !!(window.status.security || {}).automatic_block; text: "自动回复已暂停。完成安全服务升级后，再为指定对象开启授权。" }
                                 Caption { Layout.fillWidth: true; text: window.autoReply.active ? "已开启 · " + (window.autoReply.expires ? "有效至 " + window.timeLabel(window.autoReply.expires) : "不限时长，直至停止") + " · 剩余 " + (window.autoReply.remaining===null ? "不限" : window.autoReply.remaining) + " 次" : "允许 Codex 阅读范围内的新消息、生成回复并发送。发送时微信会置前。" }
                                 Caption { Layout.fillWidth: true; visible: window.autoReply.active; text: "范围：已授权 " + (window.autoReply.targets || []).length + " 个私聊，可在权限管理查看。" }
                                 CheckBox { visible: !window.autoReply.active; text: "全部可用私聊（含后续核验的新会话）"; checked: window.autoAll; enabled: !window.autoReply.active; onToggled: window.autoAll=checked }

@@ -68,6 +68,7 @@ def main():
     p=commands.add_parser("revoke");p.add_argument("grant")
     p=commands.add_parser("secret");p.add_argument("reference")
     commands.add_parser("dashboard")
+    commands.add_parser("upgrade-security",help="Authenticate, revoke legacy authority and initialize protected audit")
     args=parser.parse_args()
     try:
         if args.command=="dashboard":
@@ -88,9 +89,17 @@ def main():
             finally:store.close()
         print("Review the operation above. Owner authentication will authorize precisely this operation.")
         authenticate(args.helper)
-        store=OwnerStore(args.state,provision=args.command=="init")
+        store=OwnerStore(args.state,provision=args.command=="init",migrate_legacy=args.command=="upgrade-security",protected_audit=args.command=="upgrade-security")
         try:
-            if args.command in {"init","configure"}:
+            if args.command=='upgrade-security':
+                if not store.journal.verify_audit(check_checkpoint=False):raise AXRError('journal_audit_integrity_failed')
+                if store.journal.checkpoint.read() is not None and not store.journal.verify_audit():raise AXRError('journal_audit_integrity_failed')
+                store.guard.revoke_owner('security-upgrade')
+                store.journal.recover();store.journal.purge()
+                store.journal.security_event('owner-security-upgrade',{'policy_version':store.guard.version,'authority_restored':False})
+                store.journal.checkpoint.anchor(store.journal.db,initialize=True)
+                result={'upgraded':True,'authority_restored':False,'release_qualified':False}
+            elif args.command in {"init","configure"}:
                 # Changing controls revokes all prior capabilities and cached contexts.
                 if args.command=="configure":store.guard.revoke_owner("policy-change")
                 store.seal_config(policy);result={"configured":True}

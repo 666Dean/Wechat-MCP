@@ -50,6 +50,8 @@ class Lease:
 class FrameCodec:
     """For persistent inherited-pipe workers: signed version/epoch/sequence frames."""
     def __init__(self, key, epoch):
+        if not isinstance(key,bytes) or len(key)!=32 or not isinstance(epoch,str) or not epoch or len(epoch)>256:
+            raise AXRError("ipc_session_parameters_invalid")
         self.key, self.epoch, self.sent, self.received = key, epoch, 0, 0
 
     def encode(self, payload):
@@ -67,7 +69,8 @@ class FrameCodec:
             frame = json.loads(encoded)
             body = frame["body"]
             if (not hmac.compare_digest(frame["mac"], hmac.new(self.key, canonical(body), "sha256").hexdigest())
-                or body["version"] != PROTOCOL_VERSION or body["epoch"] != self.epoch
+                or type(body["version"]) is not int or body["version"] != PROTOCOL_VERSION or body["epoch"] != self.epoch
+                or type(body["sequence"]) is not int
                 or body["sequence"] != self.received + 1):
                 raise ValueError()
             self.received += 1
@@ -207,10 +210,11 @@ class Sandbox:
             return [self.windows_launcher,"--root",self.windows_root,"--",*command]
         if sys.platform != "darwin" or not Path("/usr/bin/sandbox-exec").exists():
             raise AXRError("strict_agent_sandbox_unavailable")
-        quote = lambda p: json.dumps(p)
-        profile = '(version 1)(deny default)(allow process*)(allow sysctl-read)(allow file-read* (literal "/"))'
+        quote = lambda p: json.dumps(p,ensure_ascii=False)
+        profile = '(version 1)(deny default)(allow process-fork)(allow sysctl-read)(allow file-read* (literal "/"))'
+        profile += '(allow process-exec (literal '+quote(str(Path(command[0]).resolve(strict=True)))+'))'
         profile += '(allow file-read* (literal '+quote(str(Path(command[0]).resolve(strict=True)))+'))'
-        for root in ("/System", "/usr/lib", "/usr/share", "/dev/null", "/dev/urandom", *self.read_roots):
+        for root in ("/System/Library", "/usr/lib", "/usr/share", "/dev/null", "/dev/urandom", *self.read_roots):
             profile += '(allow file-read* (subpath '+quote(root)+'))'
         # Permit ancestor stat/traversal, without reading siblings or their content.
         for root in (*self.original_roots,*self.read_roots,str(Path(command[0]).absolute()),str(Path(command[0]).resolve())):

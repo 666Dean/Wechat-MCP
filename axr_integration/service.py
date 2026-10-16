@@ -16,9 +16,13 @@ from .policy import validate_controls
 from .content_safety import mask_credentials
 
 class Service:
-    def __init__(self,state,*,store=None,adapter=None,leases=None,manual_replies=False):
+    def __init__(self,state,*,store=None,adapter=None,leases=None,manual_replies=False,development_fixture=False):
         if type(manual_replies) is not bool:raise AXRError('manual_reply_control_requires_boolean')
+        from axr import _axr_native as native
+        if getattr(native,'security_release',False):raise AXRError('security2_application_authority_bridge_required')
+        self.development_fixture=development_fixture
         self.automatic=None
+        self.content_quarantine=None
         self.manual_replies=manual_replies
         self.store=store or OwnerStore(state)
         self.guard,self.journal=self.store.guard,self.store.journal
@@ -109,6 +113,9 @@ class Service:
 
     def start_automatic(self,targets,ttl,replies,helper):
         from .automatic_reply import AutomaticReply
+        # This legacy business process owns Gen1 keys and cannot establish an
+        # independent security boundary for an incoming full-access Codex task.
+        if not self.development_fixture:raise AXRError('incoming_isolated_authority_required')
         with self.runtime.lock:
             self.ensure_policy()
             if self.automatic and self.automatic.status()['active']:raise AXRError('automatic_reply_already_active')
@@ -140,7 +147,8 @@ class Service:
         return Resource("wechat",self.account,conversation_id)
 
     def status(self):
-        return {"axr":True,"protocol":1,"platform":{**self.adapter.status(),**({"send_available":True,"send_backend":"mac_cached_draft"} if self.automatic and self.automatic.status()["active"] else {})},
+        return {"security":{"state":"Restricted","release_qualified":False,"incoming_isolated":False,
+                              "automatic_block":"incoming_isolated_authority_required"},"axr":True,"protocol":1,"platform":{**self.adapter.status(),**({"send_available":True,"send_backend":"mac_cached_draft"} if self.automatic and self.automatic.status()["active"] else {})},
             "automatic_reply":self.automatic.status() if self.automatic else {"active":False},
             "assistant":self.automatic.preferences if self.automatic else {},
             "policy_version":self.guard.version,"listener":{k:self.effective_listener().get(k,False) for k in ("listen","wake_agent","auto_execute")},
@@ -315,7 +323,6 @@ class Service:
             return self.execute(job['id']) if job['state']=='Ready' else job
 
     def _read_attachment(self,action,check,epoch):
-        import base64,sys
         from adapters.attachments import AttachmentResolver
         check()
         context=self.journal.context(action.payload['context_id'],self.principal,action.resource,self.guard.version)
@@ -323,12 +330,17 @@ class Service:
                  and m.get('attachment')==action.payload['metadata']]
         if len(matches)!=1:raise AXRError('attachment_source_changed')
         resolved=AttachmentResolver(self.config['attachments']).resolve(action.payload['metadata'])
-        # Spawn only our pinned parser; filenames never become argv or shell code.
-        request={'content':base64.b64encode(resolved['content']).decode('ascii'),
-                 'filename':action.payload['metadata']['filename']}
         try:
-            worker=Path(__file__).resolve().parent.parent/'adapters/attachment_worker.py'
-            extracted=Supervisor(timeout=10).invoke([sys.executable,str(worker)],request)['result']
+            from axr.quarantine import ContentQuarantine
+            if self.content_quarantine is None:
+                import axr
+                launcher=self.config['attachments'].get('sandbox_helper')
+                if not launcher:
+                    packaged=Path(axr.__file__).parent/'bin/axr-sandbox.exe'
+                    if packaged.is_file():launcher=str(packaged)
+                self.content_quarantine=ContentQuarantine(self.store,windows_launcher=launcher)
+            extracted=self.content_quarantine.inspect(resolved['content'],action.payload['metadata']['filename'],
+                source=action.resource.key+':'+action.payload['reference'],policy_version=self.guard.version,check=check)
             text,masked=mask_credentials(extracted['text'])
         except Exception as exc:raise AXRError('attachment_parser_failed_safe') from exc
         check()
@@ -749,6 +761,7 @@ class Service:
         if self.automatic:self.stop_automatic()
         self.stop_event.set()
         self.runner_supervisor.cancel()
+        if self.content_quarantine is not None:self.content_quarantine.cancel()
         if self.navigation is not None:self.navigation.cancel()
         if hasattr(self.adapter,"cancel"):self.adapter.cancel()
         if self.listener_thread:

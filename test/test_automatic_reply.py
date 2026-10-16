@@ -43,7 +43,7 @@ class AutomaticReplyTests(unittest.TestCase):
             def search(s,cid,**kw):
                 return {'messages':[e for e in outer.events if e['conversation']==cid and e['created']>=kw.get('since',0)],'has_more':False,'cursor':None,'coverage':'fixture'}
             def close(s):pass
-        self.s=Service(self.root,store=Store(),adapter=Adapter(),manual_replies=True,leases=self.root/'leases')
+        self.s=Service(self.root,store=Store(),adapter=Adapter(),manual_replies=True,development_fixture=True,leases=self.root/'leases')
         self.addCleanup(self.s.close)
         self.patches=contextlib.ExitStack();self.addCleanup(self.patches.close)
         self.patches.enter_context(patch('axr_integration.automatic_reply.sys.platform','darwin'))

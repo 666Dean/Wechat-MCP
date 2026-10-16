@@ -7,10 +7,10 @@ from . import _axr_native as native
 from .aet import AXRError, canonical
 
 class Guard:
-    def __init__(self, path, signing_key, clock=time.time):
+    def __init__(self, path, signing_key, clock=time.time, *, migrate_legacy=False):
         self.clock = clock
         self.path=str(path)
-        self.native = native.Guard(str(path), signing_key)
+        self.native = self._call(native.Guard,str(path), signing_key,migrate_legacy)
 
     @property
     def version(self):
@@ -25,6 +25,9 @@ class Guard:
 
     def revoke_owner(self, grant_id):
         return self._call(self.native.revoke_owner, grant_id)
+
+    def revoke_scoped(self, grant_id):
+        return self._call(self.native.revoke_scoped, grant_id)
 
     def check(self, action):
         return self._call(self.native.check, canonical(asdict(action)).decode(), self.clock())

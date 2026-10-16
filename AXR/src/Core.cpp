@@ -15,6 +15,19 @@
 #include <stdexcept>
 
 namespace Stellaria::AXR {
+Json ParseBounded(std::string_view value){
+    if(value.size()>MaximumFrameBytes)throw std::runtime_error("json_frame_budget");
+    unsigned depth=0,nodes=0;bool quoted=false,escape=false;
+    for(unsigned char ch:value){
+        if(quoted){if(escape)escape=false;else if(ch=='\\')escape=true;else if(ch=='"')quoted=false;continue;}
+        if(ch=='"')quoted=true;
+        else if(ch=='{'||ch=='['){if(++depth>64||++nodes>50000)throw std::runtime_error("json_structure_budget");}
+        else if(ch=='}'||ch==']'){if(!depth)throw std::runtime_error("json_structure_invalid");--depth;}
+    }
+    if(quoted||depth)throw std::runtime_error("json_structure_invalid");
+    return Json::parse(value);
+}
+
 namespace {
 [[noreturn]] void Fail(const char* code) { throw std::runtime_error(code); }
 std::string Hex(const unsigned char* bytes, std::size_t length) {
@@ -122,13 +135,28 @@ bool ValidTransition(std::string_view from,std::string_view to) {
 struct Guard::Impl {
     sqlite3* db{};std::string key;
     ~Impl(){if(db)sqlite3_close(db);OPENSSL_cleanse(key.data(),key.size());}
-    unsigned Version() const {Statement q(db,"SELECT version FROM policy");if(q.Step()!=SQLITE_ROW)Fail("policy_missing");return unsigned(sqlite3_column_int(q.s,0));}
+    std::string StateMac(const std::string& id,const std::string& signature,int used,int revoked) const {
+        return Hmac(key,Json{{"kind","grant-state-v2"},{"id",id},{"body_mac",signature},{"used",used},{"revoked",revoked}}.dump());
+    }
+    unsigned Version() const {
+        Statement q(db,"SELECT version FROM policy");if(q.Step()!=SQLITE_ROW)Fail("policy_missing");auto v=sqlite3_column_int(q.s,0);
+        Statement count(db,"SELECT count(*) FROM policy");if(count.Step()!=SQLITE_ROW||sqlite3_column_int(count.s,0)!=1)Fail("policy_version_integrity_failed");
+        Statement signature(db,"SELECT mac FROM security_meta WHERE name='policy-version'");
+        if(v<1||signature.Step()!=SQLITE_ROW||!ConstantEqual(signature.Text(0),Hmac(key,Json{{"kind","policy-version-v2"},{"version",v}}.dump())))Fail("policy_version_integrity_failed");
+        return unsigned(v);
+    }
+    void VersionMac(){
+        Statement q(db,"SELECT version FROM policy");if(q.Step()!=SQLITE_ROW)Fail("policy_missing");int v=sqlite3_column_int(q.s,0);if(v<1)Fail("policy_version_integrity_failed");
+        Statement save(db,"INSERT OR REPLACE INTO security_meta VALUES('policy-version',?)");save.Text(1,Hmac(key,Json{{"kind","policy-version-v2"},{"version",v}}.dump()));
+        if(save.Step()!=SQLITE_DONE)Fail("policy_version_store_failed");
+    }
     std::string Find(const Json& a,double now,bool quota,const std::string& id="",const std::string& requiredClass="") const {
-        Statement q(db,id.empty()?"SELECT id,body,signature,used,revoked FROM grants":"SELECT id,body,signature,used,revoked FROM grants WHERE id=?");
+        Statement q(db,id.empty()?"SELECT id,body,signature,used,revoked,state_signature FROM grants WHERE revoked=0":"SELECT id,body,signature,used,revoked,state_signature FROM grants WHERE id=?");
         if(!id.empty())q.Text(1,id);
         while(q.Step()==SQLITE_ROW) {
-            auto b=Json::parse(q.Text(1));
+            auto b=ParseBounded(q.Text(1));
             if(!ConstantEqual(q.Text(2),Hmac(key,b.dump())))Fail("grant_integrity_failed");
+            if(!ConstantEqual(q.Text(5),StateMac(q.Text(0),q.Text(2),sqlite3_column_int(q.s,3),sqlite3_column_int(q.s,4))))Fail("grant_state_integrity_failed");
             if(sqlite3_column_int(q.s,4)|| b.at("expires_at").get<double>()<=now ||
                (quota&&sqlite3_column_int(q.s,3)>=b.at("max_uses").get<int>())||
                b.at("policy_version")!=Version()||b.at("principal")!=a.at("principal")||
@@ -165,12 +193,27 @@ struct Guard::Impl {
         return ids;
     }
 };
-Guard::Guard(const std::filesystem::path& path,std::string key):impl_(std::make_unique<Impl>()) {
+Guard::Guard(const std::filesystem::path& path,std::string key,bool migrateLegacy):impl_(std::make_unique<Impl>()) {
     if(key.size()!=32)Fail("invalid_guard_key");impl_->key=std::move(key);
     auto utf8=path.u8string();
     if(sqlite3_open_v2(reinterpret_cast<const char*>(utf8.c_str()),&impl_->db,SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK)Fail("trusted_store_unavailable");
     sqlite3_busy_timeout(impl_->db,5000);
-    Exec(impl_->db,"PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;CREATE TABLE IF NOT EXISTS policy(version INTEGER NOT NULL);INSERT INTO policy SELECT 1 WHERE NOT EXISTS(SELECT 1 FROM policy);CREATE TABLE IF NOT EXISTS grants(id TEXT PRIMARY KEY,body TEXT NOT NULL,signature TEXT NOT NULL,used INTEGER NOT NULL DEFAULT 0,revoked INTEGER NOT NULL DEFAULT 0);");
+    bool legacy=false;
+    {Statement existing(impl_->db,"SELECT name FROM sqlite_master WHERE name='grants'");legacy=existing.Step()==SQLITE_ROW;}
+    Exec(impl_->db,"PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;CREATE TABLE IF NOT EXISTS policy(version INTEGER NOT NULL);INSERT INTO policy SELECT 1 WHERE NOT EXISTS(SELECT 1 FROM policy);CREATE TABLE IF NOT EXISTS grants(id TEXT PRIMARY KEY,body TEXT NOT NULL,signature TEXT NOT NULL,used INTEGER NOT NULL DEFAULT 0,revoked INTEGER NOT NULL DEFAULT 0,state_signature TEXT NOT NULL);CREATE TABLE IF NOT EXISTS security_meta(name TEXT PRIMARY KEY,mac TEXT NOT NULL);");
+    bool signedState=false;
+    {Statement columns(impl_->db,"PRAGMA table_info(grants)");while(columns.Step()==SQLITE_ROW)if(columns.Text(1)=="state_signature")signedState=true;}
+    if(legacy&&!signedState){
+        if(!migrateLegacy)Fail("authority_store_owner_migration_required");
+        Exec(impl_->db,"BEGIN IMMEDIATE;ALTER TABLE grants ADD COLUMN state_signature TEXT NOT NULL DEFAULT '';UPDATE grants SET revoked=1;UPDATE policy SET version=version+1;");
+        try{
+            Statement rows(impl_->db,"SELECT id,signature,used FROM grants");
+            while(rows.Step()==SQLITE_ROW){Statement write(impl_->db,"UPDATE grants SET state_signature=? WHERE id=?");
+                write.Text(1,impl_->StateMac(rows.Text(0),rows.Text(1),sqlite3_column_int(rows.s,2),1));write.Text(2,rows.Text(0));if(write.Step()!=SQLITE_DONE)Fail("grant_state_store_failed");}
+            impl_->VersionMac();Exec(impl_->db,"COMMIT");
+        }catch(...){Exec(impl_->db,"ROLLBACK");throw;}
+    }else if(!legacy)impl_->VersionMac();
+    impl_->Version();
 }
 Guard::~Guard()=default;
 unsigned Guard::Version() const {return impl_->Version();}
@@ -184,22 +227,35 @@ std::string Guard::IssueOwner(Json b,double now) {
     }
     if(!b.at("intent").is_null()&&(expiry-now>300||b.at("max_uses")!=1))Fail("one_action_grant_requires_short_expiry");
     b["id"]=RandomId();b["policy_version"]=Version();
-    auto text=b.dump();Statement q(impl_->db,"INSERT INTO grants(id,body,signature) VALUES(?,?,?)");
-    q.Text(1,b.at("id").get<std::string>());q.Text(2,text);q.Text(3,Hmac(impl_->key,text));
+    auto text=b.dump();Statement q(impl_->db,"INSERT INTO grants(id,body,signature,state_signature) VALUES(?,?,?,?)");
+    auto id=b.at("id").get<std::string>();auto signature=Hmac(impl_->key,text);
+    q.Text(1,id);q.Text(2,text);q.Text(3,signature);q.Text(4,impl_->StateMac(id,signature,0,0));
     if(q.Step()!=SQLITE_DONE)Fail("grant_store_failed");return b.at("id").get<std::string>();
 }
 void Guard::RevokeOwner(const std::string& id) {
+    impl_->Version();
     Exec(impl_->db,"BEGIN IMMEDIATE");
-    try{Statement q(impl_->db,"UPDATE grants SET revoked=1 WHERE id=?");q.Text(1,id);if(q.Step()!=SQLITE_DONE)Fail("revocation_failed");Exec(impl_->db,"UPDATE policy SET version=version+1;COMMIT;");}
+    try{RevokeScoped(id);Exec(impl_->db,"UPDATE policy SET version=version+1;");impl_->VersionMac();Exec(impl_->db,"COMMIT;");}
     catch(...){Exec(impl_->db,"ROLLBACK");throw;}
+}
+void Guard::RevokeScoped(const std::string& id) {
+    Statement row(impl_->db,"SELECT signature,used FROM grants WHERE id=?");row.Text(1,id);
+    if(row.Step()==SQLITE_ROW){Statement update(impl_->db,"UPDATE grants SET revoked=1,state_signature=? WHERE id=?");
+        update.Text(1,impl_->StateMac(id,row.Text(0),sqlite3_column_int(row.s,1),1));update.Text(2,id);if(update.Step()!=SQLITE_DONE)Fail("revocation_failed");}
 }
 std::string Guard::Check(const Json& a,double now,bool quota) const {ValidateAction(a);impl_->Sources(a,now);return impl_->Find(a,now,quota);}
 Json Guard::Consume(const Json& a,double now) {
     Exec(impl_->db,"BEGIN IMMEDIATE");
-    try{auto id=Check(a,now);Statement q(impl_->db,"UPDATE grants SET used=used+1 WHERE id=?");q.Text(1,id);if(q.Step()!=SQLITE_DONE)Fail("quota_update_failed");auto v=Version();Exec(impl_->db,"COMMIT");return Json::array({id,v});}
+    try{auto id=Check(a,now);Statement row(impl_->db,"SELECT signature,used,revoked FROM grants WHERE id=?");row.Text(1,id);if(row.Step()!=SQLITE_ROW)Fail("grant_missing");
+        int used=sqlite3_column_int(row.s,1)+1,revoked=sqlite3_column_int(row.s,2);
+        Statement q(impl_->db,"UPDATE grants SET used=?,state_signature=? WHERE id=?");
+        if(sqlite3_bind_int(q.s,1,used)!=SQLITE_OK)Fail("quota_update_failed");q.Text(2,impl_->StateMac(id,row.Text(0),used,revoked));q.Text(3,id);if(q.Step()!=SQLITE_DONE)Fail("quota_update_failed");auto v=Version();Exec(impl_->db,"COMMIT");return Json::array({id,v});}
     catch(...){Exec(impl_->db,"ROLLBACK");throw;}
 }
 Json Guard::ExecutionProof(const Json& a,const std::string& id,unsigned version,double now) const {
+#ifdef AXR_SECURITY_RELEASE
+    Fail("legacy_commit_disabled_in_security_release");
+#endif
     Revalidate(a,id,version,now);
     Json grants=Json::array();
     auto descriptor=[&](const std::string& grant,bool quota){
@@ -217,10 +273,13 @@ void Guard::Revalidate(const Json& a,const std::string& id,unsigned version,doub
 }
 
 extern "C" int axr_check_commit(const char* path,const char* encoded) {
+#ifdef AXR_SECURITY_RELEASE
+    (void)path;(void)encoded;return 0;
+#else
     using namespace Stellaria::AXR;sqlite3* db=nullptr;
     try {
         if(!path||!encoded||std::char_traits<char>::length(encoded)>MaximumFrameBytes)return 0;
-        auto proof=Json::parse(encoded);
+        auto proof=ParseBounded(encoded);
         if(proof.at("version")!=1||proof.at("grants").empty()||proof.at("grants").size()>401)return 0;
         const auto& action=proof.at("action");ValidateAction(action);
         if(proof.at("intent_seal")!=IntentSeal(action))return 0;
@@ -247,7 +306,7 @@ extern "C" int axr_check_commit(const char* path,const char* encoded) {
             for(const auto& descriptor:proof.at("grants")) {
                 Statement grant(db,"SELECT body,used,revoked FROM grants WHERE id=?");grant.Text(1,descriptor.at("id").get<std::string>());
                 if(grant.Step()!=SQLITE_ROW){valid=false;break;}
-                auto body=grant.Text(0);auto parsed=Json::parse(body);
+                auto body=grant.Text(0);auto parsed=ParseBounded(body);
                 const auto& [requested,requiredClass]=expected[descriptorIndex];
                 {
                     valid=valid&&descriptor.at("require_quota")==Json(descriptorIndex!=0);
@@ -277,15 +336,16 @@ extern "C" int axr_check_commit(const char* path,const char* encoded) {
         }
         sqlite3_close(db);db=nullptr;return valid?1:0;
     }catch(...){if(db)sqlite3_close(db);return 0;}
+#endif
 }
 
 extern "C" int axr_check_scoped_commit(const char* path,const char* encoded,const char* scopeEncoded) {
     using namespace Stellaria::AXR;
     try {
         if(!scopeEncoded||std::char_traits<char>::length(scopeEncoded)>MaximumFrameBytes)return 0;
-        auto scope=Json::parse(scopeEncoded);
+        auto scope=ParseBounded(scopeEncoded);
         if(!axr_check_commit(path,encoded))return 0;
-        const auto action=Json::parse(encoded).at("action");
+        const auto action=ParseBounded(encoded).at("action");
         if(scope.at("resource")!=action.at("resource")||
            !Contains(scope.at("operations"),action.at("operation")))return 0;
         if(scope.contains("text")&&scope.at("text")!=action.at("payload").at("text"))return 0;

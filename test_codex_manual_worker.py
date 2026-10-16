@@ -18,11 +18,12 @@ class CodexManualWorker(unittest.TestCase):
         self.assertIn('--broker',server_args);self.assertNotIn('--listener',server_args)
         self.assertFalse(any('owner' in t or 'send' in t or 'execute' in t for t in worker.TOOLS))
 
-    def test_bound_thread_uses_persistent_resume_without_composer_or_ephemeral_fork(self):
+    def test_bound_thread_is_status_routing_and_never_inherits_developer_history(self):
         identity='00000000-0000-4000-8000-000000000001'
         with patch.object(worker.shutil,'which',return_value='codex'):
             args=worker.command(Path('/fixture'),Path('/state'),300,broker=True,automatic=True,thread_id=identity)
-        self.assertEqual(args[-3:],['resume',identity,'-']);self.assertNotIn('--ephemeral',args)
+        self.assertNotIn('resume',args);self.assertIn('--ephemeral',args);self.assertNotIn(identity,args)
+        self.assertIn('multi_agent',args);self.assertIn('memories',args);self.assertIn('hooks',args)
         self.assertIn('--ignore-user-config',args)
         with self.assertRaises(ValueError):worker.command(Path('/fixture'),Path('/state'),300,thread_id=identity)
 

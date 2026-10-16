@@ -61,3 +61,16 @@ def private_directory(path):
             win32security.DACL_SECURITY_INFORMATION | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
             None, None, acl, None)
     return path
+
+
+class AuthoritySecretStore:
+    """Authority-only native storage. No generic user-keyring fallback."""
+    def __init__(self,namespace):
+        try:self.native=native.ProtectedStore(namespace)
+        except RuntimeError as exc:raise AXRError(str(exc)) from None
+    def get(self,name):
+        try:return self.native.get(name)
+        except RuntimeError as exc:raise AXRError(str(exc)) from None
+    def provision(self,name,data):
+        try:self.native.provision(name,data)
+        except RuntimeError as exc:raise AXRError(str(exc)) from None

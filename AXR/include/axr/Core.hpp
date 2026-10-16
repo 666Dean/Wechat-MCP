@@ -6,10 +6,12 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace Stellaria::AXR {
 using Json = nlohmann::json;
+Json ParseBounded(std::string_view encoded);
 inline constexpr std::size_t MaximumFrameBytes = 1024*1024;
 inline constexpr unsigned ProtocolVersion = 1;
 std::string Digest(std::string_view data);
@@ -27,13 +29,14 @@ double Now();
 
 class Guard {
 public:
-    Guard(const std::filesystem::path& path, std::string key);
+    Guard(const std::filesystem::path& path, std::string key, bool migrateLegacy=false);
     ~Guard();
     Guard(const Guard&) = delete;
     Guard& operator=(const Guard&) = delete;
     unsigned Version() const;
     std::string IssueOwner(Json body, double now);
     void RevokeOwner(const std::string& id);
+    void RevokeScoped(const std::string& id);
     std::string Check(const Json& action, double now, bool quota=true) const;
     Json Consume(const Json& action, double now);
     Json ExecutionProof(const Json& action, const std::string& consumedId, unsigned version, double now) const;

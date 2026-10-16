@@ -11,17 +11,29 @@ from .journal import Journal
 from . import _axr_native as native
 
 class OwnerStore:
-    def __init__(self,directory,*,provision=False):
+    def __init__(self,directory,*,provision=False,migrate_legacy=False,protected_audit=False,authority_service=False):
         self.directory=private_directory(directory)
-        self.secrets=SecretStore("Stellaria.AXR."+digest(str(self.directory)))
+        if authority_service:
+            from .storage import AuthoritySecretStore
+            self.secrets=AuthoritySecretStore('Stellaria.AXR.Authority.'+digest(str(self.directory)))
+            protected_audit=True
+        else:
+            if getattr(native,'security_release',False):raise AXRError('native_authority_store_required')
+            self.secrets=SecretStore("Stellaria.AXR."+digest(str(self.directory)))
         if provision:
             for name in ("authority","journal"):
                 try:self.secrets.get(name)
                 except AXRError:self.secrets.provision(name,os.urandom(32))
         self.key=self.secrets.get("authority")
         self.vault=Vault(self.secrets.get("journal"))
-        self.guard=Guard(self.directory/"guard.sqlite3",self.key)
-        self.journal=Journal(self.directory/"journal.sqlite3",self.vault)
+        self.guard=Guard(self.directory/"guard.sqlite3",self.key,migrate_legacy=migrate_legacy)
+        from .checkpoint import ProtectedCheckpoint
+        checkpoint=ProtectedCheckpoint(self.secrets,self.vault,str(self.directory)) if protected_audit else None
+        self.journal=Journal(self.directory/"journal.sqlite3",self.vault,checkpoint=checkpoint)
+        if protected_audit and provision:
+            if not self.journal.verify_audit(check_checkpoint=False):raise AXRError('journal_audit_integrity_failed')
+            if not self.journal.verify_audit() and checkpoint.read() is not None:raise AXRError('journal_audit_integrity_failed')
+            checkpoint.anchor(self.journal.db,initialize=True)
 
     def seal_config(self,value):
         encoded=canonical({"version":1,"policy":value})

@@ -154,7 +154,30 @@ class AttachmentResolver:
         expected_identity=windows_identity(path=path) if os.name=='nt' else identity(expected)
         current_handle=lambda h:windows_identity(handle=h) if os.name=='nt' else identity(os.fstat(h.fileno()))
         current_path=lambda:windows_identity(path=path) if os.name=='nt' else identity(path.stat())
-        with path.open('rb') as handle:
+        if os.name!='nt':
+            # Walk every component relative to held directory descriptors.
+            # A parent swapped for a symlink cannot redirect the final open.
+            fd=os.open('/',os.O_RDONLY|os.O_DIRECTORY)
+            try:
+                for part in root.parts[1:]+relative.parts[:-1]:
+                    child=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=fd)
+                    os.close(fd);fd=child
+                leaf=os.open(relative.parts[-1],os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
+                handle=os.fdopen(leaf,'rb')
+            finally:os.close(fd)
+        else:
+            from axr.rooted import RootedDirectory
+            from axr.windows_files import child,close
+            import msvcrt
+            directory=RootedDirectory(root)
+            try:
+                with directory.parent(relative.as_posix()) as (parent,name):
+                    native_handle=child(parent,name)
+                    try:fd=msvcrt.open_osfhandle(int(native_handle),os.O_RDONLY|os.O_BINARY)
+                    except BaseException:close(native_handle);raise
+                    handle=os.fdopen(fd,'rb')
+            finally:directory.close()
+        with handle:
             if current_handle(handle) != expected_identity:
                 raise AXRError('attachment_identity_changed')
             data = handle.read(MAX_FILE+1)
@@ -167,43 +190,8 @@ class AttachmentResolver:
 
 
 def extract_text(content, filename):
-    """Trusted parser, bounded output; incoming files are data, never commands."""
-    if len(content) > MAX_FILE:
-        raise AXRError('attachment_file_budget')
-    suffix = Path(filename).suffix.lower()
-    try:
-        if suffix in {'.txt', '.md', '.csv', '.json'}:
-            value = content.decode('utf-8-sig', errors='strict')
-        elif suffix == '.docx':
-            from defusedxml import ElementTree
-            with zipfile.ZipFile(io.BytesIO(content)) as archive:
-                entries = archive.infolist()
-                if (len(entries) > 256 or sum(x.file_size for x in entries) > 8*1024*1024 or
-                        any(x.file_size > 2*1024*1024 or x.flag_bits & 1 or
-                            x.file_size > max(1, x.compress_size)*100 for x in entries)):
-                    raise AXRError('attachment_archive_budget')
-                document = archive.read('word/document.xml')
-                root = ElementTree.fromstring(document)
-                ns = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
-                value = '\n'.join(''.join(p.itertext()) for p in root.iter(ns+'p'))
-        elif suffix == '.pdf':
-            from pypdf import PdfReader
-            reader = PdfReader(io.BytesIO(content), strict=True)
-            if reader.is_encrypted or len(reader.pages) > 50:
-                raise AXRError('attachment_pdf_budget_or_encrypted')
-            parts = []; size = 0
-            for page in reader.pages:
-                part = page.extract_text() or ''
-                parts.append(part); size += len(part.encode('utf8'))
-                if size > MAX_TEXT:
-                    break
-            value = '\n'.join(parts)
-        else:
-            raise AXRError('attachment_format_unsupported')
-        encoded = value.encode('utf8')
-        return {'text': encoded[:MAX_TEXT].decode('utf8', 'ignore'),
-                'truncated': len(encoded) > MAX_TEXT, 'format': suffix[1:]}
-    except AXRError:
-        raise
-    except Exception as exc:
-        raise AXRError('attachment_parse_failed') from exc
+    """Compatibility pure-data helper; product consumption uses ContentQuarantine."""
+    from axr.quarantine_parser import extract_safe_text,ContentError
+    try:return extract_safe_text(content,filename)
+    except ContentError as exc:raise AXRError(str(exc)) from None
+    except Exception:raise AXRError('attachment_parse_failed') from None

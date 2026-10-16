@@ -1,0 +1,233 @@
+# Stellaria AXR · Security Architecture 2
+
+Status: development integration; formal release admission is closed.
+License: AGPL-3.0-only.
+
+Stellaria AXR provides application-independent control over authorized agent
+execution. Security Architecture 2 adds a unified authority service above the
+existing AET, Guard, Host and Journal. Applications retain responsibility for
+resource identification and qualified platform adapters. External content is
+always task data; it cannot authenticate an owner, enroll an application, expand
+a permission, select a privileged executable or authorize a side effect.
+
+## Authority and execution
+
+The public authority protocol consists of **Authorize, Access, Commit, Revoke**.
+`TaskContract` binds the authenticated owner, agent and application to a goal
+fingerprint, trigger, mode, operations, resources, sources, destinations, data
+classes, permitted output types, isolation profile, presence requirement, quota,
+policy version and deadline. A contract narrows an AET grant; it does not replace
+one. Native C++ decisions independently evaluate identity, capability, data flow,
+environment and policy. A contract signature alone never permits execution.
+
+The SDK `IncomingActor` also creates a one-use source-bound inference context,
+passes no parent history or executable tools, checks disclosure Access/Commit and
+accepts typed outputs only. A provider without host-verified isolation is refused.
+The existing Codex worker command no longer resumes developer history; logical
+parent binding carries status only. This does not by itself qualify the complete
+application/provider deployment.
+
+Incoming Automation cannot request general process, shell, script or runtime
+execution. Workspace/Full general-code actions additionally require an exact
+action review, a fresh owner-presence challenge signature and a sixty-second
+review record; broad task consent cannot approve changed code or commands. Authorized Workspace requires a user-initiated task. Full Access also
+requires user initiation, presence and an expiry of at most one hour. Incoming
+contracts expire within one day; a long-lived application preference is not a
+permanent Full Access capability.
+
+The independently installed authority owns signing keys and policy state. The
+business MCP process must not own them. Owner enrollment uses native peer
+identity and a short challenge signed by the separate owner-presence key. The
+challenge covers the exact reviewed contract, owner, peer instance, epoch, nonce
+and deadline. The agent connection cannot issue owner challenges.
+
+Access binds each immutable action seal and execution ID to a contract. Commit
+reserves the task quota and AET grant before issuing a short proof bound to one
+registered handler instance. That handler claims on its own authenticated channel.
+The authority holds the journal lifetime lease before crash recovery; a concurrent
+instance cannot recover live work. The authority persists `Executing` before
+returning a five-second signed permit. Repeatable preflight never claims a second
+execution; an expired claimed action becomes Unknown. The native C ABI connects
+to the fixed protected authority installation and verifies the actual OS peer
+before accepting its ephemeral key or root public key.
+The main-window Swift adapter selects this v2 bridge only when supplied an
+authority endpoint; legacy proofs are rejected by native formal builds. This
+bridge has negative peer/replay tests, but a positive installed root/helper
+application run is still required.
+
+The native verifier binds the root, epoch, nonce, exact action seal, helper PID
+and process birth. A helper must use the registered claim path, not merely verify
+a signature. Missing replies and ambiguous effects remain Unknown; they are not
+retried. Restart invalidates the previous epoch, records interrupted execution as
+Unknown, and never resumes a prepared or executing side effect.
+
+`Summary`, `ReplyDraft`, `ActionProposal`, `DataRequest` and `SafeContent` are
+bounded typed data. Proposals and requests do not grant authority. The unified
+Runtime rechecks the contract at the handler boundary and validates output type
+and source scope before saving a verified result.
+
+## Process and transport trust
+
+Native witnesses include process birth, OS user, executable digest and signature.
+macOS additionally verifies the live SecCode identity, team, signing identifier,
+CDHash and Hardened Runtime. Windows verifies the image publisher, process token
+and AppContainer state. Peer PID is obtained from the connected Unix socket or
+Named Pipe; JSON cannot supply an authenticated identity.
+
+Self-hosted SDK deployment does not require Developer ID or vendor notarization.
+`OwnerDeployment` stores an OS-protected inventory of exact build hashes and
+registered peer roles after owner authentication. It may replace the vendor-PKI
+predicate, never native peer/birth verification, managed sandbox evidence, OS
+storage protection or the complete release gate. macOS may use a local ad-hoc
+signed Hardened Runtime build and a native creator-specific Keychain ACL;
+provisioned access groups remain available for managed deployments. Windows uses
+owner-pinned binaries and the protected service identity. Arbitrary unsigned
+processes cannot enroll themselves.
+
+The authority transport accepts owner-enrolled peers, uses a private Unix socket
+or a local-only Named Pipe with explicit DACL, and authenticates the server too.
+Ephemeral connection keys are exchanged only after native peer verification.
+Directional MAC keys, a fresh connection nonce, epoch and monotonically increasing
+sequence numbers prevent reflection and replay. There are no persistent authority
+client/owner bearer files. Windows clients request identification-level security
+to avoid granting an unverified pipe server impersonation rights.
+
+Enrollment, sandbox witnesses, handler registration and expected server identity
+are trusted installation/host inputs. They must never be copied from an agent
+request. Managed clients must be launched in the selected OS isolation boundary;
+a dictionary saying `sandbox=true` is not OS enforcement.
+
+## Content and data protection
+
+Content Quarantine parses only a bounded byte snapshot in a mandatory isolated
+process. It denies network access and unrelated execution. TXT, structured text,
+DOCX, XLSX, PPTX, static PDF text and bounded nested ZIPs produce static text;
+macros, active Office embeddings, encrypted archives, traversal, archive bombs,
+unknown binaries and unsupported formats fail closed. Scripts may be represented
+as source text but are never run. PDF actions and external resources are not
+executed or fetched. Image, voice, video, 7z and scanned-document recognition are
+not qualified by this component.
+
+The safe-representation cache is encrypted, expires after fifteen minutes, and
+is bounded by entry count and bytes. Cache identity includes content hash,
+filename, source, parser version, policy version and parser/runtime pin. Windows
+requires a dedicated allowlisted runtime and AppContainer launcher; no ordinary
+subprocess fallback exists. Static parsing does **not** constitute an antivirus
+verdict. Malware scanning is reported as `not_performed`.
+
+Every controlled egress still requires source/class/destination permission.
+Read-all authority does not authorize disclosure of one private conversation to
+another. A shared visible Codex chat is not an isolation boundary: incoming
+inference must run in its own constrained context without the development chat's
+shell, filesystem, credentials or previously disclosed unrelated conversations.
+
+Credential Broker accepts fixed registered consumers and returns operation results,
+not secrets. Its formal path rejects ordinary Python consumers. The C++ `CredentialConsumer` extension interface has no Python trampoline or
+secret-export operation; the application supplies its fixed native implementation.
+The WeChat native database consumer and application bridge are not yet qualified. Existing
+Gen1 WCDB Python readers are explicitly outside this security qualification.
+Login-token extraction, token export and arbitrary credential egress are not
+supported operations.
+
+Filesystem access walks held directory handles and rejects links at each
+component. Windows uses NT handle-relative opens with reparse rejection; text
+replacement uses the held parent, and POSIX uses dir_fd/openat-style operations.
+Working copies and temporary entries do not establish authority; final checks do.
+
+## Containment, audit and recovery
+
+Normal, Restricted, Quarantined and Sealed are persistent trust states. Invalid
+content and application drift affect their own resource/application domain.
+Repeated identity, scope or data-flow denials restrict that task. IPC failures
+close that connection. Only trusted root, policy, audit or kernel integrity
+failures globally seal the installation. Arbitrary text cannot select severity or
+seal unrelated tasks. Application witnesses recheck signature, birth, image and
+registered account identity; drift freezes that adapter.
+
+Grant counters, revocation and policy versions are authenticated. Authority state
+and encrypted once-only claims are bound to a journal snapshot and an independent
+protected audit checkpoint. Truncation, old database restore, deleted claims and
+mutable-state replacement are detected before dispatch. A failed checkpoint write
+or a crash across a checkpoint boundary stops execution rather than assuming the
+last action did not happen. Terminal authority records remove the action body;
+nonce/seal/state evidence remains. Local events and contract/binding tables have
+explicit resource budgets.
+
+Trusted recovery requires owner authentication and environment integrity checks.
+It revokes the affected authority and restores no old grant. It is not a restart
+button, a model operation or permission to bless a modified database. A damaged
+root ledger requires a separately reviewed owner repair/new-store workflow while
+preserving forensic records and Unknown attempts.
+
+## Protected roots and release integrity
+
+Native signing supports non-exportable Secure Enclave P-256 and Windows platform
+TPM P-256, with no software-key fallback. macOS owner keys add user-presence
+access control and are separated from background authority keys. Formal builds
+require distinct native owner/authority process identities. Managed deployments
+may also use distinct access groups; owner deployments use native creator ACLs. Windows
+owner-presence/Hello enrollment is not qualified and is rejected explicitly.
+
+The fixed `axr-authority` host embeds an isolated bundled CPython runtime; it
+accepts no caller-selected script, environment search path or startup module.
+macOS requires a fully valid signed bundle and root-owned, non-user-writable
+runtime files; Windows uses the LocalSystem service entry and checks installation
+DACLs/reparse points before interpreter startup. Application registration comes
+only from protected bootstrap storage and must pass its complete release gate.
+The host is implemented and compiled locally; it is not installed or qualified.
+
+The native authority store requires a macOS creator-specific ACL or provisioned
+access group and the fixed, valid Hardened Runtime authority identity, or the
+Windows LocalSystem service identity. It never falls back to the ordinary user's generic keyring. Public
+release packaging must provide the corresponding signed executable, entitlement,
+service ACL, independent owner channel and protected installation. A developer
+Python process is not that deployment.
+
+`AXR_SECURITY_RELEASE=ON` rejects legacy bearer transport, Gen1 native commit
+proofs, development identity fixtures, ordinary application OwnerStore and a
+Runtime without a native authority store. Missing adapters or infrastructure deny
+operation. A development build cannot be advertised as the formal profile.
+
+Release admission verifies a pinned owner or maintainer signature, exact file inventory,
+SBOM hash, platform, expiry and all nine qualification categories. The accepted
+sequence and manifest digest live outside the update directory in protected OS
+storage; older versions and same-version equivocation are rejected. This verifier
+admits an inventory; owner-enrolled local signing, protected installation and OS
+service deployment still need end-to-end qualification. Vendor signing and
+notarization are optional distribution choices. No unverified inventory fallback exists.
+
+## Qualification and remaining delivery work
+
+Implemented code is not equivalent to a qualified end-to-end distribution.
+Current evidence includes native policy/crypto and no-downgrade tests, real OS
+peer identification, separate-process Unix IPC, native Windows pipe test coverage,
+mandatory macOS quarantine execution, authenticated quota/rollback tests, typed
+Runtime revalidation, workspace link denial, signed-inventory anti-rollback tests,
+and bounded libFuzzer execution under address/undefined instrumentation.
+
+The following remain release blockers, not optional hardening:
+
+- Install and qualify the independently signed native authority host and owner
+  enrollment/recovery UI, with authority-only storage and least-privilege IPC.
+- Replace the application's legacy MCP/business execution bridge and database
+  credential consumer with the independently claimed native handler path.
+- Route inbound inference through an isolated actor per source/contract; same-chat
+  coordination may carry metadata only, not inherited developer privileges.
+- Qualify owner-deployed macOS/Windows installation, protected build enrollment,
+  Windows Hello, hardware provisioning, lock/restart/recovery and updates. Vendor
+  signing/notarization is optional distribution work, not an SDK usage gate.
+- Complete Windows device adversarial tests and real end-to-end performance,
+  resource, false-positive and usability qualification.
+
+The formal gate remains closed until **all nine** categories pass together.
+There is no partial high-security release. The WeChat integration therefore keeps
+real automatic replies paused rather than using its old path as a substitute.
+
+## Threat boundary
+
+AXR controls only resources and egress mediated by its service and OS isolation.
+It cannot constrain independent full-access tools outside that boundary or promise
+protection against a compromised kernel, administrator or trusted authority host.
+Encryption does not repair an overprivileged process. Antivirus absence is not a
+clean-file verdict, a local database record is not delivery confirmation, and a
+passing component test is not release qualification.

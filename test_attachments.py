@@ -43,8 +43,10 @@ class Attachments(unittest.TestCase):
         with zipfile.ZipFile(buf,'w',compression=zipfile.ZIP_DEFLATED) as z:z.writestr('word/document.xml','a'*1000000)
         with self.assertRaisesRegex(AXRError,'archive_budget'):extract_text(buf.getvalue(),'bad.docx')
     def test_executable_encrypted_unknown_and_output_budgets(self):
-        for name in ['run.py','run.exe','macro.docm','image.png']:
+        for name in ['run.exe','macro.docm','image.png']:
             with self.assertRaisesRegex(AXRError,'unsupported'):extract_text(b'anything',name)
+        script=extract_text(b'print(123)','run.py')
+        self.assertEqual(script['content_kind'],'code-as-data');self.assertFalse(script['execution_allowed'])
         with self.assertRaises(AXRError):extract_text(b'x'*(MAX_FILE+1),'big.txt')
         self.assertTrue(extract_text(b'x'*30000,'normal.txt')['truncated'])
     @unittest.skipIf(os.name=='nt','Windows unprivileged symlink unavailable')

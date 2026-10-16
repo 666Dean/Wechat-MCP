@@ -154,8 +154,13 @@ class Foundation(unittest.TestCase):
                 with closing(sqlite3.connect(self.root/'guard.db')) as db:
                     body=json.loads(db.execute('SELECT body FROM grants WHERE id=?',(gid,)).fetchone()[0])
                     encoded=canonical({**body,**changed}).decode()
-                    db.execute('UPDATE grants SET body=?,signature=? WHERE id=?',
-                        (encoded,hmac.new(b'g'*32,encoded.encode(),'sha256').hexdigest(),gid))
+                    signature=hmac.new(b'g'*32,encoded.encode(),'sha256').hexdigest()
+                    used,revoked=db.execute('SELECT used,revoked FROM grants WHERE id=?',(gid,)).fetchone()
+                    # Trusted older issuer fixture signs BOTH immutable body and
+                    # mutable state; this tests semantic rejection independently
+                    # of the separate untrusted-counter-tampering regression.
+                    state=native.hmac(b'g'*32,canonical({'kind':'grant-state-v2','id':gid,'body_mac':signature,'used':used,'revoked':revoked}).decode())
+                    db.execute('UPDATE grants SET body=?,signature=?,state_signature=? WHERE id=?',(encoded,signature,state,gid))
                     db.commit()
                 proof=json.loads(control['proof']);proof['grants'][0]['body_sha256']=hashlib.sha256(encoded.encode()).hexdigest()
                 with self.assertRaisesRegex(AXRError,'authority_missing'):self.guard.revalidate(action,gid,version)

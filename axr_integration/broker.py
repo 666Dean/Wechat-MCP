@@ -31,6 +31,8 @@ def runtime_directory(state):
 
 
 def read_connection(state, owner=False):
+    from axr import _axr_native as native
+    if getattr(native,'security_release',False):raise AXRError('legacy_bearer_transport_disabled')
     root=runtime_directory(state)
     path=root/('owner.json' if owner else 'client.json')
     if path.is_symlink() or path.stat().st_size>4096:
@@ -77,6 +79,8 @@ class RemoteService:
 
 class Broker:
     def __init__(self,state,*,helper=None,manual_replies=True,service=None,chat_helper=None):
+        from axr import _axr_native as native
+        if getattr(native,'security_release',False):raise AXRError('legacy_bearer_transport_disabled')
         self.state=Path(state).resolve();self.helper=helper;self.chat_helper=chat_helper
         self.service=service or DeferredService(self.state,manual_replies=manual_replies)
         self.root=private_directory(runtime_directory(state))
@@ -154,7 +158,7 @@ class Broker:
             return self.capabilities(result) if method=='status' else result
 
     def capabilities(self,status):
-        supported=(sys.platform=='darwin' and bool(self.chat_helper) and Path(self.chat_helper).is_file() and
+        supported=(status.get('security',{}).get('release_qualified') is True and sys.platform=='darwin' and bool(self.chat_helper) and Path(self.chat_helper).is_file() and
                    status.get('platform',{}).get('mode')=='wcdb')
         return {**status,'automatic_reply':{**status.get('automatic_reply',{}),'supported':supported}}
 
