@@ -16,6 +16,7 @@ kernel.ReadFile.argtypes=[HANDLE,PTR,w.DWORD,c.POINTER(w.DWORD),PTR];kernel.Read
 kernel.WriteFile.argtypes=kernel.ReadFile.argtypes;kernel.WriteFile.restype=w.BOOL
 kernel.FlushFileBuffers.argtypes=[HANDLE];kernel.FlushFileBuffers.restype=w.BOOL
 kernel.CloseHandle.argtypes=[HANDLE];kernel.CloseHandle.restype=w.BOOL
+kernel.GetFinalPathNameByHandleW.argtypes=[HANDLE,w.LPWSTR,w.DWORD,w.DWORD];kernel.GetFinalPathNameByHandleW.restype=w.DWORD
 
 def close(handle):kernel.CloseHandle(handle)
 def _plain(handle):
@@ -34,7 +35,7 @@ def child(parent,name,*,directory=False,create=False):
     if status<0:
         if status&0xffffffff in (0xc0000034,0xc000003a):raise FileNotFoundError(name)
         raise AXRError('rooted_relative_open_failed')
-    return _plain(handle)
+    return _plain(handle.value)
 def open_root(path):
     anchor=str(path.anchor)
     if not anchor or str(path).startswith('\\\\'):raise AXRError('rooted_unc_denied')
@@ -46,6 +47,18 @@ def open_root(path):
             next_handle=child(handle,part,directory=True);close(handle);handle=next_handle
         return handle
     except BaseException:close(handle);raise
+
+def final_path(handle):
+    # Resolve short-name/case aliases from the already opened, reparse-checked
+    # handle. Never follow an unchecked input path merely to canonicalize it.
+    buffer=c.create_unicode_buffer(32768)
+    size=kernel.GetFinalPathNameByHandleW(handle,buffer,len(buffer),0)
+    if not size or size>=len(buffer):raise AXRError('rooted_canonical_path_unavailable')
+    value=buffer.value
+    if value.startswith('\\\\?\\UNC\\'):raise AXRError('rooted_unc_denied')
+    if value.startswith('\\\\?\\'):value=value[4:]
+    from pathlib import Path
+    return Path(value)
 
 def read(handle,maximum):
     output=bytearray()

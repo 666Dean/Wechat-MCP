@@ -12,8 +12,10 @@ class RootedDirectory:
         if sys.platform=='darwin' and len(self.root.parts)>1 and self.root.parts[1] in ('var','tmp','etc'):
             self.root=Path('/private').joinpath(*self.root.parts[1:])
         if os.name=='nt':
-            from .windows_files import open_root
+            from .windows_files import open_root,final_path,close
             self.handle=open_root(self.root)
+            try:self.root=final_path(self.handle)
+            except BaseException:close(self.handle);self.handle=None;raise
         else:
             fd=os.open('/',os.O_RDONLY|os.O_DIRECTORY)
             try:
