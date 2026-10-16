@@ -5,10 +5,13 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 import AXRCommit
+import CryptoKit
 
 struct Stop: Error { let code: String; init(_ code: String) { self.code=code } }
 var staged=false, submitted=false, navigated=false
 var shell:[String:Any]=[:]
+var authorityContext:[String:String]?=nil
+var authorityMode=""
 func attr(_ node: AXUIElement,_ key: String)->CFTypeRef? {
  var value:CFTypeRef?; guard AXUIElementCopyAttributeValue(node,key as CFString,&value) == .success else{return nil};return value
 }
@@ -25,6 +28,10 @@ func frame() throws -> Data {
 }
 func run() throws -> [String:Any] {
  let decoded=try JSONSerialization.jsonObject(with:frame())
+ if let request=decoded as? [String:Any] {
+  authorityContext=request["guard_context"] as? [String:String]
+  authorityMode=request["mode"] as? String ?? ""
+ }
  if let request=decoded as? [String:Any],request["mode"] as? String=="binding" {
   let apps=NSRunningApplication.runningApplications(withBundleIdentifier:"com.tencent.xinWeChat")
   guard apps.count==1,let app=apps.first,app.bundleURL?.path=="/Applications/WeChat.app" else{throw Stop("original_application_required")}
@@ -155,4 +162,22 @@ func run() throws -> [String:Any] {
  }
  return ["draft_match":exact,"stage_invoked":staged,"send_invoked":submitted,"delivery_confirmed":false,"content_disclosed":false]
 }
-do {emit(try run())}catch let error as Stop{emit(["error":error.code,"stage_invoked":staged,"send_invoked":submitted,"navigation_invoked":navigated,"shell":shell,"content_disclosed":false])}catch{emit(["error":"operation_failed","stage_invoked":staged,"send_invoked":submitted,"content_disclosed":false])}
+// A separate ready frame lets the installed authority enroll the actual helper
+// birth instance BEFORE preparing the sealed final-action proof. No input yet.
+if CommandLine.arguments.count==2 && CommandLine.arguments[1]=="--authority-v2" {
+ emit(["version":2,"ready":true,"input_received":false]);fflush(stdout)
+}
+func finish(_ result:[String:Any]) {
+ var output=result
+ if let context=authorityContext,let endpoint=context["authority_endpoint"],let proof=context["proof"] {
+  let data=(try? JSONSerialization.data(withJSONObject:result,options:.sortedKeys)) ?? Data()
+  let evidence=SHA256.hash(data:data).map{String(format:"%02x",$0)}.joined()
+  // A keyboard submission is never proof of delivery. The independent WCDB
+  // observation stays separate, and an uncertain send remains Unknown.
+  let verified=authorityMode != "send" && result["error"] == nil &&
+   (result["draft_match"] as? Bool==true || result["navigation_invoked"] as? Bool==true)
+  output["authority_receipt_recorded"]=endpoint.withCString{e in proof.withCString{p in evidence.withCString{d in axr_authority_observe(e,p,verified ? 1:0,d)}}}==1
+ }
+ emit(output)
+}
+do {finish(try run())}catch let error as Stop{finish(["error":error.code,"stage_invoked":staged,"send_invoked":submitted,"navigation_invoked":navigated,"shell":shell,"content_disclosed":false])}catch{finish(["error":"operation_failed","stage_invoked":staged,"send_invoked":submitted,"content_disclosed":false])}

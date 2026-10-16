@@ -16,13 +16,7 @@ from adapters.wcdb import open_database,DatabaseAdapter
 from adapters.wcdb_keys import inventory
 from adapters.wcdb_owner import verified_cached
 from adapters.macos.chat_state import CachedDraftWitness
-def claim_attempt(path):
-    fd=os.open(path,os.O_CREAT|os.O_EXCL|os.O_WRONLY|getattr(os,'O_NOFOLLOW',0),0o600)
-    with os.fdopen(fd,'w') as stream:
-        json.dump({'attempted':True,'retry':False},stream);stream.flush();os.fsync(stream.fileno())
-    directory=os.open(path.parent,os.O_RDONLY|getattr(os,'O_DIRECTORY',0))
-    try:os.fsync(directory)
-    finally:os.close(directory)
+from axr_applications.attempts import claim_attempt
 
 
 def execute_plan(store,state,helper,plan,*,principal=None,action_purpose='finite-owner-chat-plan',

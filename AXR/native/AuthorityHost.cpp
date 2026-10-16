@@ -35,7 +35,7 @@ void ProtectedPath(const std::filesystem::path& path){
     LocalFree(descriptor);if(!safe)throw std::runtime_error("authority_installation_not_protected");
 }
 #endif
-void Installed(const std::filesystem::path& root){
+void Installed(const std::filesystem::path& root,bool requireOwnership=true){
 #if defined(__APPLE__)
     SecCodeRef dynamic=nullptr;SecStaticCodeRef code=nullptr;
     if(SecCodeCopySelf(kSecCSDefaultFlags,&dynamic)!=errSecSuccess)throw std::runtime_error("authority_installed_identity_required");
@@ -43,12 +43,19 @@ void Installed(const std::filesystem::path& root){
     if(status!=errSecSuccess||!code)throw std::runtime_error("authority_installed_identity_required");
     status=SecStaticCodeCheckValidity(code,SecCSFlags(kSecCSStrictValidate|kSecCSCheckAllArchitectures|kSecCSCheckNestedCode),nullptr);CFRelease(code);
     if(status!=errSecSuccess)throw std::runtime_error("authority_bundle_integrity_failed");
+    if(!requireOwnership)return; // Separate validation identity has no authority keys.
     // Installation is root-owned and immutable to the owner user's business
     // process. A writable, even correctly signed development bundle is refused.
     for(const auto& entry:std::filesystem::recursive_directory_iterator(root)){
         struct stat info{};if(lstat(entry.path().c_str(),&info)||S_ISLNK(info.st_mode)||info.st_uid!=0||(info.st_mode&0022))throw std::runtime_error("authority_installation_not_protected");
     }
     struct stat info{};if(lstat(root.c_str(),&info)||info.st_uid!=0||(info.st_mode&0022))throw std::runtime_error("authority_installation_not_protected");
+    // A writable ancestor could rename/replace an otherwise protected bundle.
+    for(auto parent=root.parent_path();!parent.empty();parent=parent.parent_path()){
+        struct stat ancestor{};
+        if(lstat(parent.c_str(),&ancestor)||S_ISLNK(ancestor.st_mode)||ancestor.st_uid!=0||(ancestor.st_mode&0022))throw std::runtime_error("authority_installation_ancestor_not_protected");
+        if(parent==parent.root_path())break;
+    }
 #elif defined(_WIN32)
     ProtectedPath(root);ProtectedPath(root.parent_path());
     for(const auto& entry:std::filesystem::recursive_directory_iterator(root))ProtectedPath(entry.path());
@@ -66,7 +73,9 @@ void Configure(PyConfig& config,const std::filesystem::path& root){
 }
 int Serve(bool initialize=false){
 #ifdef AXR_SECURITY_RELEASE
+#if !defined(AXR_OWNER_HOST) && !defined(AXR_VALIDATION_HOST)
     ProtectedStore bootstrap("Stellaria.AXR.Bootstrap");
+#endif
 #if defined(_WIN32)
     auto identity=ProcessIdentity(GetCurrentProcessId());
     SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32|LOAD_LIBRARY_SEARCH_APPLICATION_DIR);
@@ -83,16 +92,45 @@ int Serve(bool initialize=false){
 #else
     auto root=exe.parent_path()/"runtime";
 #endif
-    Installed(root);PyConfig config;Configure(config,root);
+    // Protect the dependency closure as well as Python resources. A writable
+    // Frameworks sibling must never be accepted as an installed authority.
+#if defined(__APPLE__)
+    Installed(exe.parent_path().parent_path().parent_path(),
+#ifdef AXR_VALIDATION_HOST
+        false
+#else
+        true
+#endif
+    );
+#else
+    Installed(root);
+#endif
+    PyConfig config;Configure(config,root);
     auto status=Py_InitializeFromConfig(&config);PyConfig_Clear(&config);
     if(PyStatus_Exception(status))throw std::runtime_error("authority_runtime_initialization_failed");
-    auto module=PyImport_ImportModule(initialize?"axr.authority_setup":"axr.authority_main");
-    if(!module){PyErr_Clear();Py_FinalizeEx();throw std::runtime_error("authority_bootstrap_import_failed");}
+    auto module=PyImport_ImportModule(
+#ifdef AXR_OWNER_HOST
+        "axr.authority_owner"
+#elif defined(AXR_VALIDATION_HOST)
+        "axr.authority_validate"
+#else
+        initialize?"axr.authority_setup":"axr.authority_main"
+#endif
+    );
+    if(!module){
+#ifdef AXR_VALIDATION_HOST
+        PyErr_PrintEx(0); // Fixed synthetic import check; no authority or live data.
+#endif
+        PyErr_Clear();Py_FinalizeEx();throw std::runtime_error("authority_bootstrap_import_failed");}
     PyObject* result=nullptr;
     if(initialize){auto path=root.u8string();result=PyObject_CallMethod(module,"main","s",reinterpret_cast<const char*>(path.c_str()));}
     else result=PyObject_CallMethod(module,"main",nullptr);
     Py_DECREF(module);
-    bool ok=result!=nullptr;if(result)Py_DECREF(result);else PyErr_Clear();Py_FinalizeEx();
+    bool ok=result!=nullptr;if(result)Py_DECREF(result);else {
+#ifdef AXR_VALIDATION_HOST
+        PyErr_PrintEx(0);
+#endif
+        PyErr_Clear();}Py_FinalizeEx();
     if(!ok)throw std::runtime_error("authority_service_stopped_or_unqualified");return 0;
 #else
     throw std::runtime_error("authority_formal_build_required");
@@ -111,6 +149,13 @@ void WINAPI ServiceMain(DWORD,LPWSTR*){
 }
 int main(int argc,char** argv){
     try{
+#ifdef AXR_OWNER_HOST
+        if(argc!=2||std::string_view(argv[1])!="--owner-enroll")throw std::runtime_error("owner_fixed_entrypoint_required");
+        return Serve(true);
+#elif defined(AXR_VALIDATION_HOST)
+        if(argc!=2||std::string_view(argv[1])!="--validate-runtime")throw std::runtime_error("validation_fixed_entrypoint_required");
+        return Serve(true);
+#else
 #if defined(_WIN32)
         if(argc==2&&std::string_view(argv[1])=="--service"){
             SERVICE_TABLE_ENTRYW table[]={{const_cast<LPWSTR>(L"StellariaAXRAuthority"),ServiceMain},{nullptr,nullptr}};
@@ -120,5 +165,6 @@ int main(int argc,char** argv){
         if(argc==2&&std::string_view(argv[1])=="--initialize-owner")return Serve(true);
         if(argc!=2||std::string_view(argv[1])!="--serve")throw std::runtime_error("authority_fixed_entrypoint_required");
         return Serve();
+#endif
     }catch(const std::exception& e){std::cerr<<Json{{"error",e.what()},{"authority_started",false}}.dump()<<'\n';return 1;}
 }

@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+"""Fixed generic owner entry. Application behavior remains outside the SDK."""
+import importlib,json,re
+from pathlib import Path
+from .aet import AXRError
+
+def registration(runtime_root):
+    path=Path(runtime_root)/'deployment.json'
+    if path.is_symlink() or path.stat().st_size>32768:raise AXRError('authority_deployment_configuration_invalid')
+    config=json.loads(path.read_bytes());module=config.get('application_module')
+    if config.get('version')!=2 or not isinstance(module,str) or not re.fullmatch(r'axr_applications\.[a-z][a-z0-9_]{0,63}',module):raise AXRError('authority_application_registration_invalid')
+    return importlib.import_module(module)
+
+def main(runtime_root):
+    # Native host has already verified the protected signed installation. The
+    # owner role cannot read authority-only secrets, even in the same runtime.
+    registration(runtime_root).owner_enroll(runtime_root)
