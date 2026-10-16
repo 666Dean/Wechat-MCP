@@ -13,7 +13,11 @@ class StaticContent(unittest.TestCase):
     def zip(self,items):
         b=io.BytesIO()
         with zipfile.ZipFile(b,'w') as archive:
-            for name,body in items:archive.writestr(name,body)
+            for name,body in items:
+                # Construct the raw archive entry, not the platform-normalized
+                # ZipInfo constructor form; Windows otherwise rewrites slashes.
+                info=zipfile.ZipInfo();info.filename=name;info.orig_filename=name
+                archive.writestr(info,body)
         return b.getvalue()
     def test_executable_type_spoofing_and_archive_escapes_are_quarantined(self):
         for body,name in [(b'MZfixture','notes.txt'),(b'\x7fELFfixture','notes.md'),(b'PK\x03\x04fixture','notes.txt'),(b'not pdf','notes.pdf')]:

@@ -38,8 +38,8 @@ def child(parent,name,*,directory=False,create=False):
 def open_root(path):
     anchor=str(path.anchor)
     if not anchor or str(path).startswith('\\\\'):raise AXRError('rooted_unc_denied')
-    handle=kernel.CreateFileW(anchor,0x02000000|0x100000,0x7,None,3,0x02000000|0x00200000,None)
-    if handle==c.c_void_p(-1).value:raise AXRError('rooted_volume_open_failed')
+    handle=kernel.CreateFileW(anchor,0x100000|0x80|0x20,0x7,None,3,0x02000000|0x00200000,None)
+    if handle==c.c_void_p(-1).value:raise AXRError('rooted_volume_open_failed_os_'+str(c.get_last_error()))
     handle=_plain(handle)
     try:
         for part in path.parts[1:]:

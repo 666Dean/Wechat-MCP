@@ -168,5 +168,5 @@ def create_pipe(name,allowed_sids=()):
         acl.AddAccessAllowedAce(win32security.ACL_REVISION,win32con.GENERIC_READ|win32con.GENERIC_WRITE,sid)
     descriptor=win32security.SECURITY_DESCRIPTOR();descriptor.SetSecurityDescriptorDacl(1,acl,0)
     attrs=pywintypes.SECURITY_ATTRIBUTES();attrs.SECURITY_DESCRIPTOR=descriptor
-    return win32pipe.CreateNamedPipe(name,win32pipe.PIPE_ACCESS_DUPLEX|win32file.FILE_FLAG_FIRST_PIPE_INSTANCE,
+    return win32pipe.CreateNamedPipe(name,win32pipe.PIPE_ACCESS_DUPLEX|0x00080000,
         win32pipe.PIPE_TYPE_MESSAGE|win32pipe.PIPE_READMODE_MESSAGE|win32pipe.PIPE_WAIT|0x8,1,MAX_FRAME,MAX_FRAME,5000,attrs)

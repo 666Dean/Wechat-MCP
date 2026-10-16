@@ -17,6 +17,7 @@ def _archive(content):
     try:
         if len(entries)>256 or sum(e.file_size for e in entries)>8*1024*1024:raise ContentError('attachment_archive_budget')
         for e in entries:
+            if e.orig_filename!=e.filename:raise ContentError('attachment_archive_noncanonical_path')
             path=PurePosixPath(e.filename)
             if (e.filename in names or path.is_absolute() or '..' in path.parts or '\\' in e.filename or ':' in e.filename or
                     len(e.filename)>512 or any(ord(c)<32 for c in e.filename) or
