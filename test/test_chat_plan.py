@@ -47,7 +47,7 @@ class SyntheticDesktop:
             if self.input!=req['expected_text']:raise AssertionError('wrong input submitted')
             if self.active!=req['identity']:raise AssertionError('wrong recipient submitted')
             self.sends+=1
-            if self.observe:self.records.append({'text':self.input,'sender':'self','outgoing':True,'server_id':12345,'conversation':self.active})
+            if self.observe:self.records.append({'text':self.input,'sender':'self','outgoing':True,'server_id':12345+self.sends,'conversation':self.active})
             self.input='';result={'draft_match':True,'send_invoked':True,'stage_invoked':False}
         else:raise AssertionError('unexpected native operation')
         return {'result':result}
@@ -115,11 +115,12 @@ class PlanTests(unittest.TestCase):
         inventory={rel:{'path':dbroot/rel} for rel in keys}
         lsof=SimpleNamespace(stdout='\n'.join('n'+str(dbroot/r) for r in ('contact/contact.db','session/session.db')))
         with contextlib.ExitStack() as stack:
-            prefix='axr_integration.owner_chat_send.'
+            prefix='axr_integration.chat_executor.'
             for name,value in [('authenticate',lambda path:None),('OwnerStore',Store),('inventory',lambda root:inventory),('verified_cached',lambda *a:keys),
                                ('open_database',lambda *a,**k:desktop),('Supervisor',lambda **k:desktop),('DatabaseAdapter',lambda *a:desktop),
                                ('subprocess.run',lambda *a,**k:lsof),('sys.platform','darwin'),('sys.stdin.isatty',lambda:True),('sys.stdout.isatty',lambda:True),('time.sleep',lambda n:None)]:
-                stack.enter_context(patch(prefix+name,value))
+                location='axr_integration.owner_chat_send.' if name in ('authenticate','OwnerStore','sys.platform','sys.stdin.isatty','sys.stdout.isatty') else prefix
+                stack.enter_context(patch(location+name,value))
             stack.enter_context(patch.object(Path,'home',return_value=self.root))
             out=stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             stack.enter_context(patch.object(out,'isatty',return_value=True))
@@ -141,5 +142,6 @@ class PlanTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform=='darwin','macOS finite sender workflow')
     def test_unknown_submission_stops_plan_without_second_send(self):
         desktop=SyntheticDesktop(self.root,observe=False)
-        with self.assertRaisesRegex(AXRError,'submission_unknown_never_retry'):self.run_synthetic(desktop)
+        code,out=self.run_synthetic(desktop)
+        self.assertEqual(code,1)
         self.assertEqual(desktop.sends,1)

@@ -20,7 +20,7 @@ def paged(db,sql,parameters=(),maximum=16384):
         offset+=500
 
 
-def discover(store,policy):
+def discover(store,policy,*,statistics=True):
     snapshot_until=int(time.time())
     roots={Path(s['path']).absolute().parent.parent for s in policy['database']['shards']}
     if len(roots)!=1:raise AXRError('qualified_single_account_root_required')
@@ -62,7 +62,7 @@ def discover(store,policy):
                 columns={r['name'] for r in db.query('PRAGMA table_info("'+table+'")')}
                 required=set(SCHEMAS['v4'].values())-{'Msg_','rowid'}
                 if not required<=columns:raise AXRError('wcdb_schema_not_qualified')
-                stats=db.query('SELECT count(*) AS records,sum(local_type=1) AS texts,min(create_time) AS first,max(create_time) AS last FROM "'+table+'" WHERE create_time<=?',(snapshot_until,))[0]
+                stats=db.query('SELECT count(*) AS records,sum(local_type=1) AS texts,min(create_time) AS first,max(create_time) AS last FROM "'+table+'" WHERE create_time<=?',(snapshot_until,))[0] if statistics else {'records':0,'texts':0}
                 name=mapping[table]
                 kind='self' if name==account else 'group' if name.endswith('@chatroom') else 'public' if name.startswith('gh_') else 'private'
                 b=bindings.setdefault(name,{'conversation_id':name,'display_name':labels.get(name,name),

@@ -21,15 +21,53 @@ from .codex_config import snippet,install,restore
 
 
 class Controller(QObject):
-    changed=Signal();detailChanged=Signal();manualChanged=Signal();noticeChanged=Signal();completed=Signal(object)
+    assistantChanged=Signal();threadsChanged=Signal();changed=Signal();detailChanged=Signal();manualChanged=Signal();noticeChanged=Signal();completed=Signal(object)
     def __init__(self,state,helper=None,fixture=False,fixture_case="empty"):
         super().__init__();self.state=state;self.helper=helper;self.fixture=fixture;self.fixture_case=fixture_case
         self._data={'connected':False,'jobs':[],'drafts':[],'conversations':[],'grants':[],'summaries':[]}
+        self._assistant={'thread_id':'','thread_title':'','persona':'','style':'简洁、自然、直接；不编造事实。','attribution':True};self._threads=[];self._threads_cursor=None
         self._preview={};self._manual={};self._detail='';self._notice='连接本地服务，开始你的工作台。';self.selected=None;self.config_review=None;self.config_backup=None
         self.pool=concurrent.futures.ThreadPoolExecutor(max_workers=2);self.inflight=set();self.broker_process=None;self.worker_process=None;self.worker_job=None
         self.completed.connect(self.accept)
         self.timer=QTimer(self);self.timer.timeout.connect(self.refresh);self.timer.start(5000)
         self.refresh()
+    @Property('QVariantMap',notify=assistantChanged)
+    def assistant(self):return self._assistant
+    @Property('QVariantList',notify=threadsChanged)
+    def codexThreads(self):return self._threads
+    @Slot()
+    def loadAssistant(self):
+        if not self.fixture:self.run('assistant_load',lambda:call(self.state,'control.assistant_settings',owner=True))
+    @Slot()
+    def loadThreads(self):
+        if not self.fixture:self.run('threads',lambda:call(self.state,'control.codex_threads',owner=True))
+    @Slot()
+    def loadMoreThreads(self):
+        if not self.fixture and self._threads_cursor:
+            self.run('threads_more',lambda:call(self.state,'control.codex_threads',(self._threads_cursor,),owner=True))
+    @Slot('QVariantMap')
+    def saveAssistant(self,value):
+        if not self.fixture:self.run('assistant_save',lambda:call(self.state,'control.save_assistant_settings',(dict(value),),owner=True))
+    @Slot()
+    def installHooks(self):
+        if not self.fixture:self.run('hooks',lambda:call(self.state,'control.install_hooks',owner=True))
+    @Slot(str)
+    def approveAuthorization(self,key):
+        if not self.fixture:self.run('authorization',lambda:call(self.state,'control.approve_authorization',(key,),owner=True,timeout=90))
+    @Slot()
+    def importPersona(self):
+        if self.fixture:return
+        path,_=QFileDialog.getOpenFileName(None,'导入助理人设','', '文本 (*.txt *.md)')
+        if not path:return
+        source=Path(path)
+        try:
+            if source.is_symlink() or source.stat().st_size>12000:
+                self._notice='人设文件应为 12KB 以内的纯文本。';self.noticeChanged.emit();return
+            self._assistant['persona']=source.read_text(encoding='utf8')
+        except (UnicodeError,OSError):
+            self._notice='无法读取此人设文件，请选择 UTF-8 纯文本。';self.noticeChanged.emit();return
+        self.assistantChanged.emit()
+
     @Property('QVariantMap',notify=changed)
     def data(self):return self._data
     @Property('QVariantMap',notify=detailChanged)
@@ -45,7 +83,7 @@ class Controller(QObject):
     def run(self,name,fn):
         if name in self.inflight:return
         self.inflight.add(name)
-        self._data['loading']=True;self.changed.emit()
+        self._data['loading']=True;self._data['automatic_pending']='automatic' in self.inflight;self.changed.emit()
         def work():
             try:value=fn();error=None
             except Exception as exc:value=None;error=str(exc) if isinstance(exc,AXRError) else '操作未完成，请检查本地服务。'
@@ -54,12 +92,17 @@ class Controller(QObject):
     @Slot(object)
     def accept(self,result):
         self.inflight.discard(result['name'])
-        self._data['loading']=bool(self.inflight)
+        self._data['loading']=bool(self.inflight);self._data['automatic_pending']='automatic' in self.inflight
         if result['error']:
             self._notice={'owner_secret_not_provisioned':'需要完成本机所有者初始化。',
                 'owner_state_unavailable':'需要完成本机授权。','local_broker_unavailable':'本地服务未连接，请启动后重试。',
                 'account_or_journal_busy':'执行服务正被使用，请先完成服务交接。',
                 'send_backend_not_qualified':'当前平台暂不支持自动发送。',
+                'automatic_reply_helper_required':'请更新本地服务以启用自动回复。',
+                'automatic_reply_scope_invalid':'请选择至少两个已绑定私聊，或全部可用私聊。',
+                'automatic_reply_already_active':'自动回复已经开启，请先停止当前会话。',
+                'unlimited_requires_bound_codex_thread':'请先选择并保存固定 Codex 对话，再开启不限模式。',
+                'stop_automatic_before_settings_change':'请先停止自动回复，再更改助理偏好。',
                 'authority_missing_expired_revoked_or_exhausted':'当前操作需要授权，或原授权已到期。',
                 'owner_os_authentication_failed':'系统身份认证未完成，本次操作未获准。',
                 'owner_policy_changed_restart_required':'权限配置已更新，请重新连接本地服务。'}.get(result['error'],'操作未完成，请核对授权与本地服务。')
@@ -77,12 +120,17 @@ class Controller(QObject):
             self.changed.emit()
             return
         value=result['value'];name=result['name']
+        if name=='assistant_load':
+            self._assistant=value;self.assistantChanged.emit();return
+        if name in ('threads','threads_more'):
+            self._threads=(self._threads if name=='threads_more' else [])+value['threads'];self._threads_cursor=value.get('next_cursor');self.threadsChanged.emit();return
+        if name=='assistant_save':self.loadAssistant()
         if name=='stop':
             self._manual={};self._preview={};self.manualChanged.emit();self.detailChanged.emit()
         if name=='install':self.changed.emit()
         if name=='refresh':
             self._data=value;self._data.update(connected=True,loading=bool(self.inflight),last_sync=time.strftime('%H:%M:%S'),
-                worker_state='running' if self.worker_process is not None and self.worker_process.poll() is None else 'stopped')
+                automatic_pending='automatic' in self.inflight,worker_state='running' if self.worker_process is not None and self.worker_process.poll() is None else 'stopped')
             if self._manual and (self._manual.get('expires',0)<=time.time() or
                     not any(d['job_id']==self._manual.get('job_id') for d in value.get('drafts',[]))):
                 self._manual={};self.manualChanged.emit()
@@ -107,6 +155,9 @@ class Controller(QObject):
         self._notice={'refresh':'已同步。','approve':'已批准这一次操作。',
             'stop':'已撤销授权并停止监听。','install':'Codex MCP 配置已安装；权限仍由你单独授予。',
             'restore':'已恢复安装前的 Codex 设置。','start':'本地服务已启动。','execute':'请查看处理结果。','agent':'助理已启动，等待授权范围内的新任务。','grant':'已授权此会话的本地读取，有效期 15 分钟。','cache':'文件目录已更新，请重新授权。',
+            'automatic':'自动回复已开启。微信需要保持登录且可见。','automatic_stop':'自动回复已停止，当前发送权限已撤销。',
+            'assistant_save':'助理偏好已保存，下次开启服务时生效。','hooks':'连接事件已配置，请在 Codex 的 /hooks 审核并信任。',
+            'authorization':'目标授权已更新，可以继续原任务。',
             'copy_draft':'已复制，请核对微信目标后由你发送。','manual_draft':'请核对收件人与回复内容。'}.get(name,'操作已完成。')
         self.noticeChanged.emit()
     @Slot()
@@ -144,7 +195,10 @@ class Controller(QObject):
             except Exception:pass
             if self.broker_process is not None and self.broker_process.poll() is None:raise AXRError('broker_start_pending')
             cmd=[sys.executable,'-m','axr_integration.broker','--state',str(Path(self.state).resolve()),'--listener']
-            if self.helper:cmd+=['--helper',str(Path(self.helper).resolve())]
+            if self.helper:
+                cmd+=['--helper',str(Path(self.helper).resolve())]
+                chat=Path(self.helper).resolve().parent.parent/'wechat-chat-navigation-experimental'
+                if chat.is_file():cmd+=['--chat-helper',str(chat)]
             self.broker_process=subprocess.Popen(cmd,cwd=str(Path(__file__).resolve().parent.parent),stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             for _ in range(60):
@@ -190,6 +244,14 @@ class Controller(QObject):
     def stop(self):
         if self.fixture:return
         self.run('stop',lambda:call(self.state,'control.revoke_all',owner=True))
+    @Slot('QVariantList',int,int)
+    def startAutomatic(self,targets,minutes,replies):
+        if self.fixture:return
+        self.run('automatic',lambda:call(self.state,'control.start_automatic',(list(targets),minutes*60,replies),owner=True,timeout=90))
+    @Slot()
+    def stopAutomatic(self):
+        if self.fixture:return
+        self.run('automatic_stop',lambda:call(self.state,'control.stop_automatic',owner=True))
     @Slot()
     def startAgent(self):
         if self.fixture:return

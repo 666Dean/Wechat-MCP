@@ -109,3 +109,29 @@ class DesktopUI(unittest.TestCase):
             c._manual={'job_id':'synthetic','text':'Synthetic private draft','expires':time.time()+60}
             c.accept({'name':'refresh','value':None,'error':'local_broker_unavailable'});self.assertFalse(c.manual)
         finally:self.dispose(c,e,w)
+
+    def test_automatic_settings_scopes_and_stop_remain_accessible_during_auth(self):
+        from unittest.mock import patch
+        c,e,w=self.create();c.timer.stop()
+        try:
+            c._data.update(connected=True,scope='work_and_daily_assistance',status={'automatic_reply':{'active':False,'supported':True}},
+                conversations=[{'conversation_id':'peer','display_name':'项目讨论 · Product & Design'},
+                               {'conversation_id':'self','display_name':'本人'}])
+            c.changed.emit();w.setProperty('page',6);QTest.qWait(40)
+            self.assertIsNotNone(self.visual(w,'autoDuration'))
+            start=self.visual(w,'autoStart');stop=self.visual(w,'autoStop')
+            self.assertFalse(start.isEnabled());self.assertFalse(stop.isEnabled())
+            w.setProperty('autoTargets',['peer','self']);QTest.qWait(20)
+            self.assertEqual(start.isEnabled(),os.sys.platform=='darwin')
+            c._data['automatic_pending']=True;c.changed.emit();QTest.qWait(20)
+            self.assertTrue(stop.isEnabled());c.fixture=False
+            with patch.object(c,'run') as run:
+                stop.forceActiveFocus();QTest.keyClick(w,Qt.Key_Return);QTest.qWait(20)
+                self.assertEqual(run.call_args.args[0],'automatic_stop')
+            c.fixture=True
+            c._data['status']={'automatic_reply':{'active':True,'targets':['peer','self'],'expires':None,'remaining':None}}
+            c.changed.emit();QTest.qWait(20)
+            self.assertFalse(self.visual(w,'autoDuration').isVisible())
+            self.assertFalse(self.visual(w,'autoReplyLimit').isVisible())
+            self.assertTrue(stop.isEnabled());self.assertFalse(start.isEnabled())
+        finally:self.dispose(c,e,w)

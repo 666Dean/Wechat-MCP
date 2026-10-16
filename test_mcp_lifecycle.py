@@ -66,7 +66,7 @@ class DeferredProtocol(unittest.IsolatedAsyncioTestCase):
             root=Path(tmp)
             async with asyncio.timeout(30),AsyncExitStack() as b_stack,AsyncExitStack() as a_stack:
                 b=await self.connect(b_stack,root);a=await self.connect(a_stack,root)
-                self.assertEqual(len((await a.list_tools()).tools),26)
+                self.assertEqual(len((await a.list_tools()).tools),29)
                 self.assertEqual((await self.call(a,'wechat_status'))['initialization']['state'],'idle')
                 self.assertEqual((await self.call(b,'wechat_status'))['initialization']['state'],'idle')
                 await self.call(a,'wechat_find_conversations')
@@ -92,7 +92,7 @@ class DeferredProtocol(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             async with asyncio.timeout(20),AsyncExitStack() as stack:
                 c=await self.connect(stack,Path(tmp),True)
-                self.assertEqual(len((await c.list_tools()).tools),26)
+                self.assertEqual(len((await c.list_tools()).tools),29)
                 failed=await c.call_tool('wechat_find_conversations',{})
                 self.assertTrue(failed.is_error)
                 status=await self.call(c,'wechat_status')

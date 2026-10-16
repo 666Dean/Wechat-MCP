@@ -8,6 +8,24 @@ from scripts import run_codex_manual as worker
 
 
 class CodexManualWorker(unittest.TestCase):
+    def test_automatic_worker_requires_shared_broker_and_has_no_issuer_tools(self):
+        with self.assertRaisesRegex(ValueError,'requires_broker'):
+            worker.run(Path('/fixture'),Path('/state'),60,automatic=True)
+        with patch.object(worker.shutil,'which',return_value='codex'):
+            args=worker.command(Path('/fixture'),Path('/state'),60,broker=True,automatic=True)
+        settings=[args[i+1] for i,v in enumerate(args) if v=='-c']
+        server_args=json.loads(next(v.split('=',1)[1] for v in settings if v.startswith('mcp_servers.wechat_axr.args=')))
+        self.assertIn('--broker',server_args);self.assertNotIn('--listener',server_args)
+        self.assertFalse(any('owner' in t or 'send' in t or 'execute' in t for t in worker.TOOLS))
+
+    def test_bound_thread_uses_persistent_resume_without_composer_or_ephemeral_fork(self):
+        identity='00000000-0000-4000-8000-000000000001'
+        with patch.object(worker.shutil,'which',return_value='codex'):
+            args=worker.command(Path('/fixture'),Path('/state'),300,broker=True,automatic=True,thread_id=identity)
+        self.assertEqual(args[-3:],['resume',identity,'-']);self.assertNotIn('--ephemeral',args)
+        self.assertIn('--ignore-user-config',args)
+        with self.assertRaises(ValueError):worker.command(Path('/fixture'),Path('/state'),300,thread_id=identity)
+
     def test_overview_cannot_enable_manual_reply_worker(self):
         with self.assertRaisesRegex(ValueError,'requires_review'):
             worker.run(Path('/fixture'),Path('/state'),60,overview=True)

@@ -25,6 +25,14 @@ ApplicationWindow {
     property var platform: status.platform || ({})
     property bool previewMode: window.backend.scope === "synthetic_preview"
     property bool connected: window.backend.connected === true && !previewMode
+    property var autoReply: status.automatic_reply || ({active:false})
+    property var autoTargets: []
+    property bool autoAll: false
+    property var authorizationRequest: ({})
+    property string assistantThread: ""
+    onPageChanged: { if(page===6)owner.loadAssistant() }
+    property int autoMinutes: 15
+    property int autoReplies: 4
     property var drafts: window.backend.drafts || []
     property var jobs: window.backend.jobs || []
     property var pending: jobs.filter(function(j){return ["Ready","AwaitingApproval","Executing","Prepared","Verifying"].indexOf(j.state)>=0 && j.expires*1000>Date.now()})
@@ -175,7 +183,7 @@ ApplicationWindow {
                                 Icon { name: window.previewMode ? "info" : window.connected ? "check" : "plug"; ink: window.previewMode ? Theme.warning : window.connected ? Theme.positive : Theme.muted; width: 24; height: 24 }
                                 ColumnLayout { Layout.fillWidth: true; spacing: 9
                                     Copy { Layout.fillWidth: true; text: window.previewMode ? "演示模式 · 未连接真实微信数据" : window.connected ? "本地服务已连接" : "连接你的本地工作台"; font.pixelSize: 17; font.weight: Font.DemiBold }
-                                    Caption { Layout.fillWidth: true; text: window.previewMode ? "以下仅为界面预览，真实数据与授权操作已停用。" : (window.listener.listen ? "消息监听已请求" : "消息监听已关闭") + " · " + (window.sendAvailable ? "自动发送需精确授权" : "当前平台暂不支持自动发送") }
+                                    Caption { Layout.fillWidth: true; text: window.previewMode ? "以下仅为界面预览，真实数据与授权操作已停用。" : (window.listener.listen ? "消息监听已请求" : "消息监听已关闭") + " · " + (window.autoReply.active ? "自动回复已开启" : window.autoReply.supported ? "自动回复未开启" : "当前平台暂不支持自动发送") }
                                 }
                                 ButtonX { text: window.connected ? "连接设置" : "启动本地服务"; primary: true; enabled: !window.previewMode; onClicked: window.connected ? window.page=6 : owner.start() }
                             }
@@ -263,7 +271,7 @@ ButtonX { text: "查看消息任务"; onClicked: window.page=2 } }
                     ColumnLayout { id: messagePage; width: parent.width; height: implicitHeight; spacing: Theme.gap
                         Panel { Layout.fillWidth: true; implicitHeight: 80
                             RowLayout { anchors.fill: parent; anchors.margins: 22; Icon { name: "message"; ink: Theme.positive }
-                                Copy { Layout.fillWidth: true; text: window.sendAvailable ? "自动回复需要单独授权" : "自动发送暂不可用"; font.weight: Font.Medium }
+                                Copy { Layout.fillWidth: true; text: window.autoReply.active ? "自动回复已开启" : window.autoReply.supported ? "可在设置中授权自动回复" : "自动发送暂不可用"; font.weight: Font.Medium }
                                 ButtonX { text: "人工回复"; onClicked: window.page=7 }
                             }
                         }
@@ -315,7 +323,7 @@ Copy { text: window.permitted(modelData.conversation_id,"messages.read") ? "已�
                                     ColumnLayout { Layout.fillWidth: true; spacing: 6; Caption { text: "发送给模型分析" }
 Copy { text: window.permitted(modelData.conversation_id,"disclosure.send") ? "本次已批准" : "使用前确认" } }
                                     ColumnLayout { Layout.fillWidth: true; spacing: 6; Caption { text: "自动发送消息" }
-Copy { text: window.sendAvailable ? "需独立精确授权" : "当前平台暂不支持"; color: Theme.muted } }
+Copy { text: window.autoReply.active ? "已按所选范围授权" : window.autoReply.supported ? "尚未授权" : "当前平台暂不支持"; color: Theme.muted } }
                                 }
                                 Repeater { model: grants; delegate: Caption { required property var modelData; Layout.fillWidth: true
                                     text: "截止 " + window.timeLabel(modelData.expires) + " · 剩余 " + modelData.remaining + " 次 · " + (modelData.exact_intent ? "仅本次操作" : "本机访问") + " · 使用方：" + (modelData.destinations.length ? modelData.destinations.map(window.destinationLabel).join("、") : "仅本机")
@@ -368,6 +376,73 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                 PageScroll {
                     contentHeight: settingsPage.implicitHeight
                     ColumnLayout { id: settingsPage; width: parent.width; height: implicitHeight; spacing: Theme.gap
+                        Panel { Layout.fillWidth: true; implicitHeight: autoRows.implicitHeight+40
+                            ColumnLayout { id: autoRows; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 20; spacing: 14
+                                Copy { text: "自动回复"; font.pixelSize: 18; font.weight: Font.Medium }
+                                Caption { Layout.fillWidth: true; text: window.autoReply.active ? "已开启 · " + (window.autoReply.expires ? "有效至 " + window.timeLabel(window.autoReply.expires) : "不限时长，直至停止") + " · 剩余 " + (window.autoReply.remaining===null ? "不限" : window.autoReply.remaining) + " 次" : "允许 Codex 阅读范围内的新消息、生成回复并发送。发送时微信会置前。" }
+                                Caption { Layout.fillWidth: true; visible: window.autoReply.active; text: "范围：已授权 " + (window.autoReply.targets || []).length + " 个私聊，可在权限管理查看。" }
+                                CheckBox { visible: !window.autoReply.active; text: "全部可用私聊（含后续核验的新会话）"; checked: window.autoAll; enabled: !window.autoReply.active; onToggled: window.autoAll=checked }
+                                TextField { id: targetSearch; visible: !window.autoAll && !window.autoReply.active; Layout.fillWidth: true; placeholderText: "搜索授权对象"; enabled: !window.autoReply.active }
+                                Flow { Layout.fillWidth: true; spacing: 8; visible: !window.autoAll
+                                    Repeater { model: (window.backend.conversations || []).filter(function(c){return c.display_name.indexOf(targetSearch.text)>=0}).slice(0,40)
+                                        CheckBox { text: modelData.display_name; enabled: !window.autoReply.active && !window.previewMode
+                                            checked: window.autoTargets.indexOf(modelData.conversation_id)>=0
+                                            Accessible.name: "自动回复范围：" + text
+                                            onToggled: { var ids=window.autoTargets.slice(); var at=ids.indexOf(modelData.conversation_id); if(checked && at<0)ids.push(modelData.conversation_id); if(!checked && at>=0)ids.splice(at,1); window.autoTargets=ids }
+                                        }
+                                    }
+                                }
+                                RowLayout { Layout.fillWidth: true; spacing: 12
+                                    Caption { visible: !window.autoReply.active; text: "有效时长" }
+                                    ComboBox { objectName: "autoDuration"; visible: !window.autoReply.active; model: ["5 分钟", "15 分钟", "30 分钟", "60 分钟", "不限时长"]; currentIndex: 1; enabled: !window.autoReply.active; onActivated: window.autoMinutes=[5,15,30,60,0][currentIndex]; Accessible.name: "自动回复有效时长" }
+                                    Caption { visible: !window.autoReply.active; text: "最多回复" }
+                                    SpinBox { objectName: "autoReplyLimit"; visible: !window.autoReply.active; from: 0; to: 1000000; value: 4; textFromValue: function(value,locale){return value===0 ? "不限" : value.toString()}; enabled: !window.autoReply.active; onValueModified: window.autoReplies=value; Accessible.name: "最多自动回复次数" }
+                                    Item { Layout.fillWidth: true }
+                                    ButtonX { objectName: "autoStart"; text: "授权并开启"; primary: true; enabled: window.connected && window.autoReply.supported === true && !window.autoReply.active && (window.autoAll || window.autoTargets.length>=2) && Qt.platform.os === "osx"; onClicked: autoDialog.open() }
+                                    ButtonX { objectName: "autoStop"; text: "停止自动回复"; danger: true; enabled: window.connected && (window.autoReply.active || window.backend.automatic_pending === true || (window.backend.automatic_worker || {}).running === true); onClicked: owner.stopAutomatic() }
+                                }
+                                Caption { Layout.fillWidth: true; text: "仅回复开启后的入站文字。次数填 0 表示不限；不确定的发送不会重发。Codex 忙时只排队索引，正文按需重读。停止、到期或退出服务后撤权。" }
+                            }
+                        }
+                        Panel { Layout.fillWidth: true; implicitHeight: assistantRows.implicitHeight+40
+                            ColumnLayout { id: assistantRows; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 20; spacing: 12
+                                Copy { text: "你的 Codex 助理"; font.pixelSize: 18; font.weight: Font.Medium }
+                                Caption { Layout.fillWidth: true; text: "所有触发留在同一个 Codex 对话。正在执行用户任务时排队，结束后再处理。" }
+                                RowLayout { Layout.fillWidth: true
+                                    ComboBox { id: threadChoice; enabled: !window.autoReply.active; Layout.fillWidth: true; model: owner.codexThreads; textRole: "title"; valueRole: "id"; Accessible.name: "绑定的 Codex 对话"; onActivated: window.assistantThread=currentValue }
+                                    ButtonX { text: "选择对话"; enabled: window.connected && !window.autoReply.active; onClicked: owner.loadThreads() }
+                                    ButtonX { text: "更多对话"; enabled: window.connected && !window.autoReply.active; onClicked: owner.loadMoreThreads() }
+                                }
+                                Caption { Layout.fillWidth: true; text: "已绑定：" + ((owner.assistant || {}).thread_title || "未选择") + " · " + ((window.backend.thread_binding || {}).state==="busy" ? "当前任务进行中，微信任务排队" : (window.backend.thread_binding || {}).hooks_observed ? "已连接生命周期" : "等待 Codex 连接事件") }
+                                RowLayout { Layout.fillWidth: true
+                                    ButtonX { text: "配置对话连接"; enabled: window.connected && !window.autoReply.active; onClicked: owner.installHooks() }
+                                    Caption { Layout.fillWidth: true; text: "首次配置后在 Codex 的 /hooks 审核。不会模拟快捷键或改写输入框。" }
+                                }
+                                Caption { text: "人设" }
+                                ScrollView { Layout.fillWidth: true; Layout.preferredHeight: 110
+                                    TextArea { id: personaInput; text: (owner.assistant || {}).persona || ""; placeholderText: "助理的身份、沟通偏好与工作背景"; wrapMode: TextEdit.Wrap; color: Theme.ink; background: Rectangle { color: Theme.canvas; radius: 9 } }
+                                }
+                                Caption { text: "回复风格" }
+                                TextField { id: styleInput; Layout.fillWidth: true; text: (owner.assistant || {}).style || ""; placeholderText: "例如：自然简短，先回答问题，再列待办" }
+                                CheckBox { id: attributionChoice; text: "在回复中显示 AI 署名"; checked: (owner.assistant || {}).attribution !== false }
+                                RowLayout { Layout.fillWidth: true
+                                    ButtonX { text: "导入人设"; enabled: !window.autoReply.active; onClicked: owner.importPersona() }
+                                    Item { Layout.fillWidth: true }
+                                    ButtonX { text: "保存助理偏好"; primary: true; enabled: window.connected && !window.autoReply.active; onClicked: owner.saveAssistant({thread_id:window.assistantThread || (owner.assistant || {}).thread_id || "",thread_title:window.assistantThread ? threadChoice.currentText : (owner.assistant || {}).thread_title || "",persona:personaInput.text,style:styleInput.text,attribution:attributionChoice.checked}) }
+                                }
+                            }
+                        }
+                        Panel { Layout.fillWidth: true; visible: (window.backend.authorization_requests || []).some(function(r){return r.state==="AwaitingOwner"}); implicitHeight: requestRows.implicitHeight+40
+                            ColumnLayout { id: requestRows; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 20; spacing: 12
+                                Copy { text: "待授权请求"; font.pixelSize: 18; font.weight: Font.Medium }
+                                Repeater { model: (window.backend.authorization_requests || []).filter(function(r){return r.state==="AwaitingOwner"})
+                                    RowLayout { required property var modelData; Layout.fillWidth: true
+                                        ColumnLayout { Layout.fillWidth: true; Copy { text: modelData.target } Caption { Layout.fillWidth: true; text: modelData.reason } }
+                                        ButtonX { text: "查看并授权"; onClicked: {window.authorizationRequest=modelData;authorizationDialog.open()} }
+                                    }
+                                }
+                            }
+                        }
                         Panel { Layout.fillWidth: true; implicitHeight: settingRows.implicitHeight+40
                             ColumnLayout { id: settingRows; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 20; spacing: 20
                                 RowLayout { Layout.fillWidth: true; spacing: 16
@@ -478,7 +553,15 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                 PageScroll {
                     objectName: "approvalPage"; contentHeight: approvalContent.implicitHeight
                     ColumnLayout { id: approvalContent; width: parent.width; height: implicitHeight; spacing: 12
-                        Empty { Layout.fillWidth: true; visible: !window.approvals.length; heading: "暂无待授权操作"; explanation: "需要你批准的内容访问或回复会单独显示。"; symbol: "shield" }
+                        Empty { Layout.fillWidth: true; visible: !window.approvals.length && !(window.backend.authorization_requests || []).some(function(r){return r.state==="AwaitingOwner"}); heading: "暂无待授权操作"; explanation: "需要你批准的内容访问或回复会单独显示。"; symbol: "shield" }
+                        Repeater { model: (window.backend.authorization_requests || []).filter(function(r){return r.state==="AwaitingOwner"})
+                            Panel { required property var modelData; Layout.fillWidth: true; implicitHeight: 100
+                                RowLayout { anchors.fill: parent; anchors.margins: 20
+                                    ColumnLayout { Layout.fillWidth: true; Copy { text: modelData.target; font.weight: Font.Medium } Caption { Layout.fillWidth: true; text: modelData.reason } }
+                                    ButtonX { text: "查看并授权"; onClicked: {window.authorizationRequest=modelData;authorizationDialog.open()} }
+                                }
+                            }
+                        }
                         Repeater { model: window.approvals; delegate: JobRow { required property var modelData; Layout.fillWidth: true; job: modelData } }
                     }
                 }
@@ -538,6 +621,14 @@ ButtonX { text: "系统认证并批准"; primary: true; enabled: !window.preview
             Caption { Layout.fillWidth: true; color: Theme.warning; text: "不授予模型披露或微信发送。确认后需完成系统身份认证。" }
         }
         onAccepted: owner.grantLocal(window.selectedConversation)
+    }
+    Dialog { id: authorizationDialog; anchors.centerIn: parent; width: Math.min(520,window.width-60); modal: true; title: "授权指定联系人"; standardButtons: Dialog.Cancel | Dialog.Ok
+        contentItem: Copy { text: "目标：" + (window.authorizationRequest.target || "") + "\n用途：" + (window.authorizationRequest.reason || "") + "\n\n允许本地读取与草稿；自动回复会话运行时，将该目标加入当前回复范围并允许向 Codex 披露及回复。将通过本机系统认证和唯一身份核对，聊天消息不能自行授予权限。" }
+        onAccepted: owner.approveAuthorization(window.authorizationRequest.id)
+    }
+    Dialog { id: autoDialog; anchors.centerIn: parent; width: Math.min(560,window.width-60); modal: true; title: "确认自动回复授权"; standardButtons: Dialog.Cancel | Dialog.Ok
+        contentItem: Copy { text: "目标：" + (window.autoAll ? "当前账号全部可用私聊及后续新核验的私聊；排除群、公众号、系统会话" : window.autoTargets.map(window.targetName).join("、")) + "\n时长：" + (window.autoMinutes ? window.autoMinutes + " 分钟" : "不限时长，直到停止") + "，回复：" + (window.autoReplies ? "最多 " + window.autoReplies + " 次" : "不限次数") + "。\n\n允许把所选私聊的新消息发给 Codex 生成回复，再自动发送到原私聊。发送时微信会置前；请勿同时操作输入区。已有草稿或身份核对失败会停止。\n\n接下来需要本机系统身份认证，单次原生提交凭据保持短期；不限会话只在当前服务中续发，停止立即撤权。" }
+        onAccepted: owner.startAutomatic(window.autoAll ? ["*"] : window.autoTargets,window.autoMinutes,window.autoReplies)
     }
     Dialog { id: cacheDialog; anchors.centerIn: parent; width: 540; modal: true; title: "设置本地缓存范围"; standardButtons: Dialog.Cancel | Dialog.Ok
         background: Rectangle { radius: 14; color: Theme.surface; border.color: Theme.border }

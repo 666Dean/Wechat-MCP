@@ -102,15 +102,19 @@ still require a qualified backend and exact authority; the default broker reject
 all sends. `--allow-approved-sends` permits approval-based operation only and is
 **not permission to send arbitrary messages or evidence of a working backend**.
 
-Current original macOS WeChat still exposes no qualified chat/input identity
-path. Real automatic personal-account sending is **not passed**. No blind typing,
-client modification, process injection, privacy bypass or substituted bot identity
-is used. Synthetic submit/unknown/replay tests are distinguished from hardware.
-
+macOS now provides an OS-authorized automatic-reply session through the same
+MCP Broker. Settings select targets or all qualified private conversations,
+duration/count (including unlimited), the bound Codex conversation, persona/style
+and AI attribution. Trusted lifecycle hooks queue work during a busy user turn;
+an idle handoff uses official `codex exec resume`, never composer automation.
+The independent manual panel remains available. See [Automatic replies](AUTOMATIC_REPLY.md)
+for setup, authority, exact-input checks and the real two-message acceptance.
+Restart never restores the owner session. Windows automatic sending and long-term
+same-thread operation are not hardware-qualified by these tests.
 
 ## Gen1 UI system and validation
 
-Seven pages share Qt Quick color, typography, spacing, radius and line-icon
+Ten views share Qt Quick color, typography, spacing, radius and line-icon
 components. The workbench places connection status, pending tasks and recent
 activity ahead of technical diagnostics. Empty states are compact, long labels
 wrap/elide, and the 32-pixel status bar has its own layout space. Light/dark themes
@@ -123,7 +127,7 @@ permission are distinct. The permission page shows resource-specific access,
 model disclosure, expiry, remaining uses and destination; exact intent review shows
 human-readable target/body before OS authentication, with technical details separate.
 
-Qt tests render all seven pages in both themes at 1280×800, 1440×900 and
+Qt tests render all ten views in both themes at 1280×800, 1440×900 and
 1920×1080; they check footer separation, long bilingual names, empty/loading/error
 states and real keyboard activation. 125% and 150% scaling are **render simulations**;
 macOS Retina screenshots were inspected separately. These do not substitute for

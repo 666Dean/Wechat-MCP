@@ -29,7 +29,7 @@ class DesktopBroker(unittest.TestCase):
                 self.assertEqual(a.conversations()['calls'],1)
                 self.assertEqual(b.conversations()['calls'],2)
                 self.assertEqual(a.status()['calls'],2)
-                for method in ['control.approve','control.revoke_all','control.grant_local','control.configure_cache','close','_active','guard']:
+                for method in ['control.approve','control.revoke_all','control.grant_local','control.configure_cache','control.start_automatic','control.stop_automatic','close','_active','guard']:
                     with self.assertRaises(AXRError):call(tmp,method)
                 self.assertEqual(service.calls,2)
                 with self.assertRaises(AXRError):Broker(tmp,service=Fixture())
