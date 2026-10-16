@@ -64,3 +64,19 @@ class RootedWindows(unittest.TestCase):
                 with self.assertRaises(AXRError):directory.read('link/memo.txt',1024)
             finally:directory.close()
             self.assertEqual((outside/'memo.txt').read_text(),'private')
+
+class UpgradeLease(unittest.TestCase):
+    def test_upgrade_never_opens_or_migrates_a_live_executor_store(self):
+        from unittest.mock import patch
+        from axr.owner import upgrade_store
+        from axr.host import Lease
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory).resolve()
+            with Lease(Path.home()/'.stellaria-axr'/'leases',['journal',str(path)]):
+                with patch('axr.owner.OwnerStore') as factory:
+                    with self.assertRaisesRegex(AXRError,'account_or_journal_busy'):
+                        with upgrade_store(path):self.fail('live journal was opened')
+                    factory.assert_not_called()
+            with patch('axr.owner.OwnerStore') as factory:
+                with upgrade_store(path) as store:self.assertIs(store,factory.return_value)
+                factory.return_value.close.assert_called_once()

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Package qualified Windows build products only; no owner state or configuration."""
+"""Package CI-tested Windows reference products only; no owner state or configuration."""
 import argparse
 import hashlib
 import json
@@ -45,7 +45,8 @@ def package(wheels, build, dependencies, output, revision, repository):
         files[relative.as_posix()] = hashlib.sha256(target.read_bytes()).hexdigest()
     manifest = {'version':1, 'platform':'windows-x64', 'python':'3.12', 'revision':revision,
                 'source':'https://github.com/' + repository + '/tree/' + revision,
-                'files':files, 'owner_state_included':False, 'configuration_included':False}
+                'files':files, 'security_profile':'reference', 'security2_release_qualified':False,
+                'owner_state_included':False, 'configuration_included':False}
     (output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf8')
     return manifest
 

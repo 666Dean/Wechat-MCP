@@ -157,6 +157,7 @@ class AuthorityTransport(AuthorityTests):
             script='''import sys,json
 from axr.authority_server import AuthorityClient
 from axr.aet import AXRError
+print('fixture-ready',flush=True)
 v=json.loads(sys.stdin.readline());client=AuthorityClient.connect(v['endpoint'],v['server'])
 r=client.request('Access',capability=v['capability'],action=v['action'])
 try:client.request('Authorize',phase='review',contract=v['contract']);owner=False
@@ -165,6 +166,9 @@ print(json.dumps({'decision':r['decision'],'owner_denied':owner}));client.close(
 '''
             child=subprocess.Popen([sys.executable,'-c',script],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
             try:
+                import select
+                self.assertTrue(select.select([child.stdout],[],[],10)[0],'child did not reach trusted bootstrap')
+                self.assertEqual(child.stdout.readline().strip(),'fixture-ready')
                 actual=process_identity(child.pid);registry.enroll(actual,'client','agent',lambda:registry.user)
                 data={'endpoint':endpoint,'server':process_identity(os.getpid()),'capability':cap,'action':asdict(self.a),'contract':self.c.body()}
                 output,error=child.communicate(json.dumps(data)+'\n',timeout=10)

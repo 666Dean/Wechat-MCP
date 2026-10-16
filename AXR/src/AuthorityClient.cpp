@@ -63,7 +63,7 @@ std::filesystem::path InstalledAuthority(){Denied();}
 unsigned long Self(){Denied();}
 #endif
 void ValidateServer(const Json& actual){
-    auto image=std::filesystem::u8path(actual.at("image").get<std::string>());
+    auto image=Utf8Path(actual.at("image").get<std::string>());
     if(image!=InstalledAuthority())Denied();Protected(image);
 #if defined(__APPLE__)
     if(actual.at("signature_valid")!=true||actual.at("hardened_runtime")!=true||actual.at("signing_id")!="org.stellaria.axr.authority")Denied();
@@ -141,7 +141,7 @@ public:
             if(connect(handle_,reinterpret_cast<sockaddr*>(&address),sizeof(address)))Denied();
 #elif defined(_WIN32)
             if(!endpoint.starts_with("\\\\.\\pipe\\Stellaria.AXR.")||endpoint.size()>256)Denied();
-            auto path=std::filesystem::u8path(endpoint);if(!WaitNamedPipeW(path.c_str(),5000))Denied();
+            auto path=Utf8Path(endpoint);if(!WaitNamedPipeW(path.c_str(),5000))Denied();
             handle_=CreateFileW(path.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,FILE_FLAG_OVERLAPPED|SECURITY_SQOS_PRESENT|SECURITY_IDENTIFICATION,nullptr);if(handle_==INVALID_HANDLE_VALUE)Denied();
             DWORD mode=PIPE_READMODE_MESSAGE;if(!SetNamedPipeHandleState(handle_,&mode,nullptr,nullptr))Denied();
 #else

@@ -37,6 +37,17 @@ class StaticContent(unittest.TestCase):
             result=extract_safe_text(b'fixture commands are text',name)
             self.assertEqual(result['content_kind'],'code-as-data');self.assertFalse(result['execution_allowed'])
 
+class RuntimeLayout(unittest.TestCase):
+    def test_framework_uses_real_interpreter_and_pins_its_linked_library(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            base=Path(directory).resolve();launcher=base/'bin/python';library=base/'Python';binary=base/'Resources/Python.app/Contents/MacOS/Python'
+            for path in (launcher,library,binary):path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b'synthetic runtime')
+            with patch.object(sys,'executable',str(launcher)),patch.object(sys,'base_prefix',str(base)),patch('axr.quarantine.sysconfig.get_config_var',return_value='Python'):
+                executable,roots,pins=ContentQuarantine._mac_runtime()
+            self.assertEqual(executable,binary);self.assertIn(str(library),roots);self.assertIn(library,pins);self.assertIn(binary,pins)
+            self.assertNotIn(str(base),roots)
+
 class IsolatedContent(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory(prefix='AXR 隔离 fixture ');self.addCleanup(self.tmp.cleanup)

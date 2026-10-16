@@ -77,7 +77,7 @@ int Serve(bool initialize=false){
     if(identity.at("signature_valid")!=true)throw std::runtime_error("authority_installed_identity_required");
 #endif
     if(stopRequested)return 0;
-    auto exe=std::filesystem::u8path(identity.at("image").get<std::string>());
+    auto exe=Utf8Path(identity.at("image").get<std::string>());
 #if defined(__APPLE__)
     auto root=exe.parent_path().parent_path()/"Resources";
 #else

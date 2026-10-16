@@ -117,7 +117,7 @@ bool VerifyCommitPermit(const Json& envelope,std::string_view key,std::string_vi
         std::string signature;for(std::size_t i=0;i<hex.size();i+=2)signature.push_back(char(std::stoi(hex.substr(i,2),nullptr,16)));
         if(!VerifyRootSignature(key,b.dump(),signature))return false;
         return b.size()==10&&b.at("version")==2&&b.at("kind")=="commit-permit"&&
-            b.at("root_id")==root&&b.at("epoch")==epoch&&b.at("nonce")==nonce&&b.at("seal")==seal&&
+            b.at("root_id").get<std::string>()==root&&b.at("epoch").get<std::string>()==epoch&&b.at("nonce").get<std::string>()==nonce&&b.at("seal").get<std::string>()==seal&&
             b.at("helper")==Digest(helper.dump())&&b.at("helper_pid")==helper.at("pid")&&
             b.at("helper_birth")==helper.at("birth")&&Number(b.at("expires"))&&
             b.at("expires").get<double>()>now&&b.at("expires").get<double>()-now<=5;

@@ -11,6 +11,7 @@
 
 namespace Stellaria::AXR {
 using Json = nlohmann::json;
+inline std::filesystem::path Utf8Path(std::string_view text){return std::filesystem::path(std::u8string(text.begin(),text.end()));}
 Json ParseBounded(std::string_view encoded);
 inline constexpr std::size_t MaximumFrameBytes = 1024*1024;
 inline constexpr unsigned ProtocolVersion = 1;

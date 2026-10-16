@@ -28,6 +28,8 @@ class RuntimePackageTests(unittest.TestCase):
         (self.build / 'owner.db').write_bytes(b'synthetic private state')
         (self.wheels / 'policy.sealed.json').write_bytes(b'synthetic private configuration')
         manifest = self.pack()
+        self.assertEqual(manifest['security_profile'],'reference')
+        self.assertFalse(manifest['security2_release_qualified'])
         self.assertFalse(manifest['owner_state_included'])
         self.assertFalse(manifest['configuration_included'])
         self.assertNotIn('owner.db', manifest['files'])

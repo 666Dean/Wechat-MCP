@@ -45,7 +45,7 @@ bool WorkerSupervisor::Start(const std::filesystem::path& executable,const std::
     Stop();impl_->state=WorkerProcessState::Starting;impl_->exitCode=0;impl_->timeoutMs=timeoutMs;
 #if defined(_WIN32)
     std::wstring command=QuoteWindowsArgument(executable.wstring());
-    for(const auto& argument:arguments)command+=L" "+QuoteWindowsArgument(std::filesystem::u8path(argument).wstring());
+    for(const auto& argument:arguments)command+=L" "+QuoteWindowsArgument(Utf8Path(argument).wstring());
     STARTUPINFOW startup{};startup.cb=sizeof(startup);
     std::vector<wchar_t> mutableCommand(command.begin(),command.end());mutableCommand.push_back(L'\0');
     if(!CreateProcessW(executable.wstring().c_str(),mutableCommand.data(),nullptr,nullptr,FALSE,

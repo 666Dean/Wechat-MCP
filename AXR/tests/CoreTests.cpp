@@ -14,7 +14,7 @@ int main() {
     assert(ValidTransition("Executing","Unknown"));assert(!ValidTransition("Unknown","Ready"));
     Json record=CommitRecord(Json::object(),{{"state","Prepared"}},"intent",Now());
     assert(VerifyRecord(record,Json::object()));record["job"]["state"]="Completed";assert(!VerifyRecord(record,Json::object()));
-    const auto dir=std::filesystem::temp_directory_path()/std::filesystem::u8path("AXR-验证-"+RandomId());std::filesystem::create_directory(dir);
+    const auto dir=std::filesystem::temp_directory_path()/Utf8Path("AXR-验证-"+RandomId());std::filesystem::create_directory(dir);
     Json a{{"principal","agent:test"},{"resource",{{"platform","test"},{"account_id","a"},{"conversation_id","c"}}},
         {"operation","messages.read"},{"purpose","test"},{"payload",Json::object()},
         {"sources",Json::array()},{"destination","local"},{"workflow","manual"},{"execution_id",RandomId()}};
@@ -59,7 +59,7 @@ int main() {
     assert(worker.Poll()==WorkerProcessState::Exited);
 #else
     const char* systemRoot=std::getenv("SystemRoot");assert(systemRoot);
-    auto command=std::filesystem::u8path(systemRoot)/"System32"/"cmd.exe";
+    auto command=Utf8Path(systemRoot)/"System32"/"cmd.exe";
     WorkerSupervisor worker;assert(worker.Start(command,{"/d","/c","exit 0"},5000));
     auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(3);
     while(worker.Poll()==WorkerProcessState::Running&&std::chrono::steady_clock::now()<deadline)

@@ -18,8 +18,25 @@ class ContentQuarantine:
         self.worker=Path(__file__).with_name('content_worker.py').resolve(strict=True)
         self.parser=self.worker.with_name('quarantine_parser.py');self.lock=threading.RLock()
         self.pin=self._pin();self.supervisor=Supervisor(timeout=10);self.ttl=900
+    @staticmethod
+    def _mac_runtime():
+        # Python.org's bin/python launcher execs the framework app. Invoke the
+        # fixed real interpreter directly; never grant arbitrary process-exec.
+        executable=Path(sys.executable).resolve(strict=True);roots=[];assets=[executable]
+        framework=sysconfig.get_config_var('PYTHONFRAMEWORK')
+        if framework:
+            import re
+            if not isinstance(framework,str) or not re.fullmatch(r'[A-Za-z0-9_]{1,64}',framework):raise AXRError('content_runtime_framework_invalid')
+            base=Path(sys.base_prefix).resolve(strict=True)
+            library=(base/framework).resolve(strict=True)
+            bundle=base/'Resources'/(framework+'.app')/'Contents'
+            executable=(bundle/'MacOS'/framework).resolve(strict=True)
+            roots.extend((str(library),str(bundle.resolve(strict=True))))
+            assets.extend((library,executable))
+        return executable,roots,list(dict.fromkeys(assets))
     def _pin(self):
         paths=[self.worker,self.parser,Path(sys.executable).resolve(strict=True)]
+        if sys.platform=='darwin':paths.extend(self._mac_runtime()[2])
         if self.launcher:paths.append(self.launcher)
         return digest([[str(p),hashlib.sha256(p.read_bytes()).hexdigest()] for p in paths])
     def _windows_runtime(self):
@@ -72,7 +89,8 @@ class ContentQuarantine:
             return [str(root/'python.exe'),'-I','-S',str(root/'content_worker.py'),str(root/'Lib/site-packages')],Sandbox(windows_launcher=str(self.launcher),windows_root=str(root))
         if sys.platform!='darwin':raise AXRError('content_sandbox_unavailable')
         site=Path(sysconfig.get_path('purelib')).resolve(strict=True)
-        roots=[str(self.worker.parent),str(Path(sys.base_prefix).resolve()/'lib')]
+        executable,runtime_roots,_=self._mac_runtime()
+        roots=[str(self.worker.parent),str(Path(sys.base_prefix).resolve()/'lib'),*runtime_roots]
         for package in ('defusedxml','pypdf'):
             spec=importlib.util.find_spec(package)
             if spec is None or not spec.submodule_search_locations:raise AXRError('content_dependency_unavailable')
@@ -82,7 +100,7 @@ class ContentQuarantine:
             spec=importlib.util.find_spec(package)
             if spec:
                 roots.extend(str(Path(p).resolve()) for p in (spec.submodule_search_locations or [spec.origin]))
-        return [str(Path(sys.executable).resolve(strict=True)),'-I','-S',str(self.worker),str(site)],Sandbox(read_roots=roots)
+        return [str(executable),'-I','-S',str(self.worker),str(site)],Sandbox(read_roots=roots)
     def inspect(self,content,filename,*,source,policy_version,check):
         if not isinstance(content,bytes) or len(content)>MAX_FILE:raise AXRError('attachment_file_budget')
         if not isinstance(source,str) or not source:raise AXRError('content_source_required')
