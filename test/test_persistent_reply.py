@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Unlimited delegation keeps short native grants, bounded queues and user-turn priority."""
 import json,sys,time,unittest
+from contextlib import closing
 from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
@@ -20,7 +21,7 @@ class PersistentReply(unittest.TestCase):
         auto.used=1000001;self.assertTrue(auto.status()['active']);self.assertIsNone(auto.status()['remaining'])
         before=self.s.journal.clock();auto.access.clear();auto.ensure_access('peer')
         import sqlite3
-        with sqlite3.connect(self.s.guard.path) as db:
+        with closing(sqlite3.connect(self.s.guard.path)) as db:
             grants=[json.loads(row[0]) for row in db.execute('SELECT body FROM grants WHERE revoked=0')]
         current=[g for g in grants if g['policy_version']==self.s.guard.version]
         self.assertTrue(current);self.assertTrue(all(g['expires_at']<=before+301 for g in current))
