@@ -42,6 +42,13 @@ class StaticContent(unittest.TestCase):
             self.assertEqual(result['content_kind'],'code-as-data');self.assertFalse(result['execution_allowed'])
 
 class RuntimeLayout(unittest.TestCase):
+    def test_editable_install_finds_the_installed_native_launcher(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            launcher=Path(directory)/'installed/axr/bin/axr-sandbox.exe';launcher.parent.mkdir(parents=True);launcher.write_bytes(b'synthetic launcher')
+            distribution=SimpleNamespace(locate_file=lambda name:launcher)
+            with patch('axr.quarantine.__file__',str(Path(directory)/'source/quarantine.py')),patch('importlib.metadata.distribution',return_value=distribution):
+                self.assertEqual(ContentQuarantine._packaged_launcher(),launcher)
     def test_framework_uses_real_interpreter_and_pins_its_linked_library(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as directory:

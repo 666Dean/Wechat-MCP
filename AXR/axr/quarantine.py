@@ -14,10 +14,20 @@ from .storage import private_directory
 class ContentQuarantine:
     def __init__(self,store,*,windows_launcher=None):
         self.store=store;self.directory=private_directory(store.directory/'quarantine')
+        if windows_launcher is None and sys.platform=='win32':windows_launcher=self._packaged_launcher()
         self.launcher=Path(windows_launcher).resolve(strict=True) if windows_launcher else None
         self.worker=Path(__file__).with_name('content_worker.py').resolve(strict=True)
         self.parser=self.worker.with_name('quarantine_parser.py');self.lock=threading.RLock()
         self.pin=self._pin();self.supervisor=Supervisor(timeout=10);self.ttl=900
+    @staticmethod
+    def _packaged_launcher():
+        candidates=[Path(__file__).parent/'bin/axr-sandbox.exe']
+        # Editable wheels keep Python sources in the checkout while CMake
+        # products live under the installed distribution, not beside __file__.
+        from importlib.metadata import distribution,PackageNotFoundError
+        try:candidates.append(Path(distribution('stellaria-axr').locate_file('axr/bin/axr-sandbox.exe')))
+        except PackageNotFoundError:pass
+        return next((p for p in candidates if not p.is_symlink() and p.is_file()),None)
     @staticmethod
     def _mac_runtime():
         # Python.org's bin/python launcher execs the framework app. Invoke the
