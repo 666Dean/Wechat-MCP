@@ -84,6 +84,9 @@ def qualify_contacts(path, library, key, account_id, labels, *, profile='wcdb4-r
     for label in labels:identifier(label)
     db=open_database(path,key.hex(),profile,engine=engine,library=library)
     try:
+        # Account, directory identity and all labels must describe one committed
+        # contact snapshot even when WeChat updates contacts during qualification.
+        db.query('BEGIN')
         columns={r['name'] for r in db.query('PRAGMA table_info("contact")')}
         if not {'username','nick_name','remark','delete_flag'}<=columns:raise AXRError('contact_schema_unqualified')
         own=db.query('SELECT username FROM contact WHERE username=? LIMIT 2',(account_id,))

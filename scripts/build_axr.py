@@ -10,6 +10,8 @@ def main():
     parser=argparse.ArgumentParser();parser.add_argument('--build',default='.local-private/build')
     parser.add_argument('--openssl');parser.add_argument('--toolchain')
     parser.add_argument('--config',choices=['Debug','Release'],default='Debug')
+    parser.add_argument('--wechat-native-credentials',action='store_true',
+                        help='Build the application-specific WCDB consumer for qualification')
     parser.add_argument('--mac-selection-probe',action='store_true',help='Compile owner picker qualification tool; never run it')
     args=parser.parse_args()
     import pybind11
@@ -18,6 +20,7 @@ def main():
         '-DPython_EXECUTABLE='+sys.executable,'-Dpybind11_DIR='+pybind11.get_cmake_dir()]
     if args.openssl:command+=['-DOPENSSL_ROOT_DIR='+args.openssl]
     if args.toolchain:command+=['-DCMAKE_TOOLCHAIN_FILE='+args.toolchain]
+    if args.wechat_native_credentials:command+=['-DWECHAT_NATIVE_CREDENTIALS=ON']
     if args.mac_selection_probe:
         if sys.platform!='darwin':parser.error('--mac-selection-probe requires macOS')
         command+=['-DAXR_MAC_SELECTION_PROBE=ON']

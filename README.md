@@ -1,5 +1,7 @@
 # wechat-codex-mcp
 
+Windows 当前迭代：联系人资格检查增加单次事务快照，修复原生运行库安装；原生消费者合成测试、463 项全量回归（427 执行通过、36 跳过）及有界原库只读复测通过。新独立服务的 Windows 部署与完整设备验收仍未完成。详见 [Windows 状态与边界](docs/WINDOWS_UPDATE.md)。
+
 ## AXR Security Architecture 2 · 安全整合
 
 新增统一 TaskContract、原生策略判定、受认证的独立权限服务协议、隔离内容解析、

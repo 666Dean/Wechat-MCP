@@ -100,10 +100,17 @@ if(AXR_PYTHON)
   if(WIN32)
     install(TARGETS _axr_native
       RUNTIME_DEPENDENCIES
-        DIRECTORIES "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin" "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
+        DIRECTORIES ${Python_RUNTIME_LIBRARY_DIRS} "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin" "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
         PRE_EXCLUDE_REGEXES "api-ms-" "ext-ms-" "[Pp]ython[0-9]+.*[.]dll"
-        POST_EXCLUDE_REGEXES ".*[Ww]indows[/\\\\].*"
+        POST_EXCLUDE_REGEXES ".*[/\\\\][Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\\\].*"
       LIBRARY DESTINATION axr RUNTIME DESTINATION axr)
+    # CPython's runtime directory can supply the redistributable VC runtime.
+    # Preserve its redistribution notice with the resolved native dependencies.
+    foreach(runtime_directory IN LISTS Python_RUNTIME_LIBRARY_DIRS)
+      if(EXISTS "${runtime_directory}/LICENSE.txt")
+        install(FILES "${runtime_directory}/LICENSE.txt" DESTINATION axr/licenses RENAME "python-runtime.txt")
+      endif()
+    endforeach()
     foreach(dependency openssl sqlite3)
       if(EXISTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${dependency}/copyright")
         install(FILES "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${dependency}/copyright" DESTINATION axr/licenses RENAME "${dependency}.txt")
@@ -208,9 +215,9 @@ if(APPLE AND AXR_PLATFORM_HELPERS)
 elseif(WIN32)
   install(TARGETS axr-owner-auth axr-sandbox
     RUNTIME_DEPENDENCIES
-      DIRECTORIES "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin" "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
+      DIRECTORIES ${Python_RUNTIME_LIBRARY_DIRS} "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin" "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
       PRE_EXCLUDE_REGEXES "api-ms-" "ext-ms-"
-      POST_EXCLUDE_REGEXES ".*[Ww]indows[/\\\\].*"
+      POST_EXCLUDE_REGEXES ".*[/\\\\][Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\\\].*"
     RUNTIME DESTINATION ${AXR_HELPER_DEST})
 endif()
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})

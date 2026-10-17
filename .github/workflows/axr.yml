@@ -89,6 +89,18 @@ jobs:
           echo "AXR_TEST_RUNTIME_ROOTS=$OPENSSL_ROOT_DIR/lib" >> "$GITHUB_ENV"
           echo "AXR_TEST_KEY_OBSERVER=$PWD/.local-private/build/libwechat-key-observer.dylib" >> "$GITHUB_ENV"
           echo "AXR_TEST_KEY_FIXTURE=$PWD/.local-private/build/wechat-key-fixture" >> "$GITHUB_ENV"
+      - name: Build and qualify native WCDB consumer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python scripts/build_axr.py --toolchain "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" --config Release --wechat-native-credentials
+          if ($LASTEXITCODE -ne 0) { throw 'Native WCDB consumer build failed' }
+          $consumer = @(Get-ChildItem -LiteralPath "$env:GITHUB_WORKSPACE/.local-private/build/Release" -Filter '_wechat_credentials*.pyd')
+          if ($consumer.Count -ne 1) { throw 'Expected exactly one Windows native WCDB consumer' }
+          "WECHAT_TEST_NATIVE_CONSUMER=$($consumer[0].FullName)" >> $env:GITHUB_ENV
+          $env:WECHAT_TEST_NATIVE_CONSUMER = $consumer[0].FullName
+          python -m unittest test_native_wechat_credentials -q
+          if ($LASTEXITCODE -ne 0) { throw 'Native WCDB consumer qualification failed' }
       - name: Native sandbox witness paths (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

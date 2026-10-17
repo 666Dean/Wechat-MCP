@@ -1,5 +1,11 @@
 # Windows 更新与 AXR 人工回信
 
+## 当前 Windows 迭代边界（2026-10-18）
+
+已同步 2026-10-16 独立安全服务候选架构，当前完整 MCP 接线与 Windows 部署、Hello 和设备验收仍未完成，旧自动回复路径保持关闭。下文安装与人工回信步骤保留为旧版流程记录，不能作为新安全服务已可用的说明，也不能据此恢复旧权限；当前总状态见 [独立服务状态](INDEPENDENT_SERVICE.md)。
+
+本轮 Windows 原库适配器层复测：微信登录运行期间，SQLCipher/SQLite3mc 各在三个分库扫描 20 条、返回并解码 17 条文本，重复页一致，实际后续一条无重复，三次轮询零错误且连接释放，有限主库/WAL 指纹一致；未观察绑定的新入站。当前 SDK、原生消费者六项合成测试、CTest 及全量 463 项（427 执行通过、36 平台/链接权限跳过）通过，Windows 运行库安装问题已修复。这些结果不证明新 authority 或原生凭据消费者的真实凭据迁移与端到端资格，详见 [本轮测试日记](WINDOWS_WCDB_ACCEPTANCE.md)。
+
 最新小范围设备结果见 [2026-10-13 Windows WCDB 实机测试日记](WINDOWS_WCDB_ACCEPTANCE.md)：已有密钥和独立只读引擎的有界正文读取通过，完整 AXR/MCP/Hello 与实时新入站仍未设备验收。
 
 以已合并的 Mac AXR 方案为基础，复用有界 WCDB 读取、加密收件箱、所有者批准披露、Codex 草稿和人工提交流程。Windows 使用 Credential Manager、Hello helper 和 C++ UIA；Mac 的 Keychain、Swift helper 和启动观察不能直接移植。旧 legacy 的 DLL `-100` 未因此修复；新 AXR 使用 SQLCipher 原生只读 pager。

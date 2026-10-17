@@ -285,6 +285,7 @@ class KeyTests(unittest.TestCase):
             closed=False
             def __init__(self,*args,**kwargs):pass
             def query(self,sql,args=()):
+                if sql=='BEGIN':return []
                 if sql.startswith('PRAGMA'):return [{'name':x} for x in ('username','nick_name','remark','delete_flag')]
                 if 'username IN (' in sql:return [{'username':name} for name in DB.account_matches]
                 if sql.startswith('SELECT username FROM'):return [{'username':'fixture-owner'}]
