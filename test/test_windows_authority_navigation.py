@@ -76,7 +76,7 @@ class WindowsNativeBridge(unittest.TestCase):
             bridge=AuthorityNavigation(self.helper,hashlib.sha256(self.helper.read_bytes()).hexdigest(),
                 r'\\.\pipe\Stellaria.AXR.never-created-fixture',Path(directory),
                 enroll_handler=enroll,prepare=prepare,receipt=lambda eid:{'state':'Unknown','execution_id':eid})
-            action=Action('fixture',Resource('wechat','fixture-account','fixture-peer'),'messages.read',
+            action=Action('fixture',Resource('wechat','fixture-account','fixture-peer'),'status.read',
                 'fixture',{'mode':'read_draft','text':'synthetic draft, never inserted','visual_binding':{}})
             result=bridge.invoke(action,check=lambda:None)
             self.assertEqual([row[0] for row in events],['enroll','prepare'])

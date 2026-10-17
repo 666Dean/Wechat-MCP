@@ -150,7 +150,7 @@ static Json V2(const Json& request){
     auto mode=request.at("mode").get<std::string>(),op=request.at("operation").get<std::string>();
     auto text=request.at("expected_text").get<std::string>();
     if(text.empty()||text.size()>16000||!request.at("visual_binding").is_object())throw std::runtime_error("authority_scope_invalid");
-    std::map<std::string,std::string> operations={{"navigate","application.navigate"},{"stage_draft","application.draft"},{"read_draft","messages.read"},{"send","messages.send"}};
+    std::map<std::string,std::string> operations={{"navigate","application.navigate"},{"stage_draft","application.draft"},{"read_draft","status.read"},{"send","messages.send"}};
     if(!operations.contains(mode)||operations.at(mode)!=op)throw std::runtime_error("authority_operation_mismatch");
     Authority(request);
     if(mode=="navigate")throw std::runtime_error("windows_search_navigation_not_qualified");

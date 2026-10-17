@@ -72,6 +72,7 @@ class AuthorityNavigation:
         return value
     def invoke(self, action, *, check):
         mode=action.payload.get('mode');operations={'navigate':'application.navigate','stage_draft':'application.draft','read_draft':'messages.read','send':'messages.send'}
+        if os.name=='nt':operations['read_draft']='status.read' # Local comparison metadata; keep DB read handler distinct.
         if mode not in operations or action.operation!=operations[mode]:raise AXRError('wechat_native_bridge_operation_mismatch')
         check()
         if hashlib.sha256(self.helper.read_bytes()).hexdigest()!=self.sha:raise AXRError('wechat_native_bridge_build_changed')
