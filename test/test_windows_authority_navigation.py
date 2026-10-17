@@ -97,3 +97,28 @@ class WindowsNativeBridge(unittest.TestCase):
         self.assertIs(frames[1]['send_invoked'],False)
         denied=subprocess.run([str(self.helper),'--script','untrusted'],capture_output=True,timeout=5)
         self.assertEqual(json.loads(denied.stdout),{'error':'fixed_entrypoint_required'})
+
+    def test_send_requires_mac_equivalent_cached_recipient_witness_before_ui(self):
+        request={'mode':'send','operation':'messages.send','expected_text':'synthetic fixture only',
+            'account':'fixture-account','identity':'fixture-peer','visual_binding':{},
+            'guard_context':{'authority_endpoint':'unused','proof':'{}'}}
+        for binding in ({}, {'recipient_assurance':'cached_exact_draft_and_fresh_search'},
+                        {'recipient_assurance':'cached_exact_draft_and_fresh_search','recipient_witness':'A'*64},
+                        {'recipient_assurance':'cached_exact_draft_and_fresh_search','recipient_witness':'a'*63+'g'},
+                        {'recipient_assurance':'wrong','recipient_witness':'a'*64}):
+            with self.subTest(binding=binding):
+                request['visual_binding']=binding
+                result=subprocess.run([str(self.helper),'--authority-v2'],input=canonical(request)+b'\n',
+                    capture_output=True,timeout=5)
+                frames=[json.loads(line) for line in result.stdout.splitlines()]
+                self.assertEqual(frames[0],{'version':2,'ready':True,'input_received':False})
+                self.assertEqual(frames[1]['error'],'recipient_witness_required')
+                self.assertIs(frames[1]['send_invoked'],False)
+                self.assertIs(frames[1]['content_disclosed'],False)
+        request['visual_binding']={'recipient_assurance':'cached_exact_draft_and_fresh_search',
+                                   'recipient_witness':'a'*64}
+        result=subprocess.run([str(self.helper),'--authority-v2'],input=canonical(request)+b'\n',
+            capture_output=True,timeout=5)
+        frames=[json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(frames[1]['error'],'authority_or_scope_changed')
+        self.assertIs(frames[1]['send_invoked'],False)

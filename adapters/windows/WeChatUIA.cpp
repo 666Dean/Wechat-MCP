@@ -152,6 +152,16 @@ static Json V2(const Json& request){
     if(text.empty()||text.size()>16000||!request.at("visual_binding").is_object())throw std::runtime_error("authority_scope_invalid");
     std::map<std::string,std::string> operations={{"navigate","application.navigate"},{"stage_draft","application.draft"},{"read_draft","status.read"},{"send","messages.send"}};
     if(!operations.contains(mode)||operations.at(mode)!=op)throw std::runtime_error("authority_operation_mismatch");
+    if(mode=="send"){
+        const auto& binding=request.at("visual_binding");
+        if(!binding.contains("recipient_assurance")||!binding["recipient_assurance"].is_string()||
+           binding["recipient_assurance"]!="cached_exact_draft_and_fresh_search"||
+           !binding.contains("recipient_witness")||!binding["recipient_witness"].is_string())
+            throw std::runtime_error("recipient_witness_required");
+        const auto witness=binding["recipient_witness"].get<std::string>();
+        if(witness.size()!=64||!std::all_of(witness.begin(),witness.end(),[](unsigned char ch){return (ch>='0'&&ch<='9')||(ch>='a'&&ch<='f');}))
+            throw std::runtime_error("recipient_witness_required");
+    }
     Authority(request);
     if(mode=="navigate")throw std::runtime_error("windows_search_navigation_not_qualified");
     auto req=request.at("visual_binding");req["op"]=mode=="send"?"commit_draft":mode;
