@@ -1,5 +1,7 @@
 # Windows 独立服务 MCP 接口
 
+当前六工具是新独立服务的基础接口；Windows 目标还包含与 Mac 一致的完整自动回复、对话绑定与忙闲调度。自动回复适配及新原生桥的单独证据见 [功能对齐清单](WINDOWS_AUTOMATIC_REPLY.md)，不能把本页人工草稿接口当作完整目标已实现。
+
 本轮接线把 MCP 前端接到独立 authority 的 v2 认证管道，不再调用旧 bearer Broker 或在前端打开所有者数据库、凭据和业务适配器。入口为 `server.py --authority-profile <所有者提供的本机配置>`，配置示例见 [Codex MCP 模板](../codex-authority.example.toml)。此模板不安装服务、不登记进程、不签发权限，也不修改 Codex 全局设置。
 
 ## 六个工具

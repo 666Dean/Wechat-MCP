@@ -9,6 +9,7 @@
 #include <chrono>
 #include <thread>
 #include <algorithm>
+#include <map>
 #include "axr/Core.hpp"
 #include "axr/Commit.h"
 using Microsoft::WRL::ComPtr;
@@ -24,7 +25,18 @@ static std::vector<ComPtr<IUIAutomationElement>> Children(IUIAutomationTreeWalke
 static ComPtr<IUIAutomationElement> Path(IUIAutomationTreeWalker* walker,ComPtr<IUIAutomationElement> root,const Json& parts){for(const auto& n:parts){auto children=Children(walker,root.Get());int index=n.get<int>();if(index<0||std::size_t(index)>=children.size())throw std::runtime_error("selector_changed");root=children[index];}return root;}
 struct Candidate{std::vector<HWND> windows;};
 static BOOL CALLBACK Enum(HWND window,LPARAM param){DWORD pid=0;GetWindowThreadProcessId(window,&pid);HANDLE p=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);if(!p)return TRUE;wchar_t path[32768];DWORD len=32768;bool ok=QueryFullProcessImageNameW(p,0,path,&len);CloseHandle(p);if(ok&&IsWindowVisible(window)){auto file=std::filesystem::path(std::wstring(path,len)).filename().wstring();if(file==L"WeChat.exe"||file==L"Weixin.exe")reinterpret_cast<Candidate*>(param)->windows.push_back(window);}return TRUE;}
-static Json Main(const Json& req){
+static bool authorityClaimed=false,sendInvoked=false;
+static void Authority(const Json& request,bool claim=false){
+    const auto& context=request.at("guard_context");
+    Json scope={{"operations",Json::array({request.at("operation")})},
+        {"resource",{{"platform","wechat"},{"account_id",request.at("account")},{"conversation_id",request.at("identity")}}},
+        {"text",request.at("expected_text")},{"visual_binding",request.at("visual_binding")}};
+    auto endpoint=context.at("authority_endpoint").get<std::string>(),proof=context.at("proof").get<std::string>(),encoded=scope.dump();
+    int allowed=claim?axr_authority_claim(endpoint.c_str(),proof.c_str(),encoded.c_str()):axr_authority_preflight(endpoint.c_str(),proof.c_str(),encoded.c_str());
+    if(allowed!=1)throw std::runtime_error("authority_or_scope_changed");
+    if(claim)authorityClaimed=true;
+}
+static Json Main(const Json& req,const Json* authority=nullptr){
     Candidate candidate;EnumWindows(Enum,reinterpret_cast<LPARAM>(&candidate));
     std::string op=req.at("op");
     if(op=="status")return {{"running",candidate.windows.size()==1},{"ambiguous_process",candidate.windows.size()>1},{"accessibility",true}};
@@ -58,21 +70,54 @@ static Json Main(const Json& req){
     if(req.at("expected_pid").get<DWORD>()!=pid)throw std::runtime_error("application_epoch_changed");
     ComPtr<IUIAutomationElement> boundTarget;
     auto verify=[&]{
-        const auto& control=req.at("guard_context");
+        if(authority)Authority(*authority);
+        else {const auto& control=req.at("guard_context");
         Json scope={{"resource",{{"platform",req.at("expected_platform")},{"account_id",req.at("expected_account")},{"conversation_id",req.at("expected_identity")}}},
                     {"operations",op=="send_text"?Json::array({"messages.send"}):Json::array({"messages.read","messages.search"})}};
         if(op=="send_text")scope["text"]=req.at("text");
-        if(!axr_check_scoped_commit(control.at("store").get<std::string>().c_str(),control.at("proof").get<std::string>().c_str(),scope.dump().c_str()))throw std::runtime_error("authority_or_requested_scope_changed");
+        if(!axr_check_scoped_commit(control.at("store").get<std::string>().c_str(),control.at("proof").get<std::string>().c_str(),scope.dump().c_str()))throw std::runtime_error("authority_or_requested_scope_changed");}
         if(Value(Path(walker.Get(),root,req.at("header_path")).Get())!=req.at("expected_title").get<std::string>())throw std::runtime_error("target_identity_changed");
         DWORD current=0;GetWindowThreadProcessId(window,&current);if(current!=pid)throw std::runtime_error("application_epoch_changed");
         if(boundTarget){BOOL same=FALSE;auto fresh=Path(walker.Get(),root,req.at("path"));if(FAILED(automation->CompareElements(boundTarget.Get(),fresh.Get(),&same))||!same)throw std::runtime_error("control_epoch_changed");}
-        if(op=="send_text"||op=="read"){
+        if(op=="send_text"||op=="read"||authority){
             for(auto pair:{std::pair{"account_path","expected_account"},std::pair{"identity_path","expected_identity"}}){
                 auto expected=req.at(pair.second).get<std::string>();
                 if(expected.empty()||Value(Path(walker.Get(),root,req.at(pair.first)).Get())!=expected)throw std::runtime_error("stable_identity_witness_changed");
             }
         }};
     verify();auto target=Path(walker.Get(),root,req.at("path"));boundTarget=target;verify();
+    if(authority){
+        auto text=req.at("text").get<std::string>();
+        ComPtr<IUIAutomationValuePattern> input;
+        if(FAILED(target->GetCurrentPatternAs(UIA_ValuePatternId,IID_PPV_ARGS(&input))))throw std::runtime_error("input_unavailable");
+        if(op=="stage_draft"){
+            if(!Draft(input.Get()).empty())throw std::runtime_error("existing_draft_never_overwrite");
+            verify();Authority(*authority,true);
+            auto wide=Wide(text);BSTR prepared=SysAllocStringLen(wide.data(),UINT(wide.size()));
+            if(!prepared)throw std::runtime_error("draft_allocation_failed");
+            auto changed=input->SetValue(prepared);SysFreeString(prepared);
+            if(FAILED(changed))throw std::runtime_error("draft_prepare_failed");
+            verify();return {{"draft_match",Draft(input.Get())==text},{"stage_invoked",true},{"send_invoked",false},{"content_disclosed",false}};
+        }
+        if(op=="read_draft"){
+            Authority(*authority,true);bool exact=Draft(input.Get())==text;verify();
+            return {{"draft_match",exact},{"send_invoked",false},{"content_disclosed",false}};
+        }
+        if(op=="commit_draft"){
+            if(Draft(input.Get())!=text)throw std::runtime_error("exact_draft_required");
+            auto send=Path(walker.Get(),root,req.at("send_path"));ComPtr<IUIAutomationInvokePattern> invoke;
+            if(FAILED(send->GetCurrentPatternAs(UIA_InvokePatternId,IID_PPV_ARGS(&invoke))))throw std::runtime_error("send_action_unavailable");
+            verify();BOOL same=FALSE;auto current=Path(walker.Get(),root,req.at("send_path"));
+            if(FAILED(automation->CompareElements(send.Get(),current.Get(),&same))||!same||Draft(input.Get())!=text)
+                throw std::runtime_error("draft_or_send_control_changed");
+            // Claim only after both exact-input comparisons, immediately before
+            // a single external invocation. Never retry an uncertain send.
+            Authority(*authority,true);sendInvoked=true;
+            if(FAILED(invoke->Invoke()))throw std::runtime_error("send_outcome_unknown");
+            return {{"draft_match",true},{"send_invoked",true},{"delivery_confirmed",false},{"content_disclosed",false}};
+        }
+        throw std::runtime_error("authority_operation_denied");
+    }
     if(op=="read"){walk(target,req.at("path"),0,true);verify();return {{"nodes",nodes},{"pid",pid},{"foreground",GetForegroundWindow()==window}};}
     if(op=="send_text"){
         auto text=req.at("text").get<std::string>();if(text.empty()||text.size()>8000)throw std::runtime_error("send_text_invalid");
@@ -100,7 +145,26 @@ static Json Main(const Json& req){
     }
     throw std::runtime_error("operation_denied");
 }
-int main(){HRESULT initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);Json result;
-    try{if(FAILED(initialized))throw std::runtime_error("sta_initialization_failed");std::string line;char ch;while(std::cin.get(ch)&&ch!='\n'){if(line.size()>=524288)throw std::runtime_error("request_too_large");line.push_back(ch);}result=Main(Json::parse(line));}
+static Json V2(const Json& request){
+    if(!request.is_object()||request.size()!=7)throw std::runtime_error("authority_request_invalid");
+    auto mode=request.at("mode").get<std::string>(),op=request.at("operation").get<std::string>();
+    auto text=request.at("expected_text").get<std::string>();
+    if(text.empty()||text.size()>16000||!request.at("visual_binding").is_object())throw std::runtime_error("authority_scope_invalid");
+    std::map<std::string,std::string> operations={{"navigate","application.navigate"},{"stage_draft","application.draft"},{"read_draft","messages.read"},{"send","messages.send"}};
+    if(!operations.contains(mode)||operations.at(mode)!=op)throw std::runtime_error("authority_operation_mismatch");
+    Authority(request);
+    if(mode=="navigate")throw std::runtime_error("windows_search_navigation_not_qualified");
+    auto req=request.at("visual_binding");req["op"]=mode=="send"?"commit_draft":mode;
+    req["text"]=text;req["expected_account"]=request.at("account");req["expected_identity"]=request.at("identity");
+    return Main(req,&request);
+}
+int main(int argc,char** argv){HRESULT initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);Json result,request;bool v2=argc==2&&std::string(argv[1])=="--authority-v2";
+    if(v2)std::cout<<Json{{"version",2},{"ready",true},{"input_received",false}}.dump()<<std::endl;
+    try{if(argc!=1&&!v2)throw std::runtime_error("fixed_entrypoint_required");if(FAILED(initialized))throw std::runtime_error("sta_initialization_failed");std::string line;char ch;while(std::cin.get(ch)&&ch!='\n'){if(line.size()>=1024*1024)throw std::runtime_error("request_too_large");line.push_back(ch);}request=Json::parse(line);result=v2?V2(request):Main(request);}
     catch(const nlohmann::json::exception&){result={{"error","invalid_request"}};}
-    catch(const std::exception& e){result={{"error",e.what()}};}std::cout<<result.dump()<<std::endl;if(SUCCEEDED(initialized))CoUninitialize();return 0;}
+    catch(const std::exception& e){result={{"error",e.what()}};}
+    if(v2){result["send_invoked"]=sendInvoked;result["content_disclosed"]=false;
+        if(authorityClaimed){auto& context=request.at("guard_context");auto endpoint=context.at("authority_endpoint").get<std::string>(),proof=context.at("proof").get<std::string>(),evidence=Stellaria::AXR::Digest(result.dump());
+            bool verified=!sendInvoked&&!result.contains("error")&&result.value("draft_match",false);
+            result["authority_receipt_recorded"]=axr_authority_observe(endpoint.c_str(),proof.c_str(),verified?1:0,evidence.c_str())==1;}}
+    std::cout<<result.dump()<<std::endl;if(SUCCEEDED(initialized))CoUninitialize();return 0;}

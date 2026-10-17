@@ -24,18 +24,34 @@ def _plain(handle):
     if not kernel.GetFileInformationByHandleEx(handle,9,c.byref(info),c.sizeof(info)) or info.attributes&0x400:
         close(handle);raise AXRError('rooted_reparse_point_denied')
     return handle
-def child(parent,name,*,directory=False,create=False):
+def child(parent,name,*,directory=False,create=False,write_through=False):
     if not name or any(x in name for x in ('/','\\',':','\x00')) or name in ('.','..'):raise AXRError('rooted_path_escape')
     text=c.create_unicode_buffer(name);value=Unicode(len(name.encode('utf-16-le')),len(name.encode('utf-16-le'))+2,c.cast(text,w.LPWSTR))
     attrs=Attributes(c.sizeof(Attributes),parent,c.pointer(value),0x40,None,None);io=IOStatus();handle=HANDLE()
     access=0x100000|0x80|(0x1 if not create else 0x2|0x1|0x10000)
     if directory:access=0x02000000|0x100000 # maximum allowed, no demand for volume-root write rights
     options=0x00200000|0x20|(0x1 if directory else 0x40)
+    if write_through:options|=0x2 # FILE_WRITE_THROUGH
     status=nt.NtCreateFile(c.byref(handle),access,c.byref(attrs),c.byref(io),None,0x80,0x7,2 if create else 1,options,None,0)
     if status<0:
+        if status&0xffffffff==0xc0000035:raise FileExistsError(name)
         if status&0xffffffff in (0xc0000034,0xc000003a):raise FileNotFoundError(name)
         raise AXRError('rooted_relative_open_failed')
     return _plain(handle.value)
+
+def create_once(parent,name,data):
+    # FILE_CREATE is atomic and never replaces an existing entry. Preserve any
+    # partial marker on failure: an uncertain durable claim must never retry.
+    handle=child(parent,name,create=True,write_through=True)
+    try:
+        offset=0
+        while offset<len(data):
+            block=c.create_string_buffer(data[offset:offset+65536]);size=w.DWORD()
+            if not kernel.WriteFile(handle,block,min(65536,len(data)-offset),c.byref(size),None) or not size.value:
+                raise AXRError('rooted_write_failed')
+            offset+=size.value
+        if not kernel.FlushFileBuffers(handle):raise AXRError('rooted_flush_failed')
+    finally:close(handle)
 def open_root(path):
     anchor=str(path.anchor)
     if not anchor or str(path).startswith('\\\\'):raise AXRError('rooted_unc_denied')

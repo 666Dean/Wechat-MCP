@@ -19,7 +19,6 @@ class Process:
     def terminate(self):self.closed=True
     def kill(self):self.closed=True
 
-@unittest.skipIf(os.name=='nt','macOS native helper protocol')
 class AuthorityBridgeTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)

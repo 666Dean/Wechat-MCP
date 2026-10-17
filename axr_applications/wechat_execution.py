@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 import selectors
 import subprocess
+import queue
+import threading
 import time
 from axr.aet import AXRError, canonical, digest
 from axr.ipc import process_identity
@@ -25,6 +27,7 @@ class AuthorityNavigation:
         self.attempts.mkdir(mode=0o700,parents=True,exist_ok=True)
     @staticmethod
     def _frame(process, timeout):
+        if os.name=='nt':return AuthorityNavigation._windows_frame(process,timeout)
         deadline=time.monotonic()+timeout;raw=bytearray()
         with selectors.DefaultSelector() as selector:
             selector.register(process.stdout,selectors.EVENT_READ)
@@ -40,8 +43,34 @@ class AuthorityNavigation:
                     try:return json.loads(line)
                     except ValueError:raise AXRError('wechat_native_bridge_protocol') from None
         raise AXRError('wechat_native_bridge_timeout')
+    @staticmethod
+    def _windows_frame(process, timeout):
+        # Windows anonymous subprocess pipes cannot be registered with select().
+        # A bounded reader thread owns this single frame; invoke() terminates the
+        # child on timeout, releasing the pending read before another invocation.
+        completed=queue.Queue(maxsize=1)
+        def read():
+            try:
+                raw=bytearray()
+                while True:
+                    chunk=os.read(process.stdout.fileno(),4096)
+                    if not chunk:raise AXRError('wechat_native_bridge_closed')
+                    raw.extend(chunk)
+                    if len(raw)>1024*1024:raise AXRError('wechat_native_bridge_frame_budget')
+                    if b'\n' in raw:
+                        line,tail=raw.split(b'\n',1)
+                        if tail.strip():raise AXRError('wechat_native_bridge_unsolicited_frame')
+                        try:value=json.loads(line)
+                        except ValueError:raise AXRError('wechat_native_bridge_protocol') from None
+                        if type(value) is not dict:raise AXRError('wechat_native_bridge_protocol')
+                        completed.put((value,None));return
+            except Exception as error:completed.put((None,error))
+        threading.Thread(target=read,daemon=True).start()
+        try:value,error=completed.get(timeout=timeout)
+        except queue.Empty:raise AXRError('wechat_native_bridge_timeout') from None
+        if error:raise error
+        return value
     def invoke(self, action, *, check):
-        if os.name=='nt':raise AXRError('wechat_windows_authority_bridge_unqualified')
         mode=action.payload.get('mode');operations={'navigate':'application.navigate','stage_draft':'application.draft','read_draft':'messages.read','send':'messages.send'}
         if mode not in operations or action.operation!=operations[mode]:raise AXRError('wechat_native_bridge_operation_mismatch')
         check()
@@ -62,11 +91,19 @@ class AuthorityNavigation:
                 'account':action.resource.account_id,'identity':action.resource.conversation_id,
                 'visual_binding':action.payload['visual_binding'],
                 'guard_context':{'authority_endpoint':self.endpoint,'proof':canonical(proof).decode()}}
+            frame=canonical(request)+b'\n'
+            if len(frame)>1024*1024:raise AXRError('wechat_native_bridge_frame_budget')
             check()
             if process_identity(process.pid)!=actual:raise AXRError('wechat_native_bridge_instance_changed')
             if mode=='send':claim_attempt(marker)
             # Any loss from this point on is conservatively Unknown for sends.
-            submitted=True;process.stdin.write(canonical(request)+b'\n');process.stdin.close()
+            submitted=True
+            pending=memoryview(frame)
+            while pending:
+                written=process.stdin.write(pending)
+                if not written:raise AXRError('wechat_native_bridge_closed')
+                pending=pending[written:]
+            process.stdin.close()
             result=self._frame(process,15);process.wait(timeout=2);check()
             state=self.receipt(action.execution_id)
             return {'receipt':state,'native':result,'retry':False,'delivery_confirmed':False}
