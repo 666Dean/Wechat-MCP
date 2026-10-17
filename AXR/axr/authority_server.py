@@ -15,7 +15,7 @@ class AuthorityServer:
         if registry.development_fixture!=kernel.development_fixture:raise AXRError('authority_profile_mismatch')
         self.kernel=kernel;self.registry=registry;self.endpoint=str(endpoint)
         self.stop_event=threading.Event();self.slots=threading.BoundedSemaphore(maximum_connections)
-        self.sessions=set();self.lock=threading.Lock();self.listener=None;self.inode=None
+        self.sessions=set();self.lock=threading.Lock();self.listener=None;self.inode=None;self.windows_thread=None
     def _serve(self,transport):
         session=None
         try:
@@ -68,21 +68,47 @@ class AuthorityServer:
             listener.close()
             if path.exists() and not path.is_symlink() and path.lstat().st_ino==self.inode:path.unlink()
     def _windows(self):
-        import win32pipe,pywintypes
-        while not self.stop_event.is_set():
-            listener=create_pipe(self.endpoint,(self.registry.user,));self.listener=listener
-            try:
-                try:win32pipe.ConnectNamedPipe(listener,None)
-                except pywintypes.error as exc:
-                    if exc.winerror!=535:raise
-                if not self.slots.acquire(False):listener.Close();continue
-                # FIRST_PIPE_INSTANCE intentionally permits one live pipe;
-                # handle this connection before accepting a replacement.
-                self._serve(PipeTransport(listener))
-            except Exception:
-                if not self.stop_event.is_set():raise
+        import win32api,win32pipe,pywintypes
+        thread=win32api.OpenThread(0x0001,False,threading.get_native_id()) # THREAD_TERMINATE for CancelSynchronousIo
+        with self.lock:self.windows_thread=thread
+        try:
+            while not self.stop_event.is_set():
+                listener=create_pipe(self.endpoint,(self.registry.user,));self.listener=listener
+                try:
+                    if self.stop_event.is_set():listener.Close();break
+                    try:win32pipe.ConnectNamedPipe(listener,None)
+                    except pywintypes.error as exc:
+                        if exc.winerror!=535:raise
+                    if self.stop_event.is_set():listener.Close();break
+                    if not self.slots.acquire(False):listener.Close();continue
+                    # FIRST_PIPE_INSTANCE intentionally permits one live pipe;
+                    # handle this connection before accepting a replacement.
+                    self._serve(PipeTransport(listener))
+                except Exception:
+                    listener.Close()
+                    if not self.stop_event.is_set():raise
+        finally:
+            with self.lock:self.windows_thread=None;thread.Close()
     def close(self):
         self.stop_event.set()
+        if os.name=='nt':
+            import ctypes,win32file,win32con
+            # Closing a handle from another thread can wait forever on its
+            # synchronous ConnectNamedPipe/ReadFile. Cancel the serving thread's
+            # pending I/O; that thread owns transport cleanup.
+            with self.lock:
+                if self.windows_thread:
+                    cancel=ctypes.WinDLL('kernel32',use_last_error=True).CancelSynchronousIo
+                    cancel.argtypes=[ctypes.c_void_p];cancel.restype=ctypes.c_int
+                    cancel(int(self.windows_thread))
+            # Covers cancellation racing just before ConnectNamedPipe starts.
+            # No data is sent and anonymous SQOS denies impersonation.
+            try:
+                wake=win32file.CreateFile(self.endpoint,win32con.GENERIC_READ|win32con.GENERIC_WRITE,
+                    0,None,win32con.OPEN_EXISTING,0x00100000,None)
+                wake.Close()
+            except Exception:pass
+            return
         with self.lock:sessions=list(self.sessions)
         for session in sessions:session.close()
         if self.listener:

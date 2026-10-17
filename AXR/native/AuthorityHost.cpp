@@ -20,7 +20,9 @@ namespace {
 std::atomic<bool> stopRequested=false;
 #if defined(_WIN32)
 void ProtectedPath(const std::filesystem::path& path){
-    if(GetFileAttributesW(path.c_str())&FILE_ATTRIBUTE_REPARSE_POINT)throw std::runtime_error("authority_installation_reparse_denied");
+    auto attributes=GetFileAttributesW(path.c_str());
+    if(attributes==INVALID_FILE_ATTRIBUTES)throw std::runtime_error("authority_installation_unavailable");
+    if(attributes&FILE_ATTRIBUTE_REPARSE_POINT)throw std::runtime_error("authority_installation_reparse_denied");
     PSID owner=nullptr;PACL acl=nullptr;PSECURITY_DESCRIPTOR descriptor=nullptr;
     if(GetNamedSecurityInfoW(path.c_str(),SE_FILE_OBJECT,OWNER_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION,&owner,nullptr,&acl,nullptr,&descriptor)!=ERROR_SUCCESS||!acl)throw std::runtime_error("authority_installation_acl_unavailable");
     auto trusted=[](PSID sid){return IsWellKnownSid(sid,WinLocalSystemSid)||IsWellKnownSid(sid,WinBuiltinAdministratorsSid);};
@@ -71,7 +73,7 @@ void Configure(PyConfig& config,const std::filesystem::path& root){
         auto value=path.wstring();if(PyStatus_Exception(PyWideStringList_Append(&config.module_search_paths,value.c_str())))throw std::runtime_error("authority_runtime_configuration_failed");
     }
 }
-int Serve(bool initialize=false){
+int Serve(bool initialize=false,bool ownerControl=false){
 #ifdef AXR_SECURITY_RELEASE
 #if !defined(AXR_OWNER_HOST) && !defined(AXR_VALIDATION_HOST)
     ProtectedStore bootstrap("Stellaria.AXR.Bootstrap");
@@ -123,7 +125,9 @@ int Serve(bool initialize=false){
 #endif
         PyErr_Clear();Py_FinalizeEx();throw std::runtime_error("authority_bootstrap_import_failed");}
     PyObject* result=nullptr;
-    if(initialize){auto path=root.u8string();result=PyObject_CallMethod(module,"main","s",reinterpret_cast<const char*>(path.c_str()));}
+    if(initialize){auto path=root.u8string();
+        if(ownerControl)result=PyObject_CallMethod(module,"main","ss",reinterpret_cast<const char*>(path.c_str()),"control");
+        else result=PyObject_CallMethod(module,"main","s",reinterpret_cast<const char*>(path.c_str()));}
     else result=PyObject_CallMethod(module,"main",nullptr);
     Py_DECREF(module);
     bool ok=result!=nullptr;if(result)Py_DECREF(result);else {
@@ -150,6 +154,9 @@ void WINAPI ServiceMain(DWORD,LPWSTR*){
 int main(int argc,char** argv){
     try{
 #ifdef AXR_OWNER_HOST
+#if defined(_WIN32)
+        if(argc==2&&std::string_view(argv[1])=="--owner-control")return Serve(true,true);
+#endif
         if(argc!=2||std::string_view(argv[1])!="--owner-enroll")throw std::runtime_error("owner_fixed_entrypoint_required");
         return Serve(true);
 #elif defined(AXR_VALIDATION_HOST)

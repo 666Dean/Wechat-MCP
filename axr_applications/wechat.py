@@ -152,6 +152,10 @@ def owner_enroll(runtime_root):
     from .wechat_owner import main
     return main(runtime_root)
 
+def owner_control(runtime_root):
+    from .windows_owner import main
+    return main(runtime_root)
+
 def validate_runtime():
     from . import _wechat_credentials
     from .wechat_database import NativeDatabase

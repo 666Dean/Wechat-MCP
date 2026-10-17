@@ -9,7 +9,7 @@ from axr.authority_server import AuthorityClient
 from axr.rooted import RootedDirectory
 
 
-def load_profile(path):
+def load_connection(path, *, include_capability=False):
     path = Path(path).absolute()
     directory = RootedDirectory(path.parent)
     try:raw = directory.read(path.name, 32768)
@@ -22,7 +22,8 @@ def load_profile(path):
         return value
     try:
         value = json.loads(raw, object_pairs_hook=unique)
-        if (type(value) is not dict or set(value) != {'version','endpoint','server','capability'} or
+        fields = {'version','endpoint','server'} | ({'capability'} if include_capability else set())
+        if (type(value) is not dict or set(value) != fields or
                 type(value['version']) is not int or value['version'] != 2):
             raise ValueError()
         endpoint, server = value['endpoint'], value['server']
@@ -40,11 +41,15 @@ def load_profile(path):
                 not isinstance(server['image_sha256'],str) or not re.fullmatch('[0-9a-f]{64}',server['image_sha256']) or
                 any(type(server[key]) is not bool for key in ('signature_valid','app_container','hardened_runtime'))):
             raise ValueError()
-        if type(value['capability']) is not dict or len(canonical(value['capability'])) > 24000:
+        if include_capability and (type(value['capability']) is not dict or len(canonical(value['capability'])) > 24000):
             raise ValueError()
         return value
     except (ValueError, TypeError, KeyError):
         raise AXRError('authority_profile_invalid') from None
+
+
+def load_profile(path):
+    return load_connection(path, include_capability=True)
 
 
 class AuthorityFrontend:

@@ -25,12 +25,22 @@
 - 关闭：已在所有者签名任务内的披露可自动继续；authority 仍为精确操作签发短时、单次 Guard 权限，执行前后重新核验，不使用宽泛披露授权。
 - 切换：只允许已登记 owner 通过 `review-approval-setting` / `approve-approval-setting` 完成新鲜挑战签名并密封保存。版本号防止旧审批在多次切换后重放。模型没有修改开关的 MCP 工具。
 
-该开关不改变 Codex 客户端自身的工具确认设置。独立 owner GUI 与 Windows 安装登记流程仍待接通；这里已实现的是服务端配置、签名设置通道和 MCP 状态反馈，不能宣称按钮已在桌面上可用。
+该开关不改变 Codex 客户端自身的工具确认设置。已新增 Windows 受保护 owner 宿主的固定 `--owner-control` 入口；独立 owner GUI 与 Windows 安装登记流程仍待接通，不能宣称按钮已在桌面上可用。
+
+## Windows 所有者控制入口
+
+`axr-owner.exe --owner-control` 只接受“设置是否需要人工审批”，不接受配置路径、服务地址、脚本或任意待签名正文。原生宿主先检查受保护安装，再读取固定 `runtime/owner-connection.json`。该文件只有 `version: 2`、本地 `endpoint` 和完整 `server` OS 身份固定，不包含客户端任务凭证；由可信部署流程生成，服务重启后需刷新进程固定。配置不能单独授予 owner 角色，服务仍检查登记身份。
+
+本地控制协议使用有界单行 JSON：首先输入 `{"operation":"set-manual-approval","manual_approval_required":false}`；入口向本地界面输出待核对值、版本、期限及 `challenge_id`，收到精确 `{"confirm":"<challenge_id>"}` 才请求本人在场签名。取消、过期、服务 epoch 不符或硬件签名不可用均不改变设置，不重试不确定结果。此输入输出面向可信本地所有者界面，不是 MCP 工具，也不把配置写进 Codex 全局设置。
+
+**当前硬件阻断**：Windows SDK 的 `HardwareSigningKey(user_presence=True)` 仍明确报告 `windows_owner_presence_key_requires_enrolled_hello_provider`；TPM 后台签名不能代替本人在场签名。本轮验证的是真实命名管道加合成所有者签名的控制协议，尚未用真人 Hello 签名修改设置，也未创建或更换机器密钥。
 
 ## 当前证据与未完成项
 
 本机已通过真实 MCP stdio 与 Windows named pipe 完成工具发现、句柄读取、自动审批模式的单独披露、敏感值遮盖、人工草稿和回执；改变服务进程 birth 身份后拒绝数据调用。数据、签名者、权限与注册均为显式合成 fixture，使用实际原生 Guard/IPC，没有进行微信真实正文披露或发送。
 
-默认人工审批、owner 签名切换、未授权操作拒绝、撤权、过期、跨来源草稿限制和旧 epoch 回执已有针对性回归。正式原生 SDK/消费者另验证无测试密钥构造器、普通 Python 不能打开 authority 凭据；这些局部结果不替代安装和完整设备验收。
+默认人工审批、owner 签名切换、未授权操作拒绝、撤权、过期、跨来源草稿限制和旧 epoch 回执已有针对性回归。owner 控制覆盖本地取消、过期、错误 epoch、无签名提供方及真实认证管道；Windows 管道停止覆盖等待连接、未完成握手和空闲会话，避免跨线程关闭同步 I/O 时卡住。正式原生 SDK/消费者另验证无测试密钥构造器、普通 Python 不能打开 authority 凭据；这些局部结果不替代安装和完整设备验收。
+
+最新完整回归 490 项发现、454 执行通过、36 平台/链接权限跳过（65.635 秒）；owner 宿主编译通过，缺少已安装运行时及额外启动参数分别明确拒绝。没有创建硬件密钥或重复原库读取。
 
 Windows 原生服务部署、真实所有者与客户端登记、Hello/硬件、原生旧凭据迁移、新入站调度和新独立服务的真实 MCP 闭环尚未完成。应用整体准入保持关闭，没有恢复旧自动回复。Mac 的设备记录与本轮 Windows 接线分别维护，见 [平台状态](../README.md#一眼看清当前状态)。

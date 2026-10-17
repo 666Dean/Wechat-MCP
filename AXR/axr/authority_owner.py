@@ -11,7 +11,13 @@ def registration(runtime_root):
     if config.get('version')!=2 or not isinstance(module,str) or not re.fullmatch(r'axr_applications\.[a-z][a-z0-9_]{0,63}',module):raise AXRError('authority_application_registration_invalid')
     return importlib.import_module(module)
 
-def main(runtime_root):
+def main(runtime_root, operation='enroll'):
     # Native host has already verified the protected signed installation. The
     # owner role cannot read authority-only secrets, even in the same runtime.
-    registration(runtime_root).owner_enroll(runtime_root)
+    application=registration(runtime_root)
+    if operation=='enroll':return application.owner_enroll(runtime_root)
+    if operation=='control':
+        import sys
+        if sys.platform!='win32':raise AXRError('windows_owner_control_required')
+        return application.owner_control(runtime_root)
+    raise AXRError('owner_fixed_entrypoint_required')

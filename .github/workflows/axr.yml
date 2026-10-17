@@ -127,6 +127,9 @@ jobs:
           cmake --build .local-private/security-release --config Release --target axr-security-release-tests axr-authority --parallel 4
           ctest --test-dir .local-private/security-release -C Release -R AXRSecurityRelease --output-on-failure
           python scripts/validate_security_host.py .local-private/security-release
+      - name: Compile fixed owner control host (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build .local-private/security-release --config Release --target axr-owner --parallel 4
       - name: Qt Quick desktop runtime
         run: python -m pip install PySide6-Essentials==6.10.2
       - name: Security and legacy regressions

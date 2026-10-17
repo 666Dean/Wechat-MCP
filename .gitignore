@@ -35,6 +35,7 @@ dist/
 build/
 config.axr.json
 authority-profile.json
+owner-connection.json
 *.authority-profile.json
 codex-authority.toml
 *.sealed.json
