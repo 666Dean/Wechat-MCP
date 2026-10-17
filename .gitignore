@@ -34,5 +34,8 @@ dist/
 *.egg-info/
 build/
 config.axr.json
+authority-profile.json
+*.authority-profile.json
+codex-authority.toml
 *.sealed.json
 *.sealed

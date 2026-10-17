@@ -101,6 +101,18 @@ jobs:
           $env:WECHAT_TEST_NATIVE_CONSUMER = $consumer[0].FullName
           python -m unittest test_native_wechat_credentials -q
           if ($LASTEXITCODE -ne 0) { throw 'Native WCDB consumer qualification failed' }
+      - name: Formal native credential boundaries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python scripts/validate_windows_credentials.py --build .local-private/windows-production --library "$env:AXR_SQLCIPHER_LIBRARY" --compile --toolchain "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          if ($LASTEXITCODE -ne 0) { throw 'Formal native credential validation failed' }
+          $env:WECHAT_TEST_FORMAL_BUILD = "$env:GITHUB_WORKSPACE/.local-private/windows-production"
+          $env:WECHAT_TEST_REFERENCE_BUILD = "$env:GITHUB_WORKSPACE/.local-private/build"
+          "WECHAT_TEST_FORMAL_BUILD=$env:WECHAT_TEST_FORMAL_BUILD" >> $env:GITHUB_ENV
+          "WECHAT_TEST_REFERENCE_BUILD=$env:WECHAT_TEST_REFERENCE_BUILD" >> $env:GITHUB_ENV
+          python -m unittest test.test_windows_formal_credentials -q
+          if ($LASTEXITCODE -ne 0) { throw 'Formal/reference credential regressions failed' }
       - name: Native sandbox witness paths (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

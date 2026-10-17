@@ -31,6 +31,7 @@ def resources_root():
 def _configuration(value):
     if type(value) is not dict or set(value)-{'state','endpoint','application','legacy_namespace','owner_public_key'} or not {'state','endpoint','application'}<=set(value):raise AXRError('wechat_deployment_configuration_invalid')
     root=resources_root();application=dict(value['application'])
+    if type(application.get('manual_approval_required',True)) is not bool:raise AXRError('wechat_approval_setting_invalid')
     for field in ('sqlcipher_library','navigation_helper'):
         if field in application and application[field].startswith('@resources/'):
             application[field]=str((root/application[field][len('@resources/'):]).resolve(strict=True))
@@ -49,7 +50,8 @@ def owner_setup_review(value):
     return {'application':'WeChat MCP','fresh_state':config['state'],'endpoint':config['endpoint'],
         'credential_import':'native OS store to native OS store; keys never returned to Python',
         'resources':config['application']['resources'],'shard_count':len(config['application']['shards']),
-        'automatic_reply_enabled':False,'legacy_permissions_restored':False,'vendor_certificate_required':False}
+        'automatic_reply_enabled':False,'legacy_permissions_restored':False,'vendor_certificate_required':False,
+        'manual_approval_required':config['application'].get('manual_approval_required',True)}
 
 def initialize_owner(value, signer):
     config=_configuration(value);directory=Path(config['state'])
@@ -104,7 +106,7 @@ def _kernel(store,signer,owner_public_key,*,initialize=False):
     security=SecurityService(store,lambda:{},lambda:{},revoke_domain=lambda scope:None)
     pending={}
     def handler(operation,resource):
-        if operation in ('messages.search','database.query'):return credential_peer
+        if operation in ('messages.search','database.query','messages.read','disclosure.send','reply.prepare'):return credential_peer
         peer=pending.get('native')
         if peer is None:raise AXRError('wechat_native_handler_not_ready')
         return peer
@@ -139,6 +141,9 @@ def create_authority(value):
     try:
         signer=native.HardwareSigningKey('Stellaria.AXR.Root.v2')
         kernel,registry=_kernel(store,signer,value['owner_public_key'])
+        if os.name=='nt':
+            from .wechat_mcp import attach_windows_mcp
+            attach_windows_mcp(kernel,store.config()['application'])
         server=AuthorityServer(kernel,registry,value['endpoint']);server.wechat_store=store
         return server
     except BaseException:store.close();raise

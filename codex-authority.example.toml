@@ -1,0 +1,10 @@
+# Windows independent authority frontend. The service and owner enrollment must
+# be deployed separately; this configuration grants no permissions.
+[mcp_servers.wechat_authority]
+command = "C:/path/to/wechat-codex-mcp/.venv/Scripts/python.exe"
+args = ["C:/path/to/wechat-codex-mcp/server.py", "--authority-profile", "C:/private/authority-profile.json"]
+cwd = "C:/path/to/wechat-codex-mcp"
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+default_tools_approval_mode = "approve"
+enabled_tools = ["wechat_status", "wechat_read_context", "wechat_disclose_context", "wechat_prepare_reply", "axr_execute", "axr_receipt"]

@@ -39,6 +39,8 @@ class AuthorityKernel:
         if not development_fixture and not callable(recovery_verifier):raise AXRError('trusted_recovery_verifier_required')
         self.recovery_verifier=recovery_verifier
         self.development_fixture=development_fixture
+        self.application=None  # Installed application registration; never selected by a packet.
+        self.application_owner=None
         self.security=security;self.store=security.store;self.signer=signer;self.owner_public_key=owner_public_key
         self.root_public_key=signer.public_key;self.root_id=digest(self.root_public_key.hex())
         self.identity=identity;self.environment=environment;self.handler_for=handler_for;self.clock=clock
@@ -251,7 +253,15 @@ class AuthorityKernel:
         if type(packet) is not dict or set(packet)-{'operation','payload'}:raise AXRError('authority_request_invalid')
         operation=packet['operation'];p=packet.get('payload',{})
         if type(p) is not dict:raise AXRError('authority_request_invalid')
+        if operation=='Application':
+            if peer.role!='client':raise AXRError('authority_client_channel_required')
+            if not callable(self.application):raise AXRError('authority_application_unavailable')
+            return self.application(peer,p)
         if operation=='Authorize':
+            if p.get('phase') in ('review-application','approve-application','review-approval-setting','approve-approval-setting'):
+                self._owner(peer)
+                if not callable(self.application_owner):raise AXRError('authority_application_unavailable')
+                return self.application_owner(peer,p)
             if p.get('phase') in ('review-execution','approve-execution'):return self.execution_review(peer,p)
             if p.get('phase') in ('recovery-review','recover'):return self.recovery(peer,p)
             contract=TaskContract(**p['contract'])
