@@ -3,6 +3,7 @@
 #include "axr/Security.hpp"
 #include "axr/TrustRoot.hpp"
 #include "axr/WindowsHello.hpp"
+#include "axr/WindowsAttestation.hpp"
 #include "axr/ProtectedStore.hpp"
 #include "axr/Credentials.hpp"
 #include <pybind11/functional.h>
@@ -36,9 +37,15 @@ PYBIND11_MODULE(_axr_native,m) {
     m.def("constant_equal",&ConstantEqual);
     m.def("verify_root_signature",[](py::bytes key,py::bytes message,py::bytes signature){return VerifyRootSignature(std::string(key),std::string(message),std::string(signature));});
     m.def("verify_owner_signature",[](py::bytes key,py::bytes message,py::bytes signature){return VerifyOwnerSignature(std::string(key),std::string(message),std::string(signature));});
+    m.def("verify_windows_hello_statement",[](py::bytes owner,py::bytes aik,py::bytes statement){return VerifyWindowsHelloStatement(std::string(owner),std::string(aik),std::string(statement));});
+    m.def("verify_windows_hello_attestation",[](py::bytes owner,py::bytes statement,py::bytes chain,const std::vector<py::bytes>& roots){
+        std::vector<std::string> pins;for(const auto& root:roots)pins.emplace_back(root);
+        auto key=std::string(owner),blob=std::string(statement),certificates=std::string(chain);
+        py::gil_scoped_release release;return VerifyWindowsHelloAttestation(key,blob,certificates,pins);});
     py::class_<WindowsHelloOwnerKey>(m,"WindowsHelloOwnerKey")
       .def(py::init([](py::bytes key){auto value=std::string(key);py::gil_scoped_release release;return std::make_unique<WindowsHelloOwnerKey>(std::move(value));}),py::arg("expected_public_key"))
       .def_property_readonly("public_key",[](const WindowsHelloOwnerKey& key){return py::bytes(key.PublicKey());})
+      .def("attestation",[](const WindowsHelloOwnerKey& key){py::gil_scoped_release release;return key.Attestation().dump();})
       .def("sign",[](const WindowsHelloOwnerKey& key,py::bytes message){auto value=std::string(message);std::string signature;{py::gil_scoped_release release;signature=key.Sign(value);}return py::bytes(signature);});
     py::class_<HardwareSigningKey>(m,"HardwareSigningKey")
       .def(py::init<std::string,bool,bool,bool>(),py::arg("name"),py::arg("create")=false,py::arg("user_presence")=false,py::arg("owner_interaction")=false)

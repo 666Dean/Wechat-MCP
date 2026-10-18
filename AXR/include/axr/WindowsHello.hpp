@@ -13,6 +13,7 @@ public:
     WindowsHelloOwnerKey& operator=(const WindowsHelloOwnerKey&)=delete;
     std::string PublicKey() const;
     std::string Sign(std::string_view message) const;
+    Json Attestation() const; // Untrusted evidence; verifier must check roots.
 private:
     struct Impl;std::unique_ptr<Impl> impl_;
 };

@@ -251,6 +251,18 @@ replacement. The public SPKI must equal the protected installation pin. Each
 bounded `RequestSignAsync` result is verified against the exact message; no
 boolean consent, silent TPM key, creation, replacement, deletion or private-key
 export is accepted. The control entry reads the pin only from its fixed runtime.
-This does not qualify hardware: initial provisioning, attestation chain/blob/key
-binding validation, trusted registration and actual desktop Hello UI remain
-outstanding. Neither a pin file nor Hello API success is hardware attestation.
+The existing-key enrollment entry now verifies TPM2 statement/key binding and
+AIK chain/time/EKU/revocation against exclusive protected roots before emitting a
+signed challenge response. The authority additionally verifies the response
+before state writes. Initial provisioning, cross-session launch, trusted
+registration persistence and actual desktop Hello UI remain outstanding. Neither
+a pin file nor Hello API success is hardware attestation.
+
+The bounded PCP KADS profile accepts TPM2 SHA-256 names and RSA-2048 owner
+keys, requiring fixedTPM, fixedParent, sensitiveDataOrigin and signing attributes.
+Legacy PCP AIK certification uses fixed PKCS#1/SHA-1 only inside this attestation
+format; owner challenge and authority/permit algorithms are unchanged. Statement
+integrity alone never establishes trust in the supplied AIK. Certificate trust
+uses a private Windows exclusive-root engine, explicit AIK EKU, validity and
+revocation checks without error suppression. Missing roots/evidence or unknown
+revocation fails closed. See [Windows enrollment limits](../docs/WINDOWS_HELLO_ENROLLMENT.md).

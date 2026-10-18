@@ -30,7 +30,7 @@
 | 单来源推理与 Windows 隔离 | `IncomingActor`、Mac `codex_source.py` | **Windows 固定提供方、实际来源隔离和进程登记仍缺失**；JobObject 不能充当 Agent 沙箱 |
 | 全部/指定私聊及新联系人 | Mac `authorization_requests.py`、联系人快照 | **新服务目录刷新、模型申请和所有者签名扩围仍未接通**；申请本身没有权限 |
 | 人设、风格及署名设置 | Mac `assistant_settings.py` | 最终回复支持所有者配置的署名要求；**新服务偏好保存、会话固定及界面仍未接通** |
-| 独立 owner 本人签名 | `windows_owner.py`、`TrustRoot.cpp` | 固定入口已支持审批设置和精确任务审查；Windows 已补独立 RSA-2048/SPKI/PKCS#1-SHA-256 所有者验签，根签名仍限 P-256。Hello 原生既有凭据打开/逐次签名已接入固定控制入口，强制受保护交互 host、公钥固定及限时拒绝；**首次创建、硬件证明验证与可信登记仍未实现**，无实机 Hello 结论，不能代用静默 TPM 签名 |
+| 独立 owner 本人签名 | `windows_owner.py`、`TrustRoot.cpp` | 固定入口已支持审批设置和精确任务审查；Windows 已补独立 RSA-2048/SPKI/PKCS#1-SHA-256 所有者验签，根签名仍限 P-256。Hello 原生既有凭据打开/逐次签名已接入固定控制入口，强制受保护交互 host、公钥固定及限时拒绝；新增 TPM2 证明/公钥绑定、AIK 证书链与吊销核验，既有凭据登记响应已接固定入口；**首次创建、跨会话启动与可信登记保存仍未实现**，无实机 Hello 结论，不能代用静默 TPM 签名 |
 | Windows 受保护安装与迁移 | `OwnerDeployment`、`initialize_owner`、原生凭据消费者 | **Windows 应用安装、服务登记、交互所有者启动、真实凭据原生迁移及客户端登记仍未全部实现** |
 | 本地完整 GUI | `desktop/` 的 Mac/旧 Broker 参考 | **新 owner 通道的界面、范围批准、会话开始/停止和恢复接线仍缺失** |
 | 整体准入 | `wechat.release_gate` | **仍含明确未接通检查，整体关闭**；需要完成上述实现和可信资格材料流程，不能直接删除拒绝或改成 True |

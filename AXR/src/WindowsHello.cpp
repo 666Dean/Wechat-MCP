@@ -116,6 +116,21 @@ WindowsHelloOwnerKey::WindowsHelloOwnerKey(std::string expectedPublicKey):impl_(
 }
 WindowsHelloOwnerKey::~WindowsHelloOwnerKey()=default;
 std::string WindowsHelloOwnerKey::PublicKey() const {return impl_->publicKey;}
+Json WindowsHelloOwnerKey::Attestation() const {
+#if defined(_WIN32)
+    try{
+        Apartment apartment;
+        auto result=Await(impl_->key.GetAttestationAsync(),std::chrono::seconds(30));
+        if(result.Status()!=KeyCredentialAttestationStatus::Success)throw std::runtime_error("hello_attestation_unavailable");
+        auto statement=Bytes(result.AttestationBuffer(),65536),chain=Bytes(result.CertificateChainBuffer(),65536);
+        auto hex=[](std::string_view value){constexpr char digits[]="0123456789abcdef";std::string out;out.reserve(value.size()*2);
+            for(unsigned char c:value){out+=digits[c>>4];out+=digits[c&15];}return out;};
+        return {{"statement",hex(statement)},{"certificate_chain",hex(chain)}};
+    }catch(const winrt::hresult_error&){throw std::runtime_error("hello_attestation_failed_or_unavailable");}
+#else
+    throw std::runtime_error("windows_hello_required");
+#endif
+}
 std::string WindowsHelloOwnerKey::Sign(std::string_view message) const {
     if(message.empty()||message.size()>MaximumFrameBytes)throw std::runtime_error("hello_message_budget");
 #if defined(_WIN32)

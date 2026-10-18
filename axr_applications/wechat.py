@@ -93,9 +93,12 @@ def initialize_owner(value, signer):
         actual=process_identity(process.pid)
         if Path(actual['image'])!=owner or actual.get('signature_valid') is not True or actual.get('hardened_runtime') is not True or actual.get('signing_id')!='org.stellaria.axr.owner':raise AXRError('wechat_owner_host_identity_required')
         raw,_=process.communicate(canonical(challenge)+b'\n',timeout=180)
-        if len(raw)>32768 or process.returncode:raise AXRError('wechat_owner_enrollment_failed')
+        if len(raw)>(300000 if os.name=='nt' else 32768) or process.returncode:raise AXRError('wechat_owner_enrollment_failed')
         response=json.loads(raw)
         if response.get('challenge')!=challenge or not native.verify_owner_signature(bytes.fromhex(response['public_key']),canonical(challenge),bytes.fromhex(response['signature'])):raise AXRError('wechat_owner_enrollment_signature_invalid')
+        if os.name=='nt':
+            from .windows_enrollment import trust_roots,validate_response
+            validate_response(challenge,response,trust_roots(resources_root()))
     finally:
         if process.poll() is None:process.kill();process.wait()
     with __import__('contextlib').closing(OwnerStore(directory,provision=True,authority_service=True)) as store:

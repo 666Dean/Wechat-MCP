@@ -7,6 +7,9 @@ from axr import _axr_native as native
 from axr.aet import AXRError, canonical
 
 def main(runtime_root):
+    if sys.platform=='win32':
+        from .windows_enrollment import main as windows_main
+        return windows_main(runtime_root)
     raw=sys.stdin.buffer.readline(32769)
     if len(raw)>32768:raise AXRError('owner_enrollment_frame_budget')
     challenge=json.loads(raw)
