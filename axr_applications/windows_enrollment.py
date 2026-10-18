@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: MIT
-"""Existing Hello owner enrollment evidence, without implicit hardware trust.
+"""Hello first/existing owner enrollment, without implicit hardware trust.
 
 The native host protects installation files. Certificate evidence only travels
 over its private setup channel; never return it from MCP or put it in logs.
-Initial key creation and cross-session setup transport are separate code paths.
+First creation is a separately reviewed native operation, never an error
+fallback for an existing pin. Cross-session setup transport remains separate.
 """
 import json
+from pathlib import Path
+from datetime import datetime
 import sys
 import time
 from axr import _axr_native as native
@@ -70,6 +73,33 @@ def validate_response(challenge,response,roots,*,clock=time.time):
         raise AXRError('wechat_owner_hardware_enrollment_invalid') from None
 
 
+def first_enrollment_review(configuration,challenge):
+    # Values are quoted to prevent embedded newlines/control characters from
+    # impersonating headings or scope. This text stays on the local owner UI.
+    def quote(value):return json.dumps(value,ensure_ascii=False)
+    app=configuration['application']
+    lines=['微信代理首次登记','请核对本次安装和联系人范围。确认后将请求 Windows Hello 创建所有者密钥。',
+        '后续任务仍需单独授权。','',f"账户：{quote(app['account_id'])}",
+        f"安装状态目录：{quote(configuration['state'])}",f"本地服务：{quote(configuration['endpoint'])}",
+        '人工审批：'+('开启' if app.get('manual_approval_required',True) else '关闭'),
+        '自动回复：未启用','',f"联系人范围（{len(app['resources'])} 项）："]
+    lines.extend(quote(row['conversation_id']) for row in app['resources'])
+    lines.extend(['',f"配置指纹：{challenge['configuration_digest']}",
+        '确认截止：'+datetime.fromtimestamp(challenge['expires']).astimezone().isoformat(timespec='seconds')])
+    review='\r\n'.join(lines)
+    if len(review.encode('utf-8'))>65536:raise AXRError('owner_enrollment_review_budget')
+    return review
+
+
+def enrollment_key(runtime_root,configuration,challenge):
+    # A missing file is the only first-enrollment case. Invalid/unreadable pins
+    # or unavailable existing credentials must never fall through to creation.
+    try:(Path(runtime_root)/'owner-key.json').lstat()
+    except FileNotFoundError:
+        return native.provision_windows_hello_owner(first_enrollment_review(configuration,challenge),challenge['expires'])
+    return enrolled_key(runtime_root)
+
+
 def respond(runtime_root,source,emit,*,clock=time.time):
     challenge=frame(source);now=clock()
     try:
@@ -84,10 +114,11 @@ def respond(runtime_root,source,emit,*,clock=time.time):
                 type(registration['version']) is not int or registration['version']!=2 or
                 registration['application_module']!='axr_applications.wechat'):raise ValueError()
         from .wechat import _configuration
-        if digest(_configuration(registration['deployment']))!=challenge['configuration_digest']:raise ValueError()
+        configuration=_configuration(registration['deployment'])
+        if digest(configuration)!=challenge['configuration_digest']:raise ValueError()
     except (ValueError,TypeError,KeyError):raise AXRError('owner_enrollment_challenge_invalid') from None
     roots=trust_roots(runtime_root)
-    key=enrolled_key(runtime_root) # Existing pin only; no creation or fallback.
+    key=enrollment_key(runtime_root,configuration,challenge)
     evidence=json.loads(key.attestation())
     try:validate_attestation(key.public_key,evidence,roots)
     except (ValueError,TypeError,KeyError):raise AXRError('wechat_owner_hardware_enrollment_invalid') from None

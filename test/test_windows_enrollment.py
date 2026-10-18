@@ -24,7 +24,7 @@ class ExistingOwnerEnrollment(unittest.TestCase):
     def setUpClass(cls):cls.e=Evidence()
     def setUp(self):
         self.temporary=tempfile.TemporaryDirectory();self.addCleanup(self.temporary.cleanup)
-        self.root=Path(self.temporary.name).resolve();self.outputs=[]
+        self.root=Path(self.temporary.name).resolve();self.outputs=[];self.signed=[]
         self.config={'state':str(self.root/'new-state'),'endpoint':r'\\.\pipe\Stellaria.AXR.fixture' if sys.platform=='win32' else '/tmp/axr-fixture.sock',
             'application':{'account_id':'fixture-self','resources':[{'platform':'wechat',
                 'account_id':'fixture-self','conversation_id':'fixture-peer'}]}}
@@ -33,13 +33,15 @@ class ExistingOwnerEnrollment(unittest.TestCase):
         self.evidence={'statement':self.e.statement().hex(),'certificate_chain':self.e.chain().hex()}
         self.write('deployment.json',{'version':2,'application_module':'axr_applications.wechat','deployment':self.config})
         self.write('hello-trust.json',{'version':2,'roots':[r.hex() for r in self.e.roots]})
-    def write(self,name,value):(self.root/name).write_bytes(canonical(value))
+        self.write('owner-key.json',{'version':2,'provider':'WindowsHello/RSA2048','public_key':public(self.e.owner).hex()})
+    def write(self,name,value):(self.root/name).write_bytes(canonical(value)+b'\n')
     def key(self):
         fixture=self
         class Key:
             public_key=public(fixture.e.owner)
             def attestation(self):return json.dumps(fixture.evidence)
             def sign(self,message):
+                fixture.signed.append(message)
                 from cryptography.hazmat.primitives import hashes
                 from cryptography.hazmat.primitives.asymmetric import padding
                 return fixture.e.owner.sign(message,padding.PKCS1v15(),hashes.SHA256())
@@ -76,6 +78,7 @@ class ExistingOwnerEnrollment(unittest.TestCase):
         self.evidence['statement']=self.e.statement(name=b'wrong').hex()
         with self.assertRaisesRegex(AXRError,'hardware_enrollment_invalid'):self.respond()
         self.assertEqual(self.outputs,[])
+        self.assertEqual(self.signed,[])
     @unittest.skipUnless(sys.platform=='win32','native Windows evidence verifier')
     def test_changed_challenge_proof_or_claim_only_cannot_enroll(self):
         response,_=self.respond()
@@ -87,3 +90,45 @@ class ExistingOwnerEnrollment(unittest.TestCase):
                 enrollment.validate_response(self.challenge,value,self.e.roots)
         with self.assertRaisesRegex(AXRError,'hardware_enrollment_invalid'):
             enrollment.validate_response(self.challenge,response,self.e.roots,clock=lambda:self.challenge['expires']+1)
+
+    @unittest.skipUnless(sys.platform=='win32','native Windows evidence verifier')
+    def test_first_creation_routes_exact_local_review_without_saving_a_pin(self):
+        (self.root/'owner-key.json').unlink()
+        with patch.object(enrollment.native,'provision_windows_hello_owner',return_value=self.key()) as create:
+            response,existing=self.respond()
+        existing.assert_not_called()
+        review,expires=create.call_args.args
+        self.assertIn(self.challenge['configuration_digest'],review)
+        self.assertIn('fixture-self',review);self.assertIn('fixture-peer',review)
+        self.assertEqual(expires,self.challenge['expires'])
+        self.assertEqual(response['public_key'],public(self.e.owner).hex())
+        self.assertEqual(self.signed,[canonical(self.challenge)])
+        self.assertFalse((self.root/'owner-key.json').exists())
+        self.assertFalse((self.root/'new-state').exists())
+    def test_invalid_existing_pin_never_falls_back_to_creation(self):
+        (self.root/'owner-key.json').write_bytes(b'not a pin\n')
+        with patch.object(enrollment.native,'provision_windows_hello_owner') as create,patch.object(
+                wechat,'resources_root',return_value=self.root):
+            with self.assertRaisesRegex(AXRError,'enrolled_key_pin_required'):
+                enrollment.respond(self.root,io.BytesIO(canonical(self.challenge)+b'\n'),self.outputs.append)
+            create.assert_not_called()
+        self.assertEqual(self.outputs,[])
+    def test_missing_roots_prevent_first_creation(self):
+        (self.root/'owner-key.json').unlink();(self.root/'hello-trust.json').unlink()
+        with patch.object(enrollment.native,'provision_windows_hello_owner') as create:
+            with self.assertRaisesRegex(AXRError,'trust_roots_required'):self.respond()
+            create.assert_not_called()
+        self.assertEqual(self.outputs,[])
+    def test_cancelled_first_creation_emits_nothing_and_has_no_software_fallback(self):
+        (self.root/'owner-key.json').unlink()
+        with patch.object(enrollment.native,'provision_windows_hello_owner',side_effect=RuntimeError('hello_enrollment_cancelled_or_expired')):
+            with self.assertRaisesRegex(RuntimeError,'cancelled_or_expired'):self.respond()
+        self.assertEqual(self.outputs,[]);self.assertEqual(self.signed,[])
+        self.assertFalse((self.root/'owner-key.json').exists())
+    @unittest.skipUnless(sys.platform=='win32','native Windows evidence verifier')
+    def test_expiry_during_creation_or_attestation_prevents_challenge_signature(self):
+        (self.root/'owner-key.json').unlink()
+        clock=iter((time.time(),self.challenge['expires']+1))
+        with patch.object(enrollment.native,'provision_windows_hello_owner',return_value=self.key()):
+            with self.assertRaisesRegex(AXRError,'challenge_expired'):self.respond(clock=lambda:next(clock))
+        self.assertEqual(self.outputs,[]);self.assertEqual(self.signed,[])

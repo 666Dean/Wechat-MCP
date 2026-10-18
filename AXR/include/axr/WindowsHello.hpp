@@ -2,12 +2,14 @@
 #pragma once
 #include "Core.hpp"
 namespace Stellaria::AXR {
-// Existing, enrolled owner credential only. No creation, replacement, deletion,
-// software fallback or private-key export. Enrollment must qualify hardware
-// separately; a successful Hello signature is not hardware attestation.
+// The constructor only opens an enrolled, pinned credential. Provision is a
+// separate, locally reviewed first-enrollment path with FailIfExists. Neither
+// path replaces/deletes keys or supplies software fallback/private-key export.
+// A successful Hello signature is not hardware attestation.
 class WindowsHelloOwnerKey {
 public:
     explicit WindowsHelloOwnerKey(std::string expectedPublicKey);
+    static std::unique_ptr<WindowsHelloOwnerKey> Provision(std::string review,double expires);
     ~WindowsHelloOwnerKey();
     WindowsHelloOwnerKey(const WindowsHelloOwnerKey&)=delete;
     WindowsHelloOwnerKey& operator=(const WindowsHelloOwnerKey&)=delete;
@@ -15,6 +17,7 @@ public:
     std::string Sign(std::string_view message) const;
     Json Attestation() const; // Untrusted evidence; verifier must check roots.
 private:
+    WindowsHelloOwnerKey();
     struct Impl;std::unique_ptr<Impl> impl_;
 };
 }

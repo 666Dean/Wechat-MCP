@@ -249,13 +249,19 @@ Before any WinRT call, native code requires the fixed interactive owner host and
 an installation/dependency tree protected against untrusted writes and reparse
 replacement. The public SPKI must equal the protected installation pin. Each
 bounded `RequestSignAsync` result is verified against the exact message; no
-boolean consent, silent TPM key, creation, replacement, deletion or private-key
-export is accepted. The control entry reads the pin only from its fixed runtime.
+boolean consent, silent TPM key, replacement, deletion or private-key export is
+accepted. The existing-key constructor cannot create a key. The control entry reads the pin only from its fixed runtime.
 The existing-key enrollment entry now verifies TPM2 statement/key binding and
 AIK chain/time/EKU/revocation against exclusive protected roots before emitting a
 signed challenge response. The authority additionally verifies the response
-before state writes. Initial provisioning, cross-session launch, trusted
-registration persistence and actual desktop Hello UI remain outstanding. Neither
+before state writes. A separate first-enrollment path now reviews the exact local configuration and
+scope, defaults to cancel, bounds wall/monotonic review time and calls only
+RequestCreateAsync(FailIfExists). Missing pins alone select creation; malformed
+pins or unavailable existing credentials never do. Ordinary Python is rejected
+before review or WinRT. Interrupted creation may leave an unqualified OS key;
+there is no silent replacement, deletion or retry. Cross-session launch, trusted
+registration persistence, explicit interrupted-creation recovery and actual
+desktop Hello/review UI validation remain outstanding. Neither
 a pin file nor Hello API success is hardware attestation.
 
 The bounded PCP KADS profile accepts TPM2 SHA-256 names and RSA-2048 owner

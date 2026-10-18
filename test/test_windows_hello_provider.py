@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import time
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -46,6 +47,15 @@ class EnrolledHelloRouting(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform=='win32','Windows native host refusal')
 class NativeHelloRefusal(unittest.TestCase):
+    def test_first_creation_review_and_deadline_are_bounded_before_os_requests(self):
+        for review,expires in (('',time.time()+60),('x'*65537,time.time()+60),('x\0y',time.time()+60),
+                              ('review',0),('review',float('inf')),('review',float('nan')),('review',time.time()+1000)):
+            with self.assertRaisesRegex(RuntimeError,'hello_enrollment_review_invalid'):
+                native.provision_windows_hello_owner(review,expires)
+    def test_normal_python_cannot_review_or_create_a_key(self):
+        script="import time\nfrom axr import _axr_native as n\ntry:n.provision_windows_hello_owner('synthetic review',time.time()+60)\nexcept RuntimeError as e:\n assert str(e)=='hello_protected_owner_host_required',str(e)\nelse:raise AssertionError('ordinary Python provisioned Hello')"
+        result=subprocess.run([sys.executable,'-c',script],capture_output=True,timeout=10)
+        self.assertEqual(result.returncode,0,result.stderr.decode(errors='replace'))
     def test_public_key_pin_is_bounded_before_any_os_request(self):
         for public in (b'',b'a'*293,b'a'*295,b'a'*(1024*1024)):
             with self.assertRaisesRegex(RuntimeError,'hello_enrolled_public_key_required'):

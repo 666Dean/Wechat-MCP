@@ -15,12 +15,16 @@ protected:
 };
 int main(){
 #if defined(_WIN32)
-    // This test executable is not a protected owner host. Both checks must fail
+    // This test executable is not a protected owner host. All checks must fail
     // before WinRT discovery/UI, in reference as well as security builds.
     bool helloDenied=false;
     try{WindowsHelloOwnerKey key("");}catch(const std::exception& e){helloDenied=std::string(e.what())=="hello_enrolled_public_key_required";}
     assert(helloDenied);helloDenied=false;
     try{WindowsHelloOwnerKey key(std::string(294,'x'));}catch(const std::exception& e){helloDenied=std::string(e.what())=="hello_protected_owner_host_required";}
+    assert(helloDenied);
+    helloDenied=false;
+    try{auto key=WindowsHelloOwnerKey::Provision("synthetic first-enrollment review",Now()+60);}
+    catch(const std::exception& e){helloDenied=std::string(e.what())=="hello_protected_owner_host_required";}
     assert(helloDenied);
 #endif
     auto now=Now();Json resource={{"platform","fixture"},{"account_id","a"},{"conversation_id","b"}};

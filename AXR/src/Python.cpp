@@ -47,6 +47,7 @@ PYBIND11_MODULE(_axr_native,m) {
       .def_property_readonly("public_key",[](const WindowsHelloOwnerKey& key){return py::bytes(key.PublicKey());})
       .def("attestation",[](const WindowsHelloOwnerKey& key){py::gil_scoped_release release;return key.Attestation().dump();})
       .def("sign",[](const WindowsHelloOwnerKey& key,py::bytes message){auto value=std::string(message);std::string signature;{py::gil_scoped_release release;signature=key.Sign(value);}return py::bytes(signature);});
+    m.def("provision_windows_hello_owner",&WindowsHelloOwnerKey::Provision,py::arg("review"),py::arg("expires"),py::call_guard<py::gil_scoped_release>());
     py::class_<HardwareSigningKey>(m,"HardwareSigningKey")
       .def(py::init<std::string,bool,bool,bool>(),py::arg("name"),py::arg("create")=false,py::arg("user_presence")=false,py::arg("owner_interaction")=false)
       .def_property_readonly("public_key",[](const HardwareSigningKey& k){return py::bytes(k.PublicKey());})
