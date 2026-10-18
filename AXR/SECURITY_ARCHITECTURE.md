@@ -41,6 +41,16 @@ identity and a short challenge signed by the separate owner-presence key. The
 challenge covers the exact reviewed contract, owner, peer instance, epoch, nonce
 and deadline. The agent connection cannot issue owner challenges.
 
+Windows owner challenge verification has a separate native boundary:
+`verify_owner_signature` accepts the existing P-256 point/signature format or
+canonical RSA-2048 SubjectPublicKeyInfo with exponent 65537 and a 256-byte
+PKCS#1 v1.5/SHA-256 signature. Other encodings, padding and digest algorithms are
+refused. Authority roots, task capabilities and native execution permits still
+use the P-256-only root verifier. This verifies an already enrolled owner's
+challenge; it is not a key-enrollment API or evidence of Hello/TPM provenance.
+The Windows owner-presence provider, attestation and protected enrollment remain
+separate deployment requirements. No hardware keys are created by verification.
+
 Access binds each immutable action seal and execution ID to a contract. Commit
 reserves the task quota and AET grant before issuing a short proof bound to one
 registered handler instance. That handler claims on its own authenticated channel.

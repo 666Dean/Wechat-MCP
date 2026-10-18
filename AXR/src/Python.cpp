@@ -34,6 +34,7 @@ PYBIND11_MODULE(_axr_native,m) {
     m.def("digest",&Digest);
     m.def("constant_equal",&ConstantEqual);
     m.def("verify_root_signature",[](py::bytes key,py::bytes message,py::bytes signature){return VerifyRootSignature(std::string(key),std::string(message),std::string(signature));});
+    m.def("verify_owner_signature",[](py::bytes key,py::bytes message,py::bytes signature){return VerifyOwnerSignature(std::string(key),std::string(message),std::string(signature));});
     py::class_<HardwareSigningKey>(m,"HardwareSigningKey")
       .def(py::init<std::string,bool,bool,bool>(),py::arg("name"),py::arg("create")=false,py::arg("user_presence")=false,py::arg("owner_interaction")=false)
       .def_property_readonly("public_key",[](const HardwareSigningKey& k){return py::bytes(k.PublicKey());})

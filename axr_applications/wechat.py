@@ -95,7 +95,7 @@ def initialize_owner(value, signer):
         raw,_=process.communicate(canonical(challenge)+b'\n',timeout=180)
         if len(raw)>32768 or process.returncode:raise AXRError('wechat_owner_enrollment_failed')
         response=json.loads(raw)
-        if response.get('challenge')!=challenge or not native.verify_root_signature(bytes.fromhex(response['public_key']),canonical(challenge),bytes.fromhex(response['signature'])):raise AXRError('wechat_owner_enrollment_signature_invalid')
+        if response.get('challenge')!=challenge or not native.verify_owner_signature(bytes.fromhex(response['public_key']),canonical(challenge),bytes.fromhex(response['signature'])):raise AXRError('wechat_owner_enrollment_signature_invalid')
     finally:
         if process.poll() is None:process.kill();process.wait()
     with __import__('contextlib').closing(OwnerStore(directory,provision=True,authority_service=True)) as store:

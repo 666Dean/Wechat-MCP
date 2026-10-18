@@ -7,6 +7,8 @@
 #include <openssl/evp.h>
 #include <openssl/ec.h>
 #include <openssl/ecdsa.h>
+#include <openssl/rsa.h>
+#include <openssl/x509.h>
 #if defined(__APPLE__)
 #include <Security/Security.h>
 #include <unistd.h>
@@ -166,5 +168,32 @@ bool VerifyRootSignature(std::string_view publicKey,std::string_view message,std
     std::unique_ptr<EVP_MD_CTX,decltype(&EVP_MD_CTX_free)> context(EVP_MD_CTX_new(),EVP_MD_CTX_free);
     return context&&EVP_DigestVerifyInit(context.get(),nullptr,EVP_sha256(),nullptr,key.get())==1&&
         EVP_DigestVerify(context.get(),reinterpret_cast<const unsigned char*>(signature.data()),signature.size(),reinterpret_cast<const unsigned char*>(message.data()),message.size())==1;
+}
+bool VerifyOwnerSignature(std::string_view publicKey,std::string_view message,std::string_view signature){
+    if(publicKey.size()==65)return VerifyRootSignature(publicKey,message,signature);
+#if defined(_WIN32)
+    // A bounded canonical profile, not generic ASN.1 algorithm negotiation.
+    // Never accept this format as an authority root or execution permit key.
+    if(publicKey.size()!=294||signature.size()!=256||message.size()>MaximumFrameBytes)return false;
+    auto cursor=reinterpret_cast<const unsigned char*>(publicKey.data());
+    const auto end=cursor+publicKey.size();
+    std::unique_ptr<EVP_PKEY,decltype(&EVP_PKEY_free)> key(d2i_PUBKEY(nullptr,&cursor,long(publicKey.size())),EVP_PKEY_free);
+    if(!key||cursor!=end||EVP_PKEY_is_a(key.get(),"RSA")!=1||EVP_PKEY_get_bits(key.get())!=2048)return false;
+    BIGNUM* rawExponent=nullptr;
+    if(EVP_PKEY_get_bn_param(key.get(),OSSL_PKEY_PARAM_RSA_E,&rawExponent)!=1)return false;
+    std::unique_ptr<BIGNUM,decltype(&BN_free)> exponent(rawExponent,BN_free);
+    if(!BN_is_word(exponent.get(),65537))return false;
+    int size=i2d_PUBKEY(key.get(),nullptr);if(size!=int(publicKey.size()))return false;
+    std::string encoded(size,'\0');auto output=reinterpret_cast<unsigned char*>(encoded.data());
+    if(i2d_PUBKEY(key.get(),&output)!=size||encoded!=publicKey)return false;
+    std::unique_ptr<EVP_MD_CTX,decltype(&EVP_MD_CTX_free)> context(EVP_MD_CTX_new(),EVP_MD_CTX_free);
+    EVP_PKEY_CTX* operation=nullptr;
+    return context&&EVP_DigestVerifyInit(context.get(),&operation,EVP_sha256(),nullptr,key.get())==1&&
+        operation&&EVP_PKEY_CTX_set_rsa_padding(operation,RSA_PKCS1_PADDING)>0&&
+        EVP_DigestVerify(context.get(),reinterpret_cast<const unsigned char*>(signature.data()),signature.size(),
+            reinterpret_cast<const unsigned char*>(message.data()),message.size())==1;
+#else
+    return false;
+#endif
 }
 }

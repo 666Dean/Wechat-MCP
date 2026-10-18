@@ -102,7 +102,7 @@ class AuthorityKernel:
             challenge=self.challenges.pop(challenge_id,None)
             if (not challenge or challenge['expires']<=self.clock() or challenge['peer']!=peer.witness or
                     challenge['scope']!=digest(body) or challenge['owner']!=contract.owner):raise AXRError('owner_challenge_expired_or_changed')
-            try:verified=native.verify_root_signature(self.owner_public_key,canonical(challenge),bytes.fromhex(owner_signature))
+            try:verified=native.verify_owner_signature(self.owner_public_key,canonical(challenge),bytes.fromhex(owner_signature))
             except Exception:verified=False
             if not verified:raise AXRError('owner_presence_signature_required')
             self.security.authorize(contract,lambda:peer.principal)
@@ -123,7 +123,7 @@ class AuthorityKernel:
             return {'challenge':value,'authority_restored':False}
         challenge=self.challenges.pop(payload.get('challenge_id'),None)
         if not challenge or challenge.get('kind')!='recovery' or challenge['peer']!=peer.witness or challenge['owner']!=peer.principal or challenge['scope']!=scope or challenge['expires']<=self.clock() or challenge['state_digest']!=digest(state):raise AXRError('recovery_review_changed_or_expired')
-        try:verified=native.verify_root_signature(self.owner_public_key,canonical(challenge),bytes.fromhex(payload['owner_signature']))
+        try:verified=native.verify_owner_signature(self.owner_public_key,canonical(challenge),bytes.fromhex(payload['owner_signature']))
         except Exception:verified=False
         if not verified:raise AXRError('owner_presence_signature_required')
         if not callable(self.recovery_verifier):raise AXRError('trusted_recovery_verifier_required')
@@ -145,7 +145,7 @@ class AuthorityKernel:
             return {'challenge':challenge,'review':{'contract_id':contract_id,'action':asdict(action),'general_execution':True}}
         challenge=self.challenges.pop(payload['challenge_id'],None)
         if not challenge or challenge.get('kind')!='execution-review' or challenge['owner']!=peer.principal or challenge['peer']!=peer.witness or challenge['scope']!=scope or challenge['expires']<=now:raise AXRError('owner_execution_review_changed_or_expired')
-        try:verified=native.verify_root_signature(self.owner_public_key,canonical(challenge),bytes.fromhex(payload['owner_signature']))
+        try:verified=native.verify_owner_signature(self.owner_public_key,canonical(challenge),bytes.fromhex(payload['owner_signature']))
         except Exception:verified=False
         if not verified:raise AXRError('owner_presence_signature_required')
         result=self.security.approve_execution(action,contract_id,lambda:peer.principal)

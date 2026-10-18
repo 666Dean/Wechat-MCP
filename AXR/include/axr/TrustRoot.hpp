@@ -17,4 +17,8 @@ private:
     struct Impl;std::unique_ptr<Impl> impl_;
 };
 bool VerifyRootSignature(std::string_view publicKey,std::string_view message,std::string_view signature);
+// Owner keys have their own enrollment and verification boundary. Windows
+// Hello uses canonical RSA-2048 SPKI and PKCS#1/SHA-256; authority roots and
+// native execution permits remain P-256, including on Windows.
+bool VerifyOwnerSignature(std::string_view publicKey,std::string_view message,std::string_view signature);
 }

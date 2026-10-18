@@ -254,7 +254,7 @@ class WeChatMCPApplication:
                 challenge['contract']!=task['id'] or challenge['seal']!=action.seal or challenge['expires']<=now):
             raise AXRError('wechat_owner_review_expired_or_changed')
         from axr import _axr_native as native
-        try:valid = native.verify_root_signature(self.kernel.owner_public_key,canonical(challenge),bytes.fromhex(packet['owner_signature']))
+        try:valid = native.verify_owner_signature(self.kernel.owner_public_key,canonical(challenge),bytes.fromhex(packet['owner_signature']))
         except Exception:valid = False
         if not valid:raise AXRError('owner_presence_signature_required')
         from axr.owner import approve
@@ -286,7 +286,7 @@ class WeChatMCPApplication:
                 challenge['generation']!=self.approval_setting_generation or challenge['expires']<=now):
             raise AXRError('wechat_owner_review_expired_or_changed')
         from axr import _axr_native as native
-        try:valid = native.verify_root_signature(self.kernel.owner_public_key,canonical(challenge),bytes.fromhex(packet['owner_signature']))
+        try:valid = native.verify_owner_signature(self.kernel.owner_public_key,canonical(challenge),bytes.fromhex(packet['owner_signature']))
         except Exception:valid = False
         if not valid:raise AXRError('owner_presence_signature_required')
         if not callable(self.save_approval_setting):raise AXRError('wechat_approval_setting_store_unavailable')
