@@ -56,6 +56,8 @@ class ServiceTests(unittest.TestCase):
         with patch.dict(sys.modules,{'axr_applications._wechat_credentials':module}),patch.object(axr_applications,'_wechat_credentials',module,create=True),patch('axr_applications.wechat_service.NativeDatabase',Database):
             self.service=WeChatService(self.kernel,SimpleNamespace(user='fixture-user'),self.config,'fixture-endpoint')
         self.kernel.application=self.service
+        binding=patch.object(self.service,'inspect_binding',return_value={'fixture':True})
+        binding.start();self.addCleanup(binding.stop)
         self.addCleanup(self.stop)
     def stop(self):
         self.service.stop();self.service.stop_event.set();self.service.worker_event.set()
@@ -75,6 +77,82 @@ class ServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(AXRError,'expired_or_changed'):self.service.activate(self.owner,review['challenge']['nonce'],'00')
         self.activate(seconds=0,max_replies=0);self.assertTrue(self.service.scope['expires']==0)
         self.assertLessEqual(self.service.capability['body']['contract']['expires']-time.time(),3600)
+    def test_window_and_account_preflight_precede_hardware_challenge(self):
+        with patch.object(self.service,'inspect_binding',side_effect=AXRError('wechat_main_window_unavailable')):
+            with self.assertRaisesRegex(AXRError,'main_window_unavailable'):
+                self.service.review(self.owner,{'targets':'all','automatic':True})
+        self.assertEqual(self.service.reviews,{})
+        self.assertIsNone(self.service.scope)
+        with patch.object(self.service,'inspect_binding') as binding:
+            self.service.review(self.owner,{'targets':'all','automatic':False})
+            binding.assert_not_called()
+    def test_navigation_failure_keeps_only_a_bounded_native_reason(self):
+        self.activate()
+        for reason,expected in [('authority_or_scope_changed','authority_or_scope_changed'),('private text/path','unconfirmed')]:
+            with self.subTest(reason=reason),patch.object(self.service,'binding',return_value={'window_id':1}),patch.object(self.service.navigation,'invoke',return_value={
+                'receipt':{'state':'Unknown'},'native':{'error':reason}}):
+                with self.assertRaisesRegex(AXRError,'^wechat_navigation_complete_'+expected+'$'):
+                    self.service.navigate('fixture-peer')
+    def test_owner_target_check_does_not_grant_scope_or_submit(self):
+        packet={'operation':'WeChatOwner','payload':{'method':'check_target','arguments':{'conversation_id':'fixture-peer'}}}
+        with self.assertRaisesRegex(AXRError,'scope_stopped'):self.service.dispatch(self.owner,packet)
+        self.activate()
+        with patch.object(self.service,'navigate') as navigate,patch.object(self.service,'nav_state',return_value=[{'draft':'private draft'}]):
+            result=self.service.dispatch(self.owner,packet)
+        self.assertTrue(result['navigation_verified']);self.assertTrue(result['draft_present'])
+        self.assertFalse(result['send_invoked']);self.assertNotIn('private draft',str(result));navigate.assert_called_once()
+        with self.assertRaises(AXRError):self.kernel.dispatch(self.client,packet)
+    def test_navigation_is_one_exact_transaction_and_stop_blocks_followup_reads(self):
+        self.activate();phases=[]
+        def invoke(action,check):
+            phases.append(action.payload['navigation_binding']['phase'])
+            self.service.stop()
+            return {'receipt':{'state':'Completed'}}
+        with patch.object(self.service,'binding',return_value={'window_id':1}),patch.object(self.service.navigation,'invoke',side_effect=invoke):
+            with self.assertRaisesRegex(AXRError,'scope_stopped'):self.service.navigate('fixture-peer')
+        self.assertEqual(phases,['complete'])
+    def test_live_input_protection_is_not_inferred_from_stale_cached_text(self):
+        self.activate()
+        with patch.object(self.service,'nav_state',return_value=[{'draft':'existing'}]), \
+             patch.object(self.service,'read',return_value={'messages':[],'has_more':False,'cursor':{}}), \
+             patch.object(self.service,'navigate',return_value=({'window_id':1},0,[])) as navigate, \
+             patch.object(self.service.navigation,'invoke',return_value={'receipt':{'state':'Unknown'},'native':{'error':'existing_input_preserved'}}) as ui:
+            with self.assertRaisesRegex(AXRError,'existing_draft_preserved'):self.service.send('fixture-peer','new text')
+        navigate.assert_called_once();self.assertEqual(ui.call_args.args[0].payload['visual_binding']['draft_policy'],'preserve')
+    def test_force_overwrite_is_owner_signed_and_cannot_be_truthy_text(self):
+        with self.assertRaisesRegex(AXRError,'scope_invalid'):self.service.review(self.owner,{'targets':'all','overwrite_drafts':'yes'})
+        value=self.activate(overwrite_drafts=True)
+        self.assertIs(value['scope']['overwrite_drafts'],True)
+        with patch.object(self.service,'nav_state',return_value=[{'draft':'existing'}]), \
+             patch.object(self.service,'read',return_value={'messages':[],'has_more':False,'cursor':{}}), \
+             patch.object(self.service,'navigate',return_value=({'window_id':1},0,[])), \
+             patch.object(self.service.navigation,'invoke',return_value={'receipt':{'state':'Unknown'},'native':{'error':'existing_input_preserved'}}) as ui:
+            with self.assertRaisesRegex(AXRError,'existing_draft_preserved'):self.service.send('fixture-peer','new text')
+        self.assertEqual(ui.call_args.args[0].payload['visual_binding']['draft_policy'],'replace')
+    def test_read_only_target_cannot_be_sent_to_through_mcp_or_dispatcher(self):
+        self.activate(reply_targets=['fixture-owner'])
+        self.call('wechat_read_messages',conversation_id='fixture-peer')
+        self.assertEqual(self.call('wechat_prepare_reply',conversation_id='fixture-peer',text='manual draft')['state'],'Draft')
+        with self.assertRaisesRegex(AXRError,'send_target_not_authorized'):
+            self.call('wechat_send_message',conversation_id='fixture-peer',text='new reply',request_id='fixed-request')
+        with patch.object(self.service.navigation,'invoke') as ui:
+            with self.assertRaisesRegex(AXRError,'send_target_not_authorized'):self.service.send('fixture-peer','new reply')
+            ui.assert_not_called()
+    def test_query_submission_without_copy_still_requires_exact_fresh_recipient(self):
+        self.activate()
+        result={'receipt':{'state':'Completed'},'native':{'navigation_invoked':True,
+            'query_input_submitted':True,'main_window_verified':True,'send_invoked':False}}
+        label=self.service.catalog['fixture-peer']['display_name']
+        with patch.object(self.service,'binding',return_value={'window_id':1}), \
+             patch.object(self.service.navigation,'invoke',return_value=result), \
+             patch.object(self.service,'nav_state',return_value=[{'username':'fixture-other','query':label,'last_click_time':time.time()}]):
+            with self.assertRaisesRegex(AXRError,'unique_fresh_recipient'):
+                self.service.navigate('fixture-peer')
+        result['native'].pop('query_input_submitted')
+        with patch.object(self.service,'binding',return_value={'window_id':1}), \
+             patch.object(self.service.navigation,'invoke',return_value=result):
+            with self.assertRaisesRegex(AXRError,'navigation_result_unconfirmed'):
+                self.service.navigate('fixture-peer')
     def test_large_catalog_uses_small_source_specific_children(self):
         for n in range(3500):
             identity='wxid_fixture_'+str(n)

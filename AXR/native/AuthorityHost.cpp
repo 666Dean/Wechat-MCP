@@ -79,7 +79,7 @@ void Configure(PyConfig& config,const std::filesystem::path& root){
         auto value=path.wstring();if(PyStatus_Exception(PyWideStringList_Append(&config.module_search_paths,value.c_str())))throw std::runtime_error("authority_runtime_configuration_failed");
     }
 }
-int Serve(bool initialize=false,bool ownerControl=false){
+int Serve(bool initialize=false,bool ownerControl=false,bool refresh=false){
 #ifdef AXR_SECURITY_RELEASE
 #if !defined(AXR_OWNER_HOST) && !defined(AXR_VALIDATION_HOST) && !defined(AXR_FRONTEND_HOST)
     ProtectedStore bootstrap("Stellaria.AXR.Bootstrap");
@@ -145,7 +145,7 @@ int Serve(bool initialize=false,bool ownerControl=false){
 #elif defined(AXR_FRONTEND_HOST)
         "axr.authority_frontend"
 #else
-        initialize?"axr.authority_setup":"axr.authority_main"
+        refresh?"axr.authority_update":initialize?"axr.authority_setup":"axr.authority_main"
 #endif
     );
     if(!module){
@@ -213,6 +213,9 @@ int main(int argc,char** argv){
         }
 #endif
         if(argc==2&&std::string_view(argv[1])=="--initialize-owner")return Serve(true);
+#if defined(__APPLE__)
+        if(argc==2&&std::string_view(argv[1])=="--refresh-owner-build")return Serve(true,false,true);
+#endif
         if(argc!=2||std::string_view(argv[1])!="--serve")throw std::runtime_error("authority_fixed_entrypoint_required");
         return Serve();
 #endif

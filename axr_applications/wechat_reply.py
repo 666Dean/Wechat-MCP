@@ -103,7 +103,7 @@ class ReplyExecutor:
             data = result.get('native') or {}
             if (result.get('receipt', {}).get('state') != 'Completed' or
                     data.get('navigation_invoked') is not True or
-                    data.get('query_echo_match') is not True or
+                    (data.get('query_echo_match') is not True and data.get('query_input_submitted') is not True) or
                     data.get('main_window_verified') is not True):
                 raise AXRError('reply_navigation_unconfirmed')
             rows = metadata(cid, 'recent', query=label, since=int(at)-1)

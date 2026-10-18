@@ -20,10 +20,8 @@ class OwnerDeployment:
         value=self.vault.open(self.backend.get(self.name),self.name)
         if value.get('version')!=2 or not isinstance(value.get('assets'),list):raise AXRError('owner_deployment_invalid')
         return value
-    def enroll(self,root,assets,authenticate_owner):
-        # Called by trusted owner setup after exact build/scope review. An MCP
-        # Authorize request cannot install code or replace this deployment pin.
-        if not callable(authenticate_owner) or not authenticate_owner():raise AXRError('owner_build_authentication_required')
+    def review(self,root,assets):
+        """Hash the fixed installation for an exact owner challenge; no writes."""
         if type(assets) is not list or not 1<=len(assets)<=16:raise AXRError('owner_build_asset_budget')
         directory=RootedDirectory(root);rows=[]
         try:
@@ -32,7 +30,12 @@ class OwnerDeployment:
                 data=directory.read(row['path'],128*1024**2)
                 rows.append({'path':str(directory.root/row['path']),'sha256':hashlib.sha256(data).hexdigest(),'roles':sorted(set(row['roles']))})
         finally:directory.close()
-        value={'version':2,'assets':rows,'build':digest(rows)}
+        return {'version':2,'assets':rows,'build':digest(rows)}
+    def enroll(self,root,assets,authenticate_owner):
+        # Called by trusted owner setup after exact build/scope review. An MCP
+        # Authorize request cannot install code or replace this deployment pin.
+        if not callable(authenticate_owner) or not authenticate_owner():raise AXRError('owner_build_authentication_required')
+        value=self.review(root,assets)
         try:previous=self._load()
         except AXRError as e:
             if str(e)!='owner_secret_not_provisioned':raise

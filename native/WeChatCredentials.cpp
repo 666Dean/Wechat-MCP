@@ -136,7 +136,7 @@ protected:
         if(id.find('@')!=std::string::npos&&id!=config.at("account_id").get<std::string>())throw std::runtime_error("wcdb_native_private_chat_required");
         const std::map<std::string,std::set<std::string>> fields={
             {"messages",{"kind","since","until","after","cursors","limit"}},
-            {"recent",{"kind","query","since"}},{"draft",{"kind"}},
+            {"recent",{"kind","query","since"}},{"draft",{"kind"}},{"session_schema",{"kind"}},
             {"catalog",{"kind","offset","limit"}},
             {"unique_draft",{"kind","text"}}};
         auto permitted=fields.find(kind);
@@ -147,7 +147,7 @@ protected:
             auto purpose=shard.at("role").get<std::string>();
             if(kind=="catalog"&&purpose!="contact")continue;
             if(kind!="catalog"&&purpose=="contact")continue;
-            if((kind=="messages"&&purpose!="message")||(kind=="recent"&&purpose!="general")||((kind=="draft"||kind=="unique_draft")&&purpose!="session"))continue;
+            if((kind=="messages"&&purpose!="message")||(kind=="recent"&&purpose!="general")||((kind=="draft"||kind=="unique_draft"||kind=="session_schema")&&purpose!="session"))continue;
             std::string key;
 #ifndef AXR_SECURITY_RELEASE
             if(!fixtureKeys.empty())key=fixtureKeys.at(shard.at("key_reference"));else
@@ -171,6 +171,7 @@ protected:
                 rows=db.run("SELECT m.rowid AS local_id,m.server_id,m.create_time AS created,m.local_type AS type,CASE WHEN m.local_type=1 OR (m.local_type & 65535)=49 THEN m.message_content ELSE NULL END AS body,m.real_sender_id AS direction,"+std::string(compression)+" AS compression,n.user_name AS sender FROM \""+table+"\" m LEFT JOIN Name2Id n ON n.rowid=m.real_sender_id WHERE m.create_time>=? AND m.create_time<=? AND (m.create_time,m.rowid)>(?,?) ORDER BY m.create_time,m.rowid LIMIT ?",Json::array({request.value("since",int64_t(0)),request.value("until",INT64_MAX),after[0],after[1],limit+1}));
                 for(auto& row:rows)if(!row["body"].is_null()&&(row["sender"].is_null()||(row["sender"]!=id&&row["sender"]!=config.at("account_id"))))throw std::runtime_error("wcdb_native_sender_identity_mismatch");
             }else if(kind=="recent")rows=db.run("SELECT username,query,last_click_time FROM SearchRecent WHERE query=? AND last_click_time>=? LIMIT 3",Json::array({request.at("query"),request.at("since")}));
+            else if(kind=="session_schema")rows=db.run("SELECT name,type FROM pragma_table_info('SessionTable') LIMIT 64");
             else if(kind=="draft")rows=db.run("SELECT CASE WHEN length(CAST(draft AS BLOB))<=16000 THEN draft ELSE NULL END AS draft,length(CAST(draft AS BLOB)) AS size FROM SessionTable WHERE username=? LIMIT 2",Json::array({id}));
             else {auto text=request.at("text").get<std::string>();if(text.empty()||text.size()>16000)throw std::runtime_error("wcdb_native_draft_budget");rows=db.run("SELECT username,CASE WHEN length(CAST(draft AS BLOB))<=16000 THEN draft ELSE NULL END AS draft FROM SessionTable WHERE instr(draft,?)>0 LIMIT 3",Json::array({text}));if(rows.size()!=1||rows[0]["username"]!=id||rows[0]["draft"]!=text)throw std::runtime_error("wcdb_native_unique_draft_mismatch");}
             result.push_back(Json{{"shard",shard.at("id")},{"rows",rows}});

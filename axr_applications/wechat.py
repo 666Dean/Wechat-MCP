@@ -95,10 +95,13 @@ def authenticate_owner_setup(value):
     config=_configuration(value);directory=Path(config['state'])
     from axr.initialization import empty_initialization
     if not empty_initialization(directory):raise AXRError('wechat_fresh_authority_state_required')
+    return _hardware_enrollment(digest(config))
+
+def _hardware_enrollment(configuration_digest):
     # The second process is a fixed protected owner identity. Its hardware key
     # can require user presence; the authority cannot open that private key.
     owner=BASE/'AXR Owner.app/Contents/MacOS/axr-owner'
-    challenge={'version':2,'kind':'wechat-owner-enrollment','configuration_digest':digest(config),
+    challenge={'version':2,'kind':'wechat-owner-enrollment','configuration_digest':configuration_digest,
                'nonce':secrets.token_hex(32),'expires':time.time()+180}
     process=subprocess.Popen([str(owner),'--owner-enroll'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
     try:
@@ -114,6 +117,54 @@ def authenticate_owner_setup(value):
     finally:
         if process.poll() is None:process.kill();process.wait()
     return {'challenge':challenge,'public_key':response['public_key'],'signature':response['signature'],'identity':actual}
+
+def refresh_owner_build(value,bootstrap):
+    """Revoke old contracts, authenticate this exact build, retain the ledger.
+
+    Runs only in the root-owned fixed native host with its existing bootstrap.
+    The journal lease excludes a live server. No action contract is issued.
+    """
+    if os.name=='nt':raise AXRError('wechat_build_update_platform_unavailable')
+    config=_configuration(value)
+    if (config['state']!=bootstrap.get('state') or config['endpoint']!=bootstrap.get('endpoint') or
+        Path(config['endpoint']).exists() or Path(config['endpoint']).is_symlink()):
+        raise AXRError('wechat_build_update_requires_stopped_service')
+    with __import__('contextlib').closing(OwnerStore(config['state'],authority_service=True)) as store:
+        approved=store.config()
+        current={k:v for k,v in config['application'].items() if k not in ('resources','conversations')}
+        original={k:v for k,v in approved['application'].items() if k not in ('resources','conversations')}
+        if (current!=original or approved['owner_user']!=process_identity(os.getpid())['user'] or
+            approved['owner_public_key']!=bootstrap.get('owner_public_key')):
+            raise AXRError('wechat_build_update_configuration_changed')
+        signer=native.HardwareSigningKey('Stellaria.AXR.Root.v2')
+        kernel,registry=_kernel(store,signer,approved['owner_public_key'])
+        try:
+            # Reducing authority is always permitted. An abandoned update
+            # cannot leave any old contract active or resurrect a send job.
+            kernel.security.revoke('kernel');kernel.integrity.persist()
+            def revoked():
+                return kernel.integrity.verify() and not kernel.db.execute('SELECT 1 FROM security_contracts WHERE revoked=0 LIMIT 1').fetchone()
+            pins=OwnerDeployment(store.secrets,store.vault,revoke_for_update=revoked)
+            assets=_build_assets(approved['application'])
+            reviewed=pins.review(BASE,assets)
+            enrollment=_hardware_enrollment(digest({'configuration':config,'build':reviewed}))
+            def authenticated():
+                return (enrollment['public_key']==approved['owner_public_key'] and
+                    enrollment['identity']['user']==approved['owner_user'] and
+                    enrollment['challenge']['expires']>time.time() and
+                    pins.review(BASE,assets)==reviewed)
+            result=pins.enroll(BASE,assets,authenticated)
+            store.journal.security_event('owner-build-update',{'build':result['build'],'authority_restored':False})
+            kernel.integrity.persist()
+            return {**result,'updated':True,'credentials_retained':True,'ledger_retained':True}
+        finally:kernel.close()
+
+def _build_assets(application):
+    helper=Path(application['navigation_helper'])
+    return [{'path':'AXR Authority.app/Contents/MacOS/axr-authority','roles':['server','handler']},
+            {'path':'AXR Owner.app/Contents/MacOS/axr-owner','roles':['owner']},
+            {'path':'AXR MCP.app/Contents/MacOS/axr-frontend','roles':['client']},
+            {'path':str(helper.relative_to(BASE)),'roles':['handler']}]
 
 def initialize_owner(value, signer, enrollment=None):
     config=_configuration(value);directory=Path(config['state'])
@@ -160,11 +211,7 @@ def finish_initialization(store,signer):
         from axr.initialization import empty_initialization
         deployment=OwnerDeployment(store.secrets,store.vault,revoke_for_update=lambda:
             empty_initialization(store.directory) and store.journal.verify_audit() and store.journal.checkpoint.read()['sequence']==0)
-        helper=Path(application['navigation_helper'])
-        assets=[{'path':'AXR Authority.app/Contents/MacOS/axr-authority','roles':['server','handler']},
-                {'path':'AXR Owner.app/Contents/MacOS/axr-owner','roles':['owner']},
-                {'path':'AXR MCP.app/Contents/MacOS/axr-frontend','roles':['client']},
-                {'path':str(helper.relative_to(BASE)),'roles':['handler']}]
+        assets=_build_assets(application)
         deployment.enroll(BASE,assets,lambda:store.config()==config and config['owner_user']==process_identity(os.getpid())['user'])
         kernel,registry=_kernel(store,signer,config['owner_public_key'],initialize=True)
         try:kernel.integrity.persist()

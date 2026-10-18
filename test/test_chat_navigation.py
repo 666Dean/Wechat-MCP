@@ -29,7 +29,7 @@ class ChatNavigationProof(unittest.TestCase):
     def tearDown(self):
         self.guard.close();self.temp.cleanup()
 
-    def request(self, operation='application.navigate'):
+    def request(self, operation='application.navigate',phase=None):
         text = 'fixture recipient' if operation == 'application.navigate' else 'fixture reply'
         binding = copy.deepcopy(self.binding)
         if operation == 'messages.send':
@@ -37,14 +37,25 @@ class ChatNavigationProof(unittest.TestCase):
         payload = {'text':text,'visual_binding':binding}
         if operation == 'application.navigate':
             payload['navigation_binding']={'menu_path':['编辑','搜索'],'main_window_id':456,'query':text}
+            if phase is not None:payload['navigation_binding']['phase']=phase
         action = Action('fixture-owner',Resource('wechat','fixture-account','fixture-chat'),
                         operation,'fixture-purpose',payload)
         grant = self.guard._issue_owner(principal=action.principal,resource=action.resource,
             operations=[operation],purpose=action.purpose,expires_at=time.time()+60,max_uses=1,intent=action.seal)
         gid,version = self.guard.consume(action)
-        return {'mode':'validate_scope','operation':operation,'expected_text':text,
+        request={'mode':'validate_scope','operation':operation,'expected_text':text,
                 'account':'fixture-account','identity':'fixture-chat','visual_binding':binding,
-                'guard_context':self.guard.execution_proof(action,gid,version)},grant
+                'guard_context':self.guard.execution_proof(action,gid,version)}
+        if phase is not None:request['navigation_phase']=phase
+        return request,grant
+
+    def test_navigation_phases_are_separately_sealed_before_ui(self):
+        for phase in ('open','query','select'):
+            with self.subTest(phase=phase):
+                req,_=self.request(phase=phase)
+                self.assertTrue(self.invoke(req)['scope_valid'])
+                req['navigation_phase']='query' if phase!='query' else 'select'
+                self.assertEqual(self.invoke(req)['error'],'authority_or_scope_changed')
 
     def invoke(self, req):
         result=subprocess.run([os.environ['AXR_TEST_CHAT_NAVIGATION']],input=json.dumps(req)+'\n',

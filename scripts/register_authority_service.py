@@ -17,6 +17,8 @@ LABEL='org.stellaria.axr.authority'
 
 def register():
     if sys.platform!='darwin':raise RuntimeError('macOS required')
+    from axr.platform.macos_application import register_bundle
+    register_bundle(BASE/'AXR Authority.app')
     config=json.loads((BASE/'AXR Authority.app/Contents/Resources/deployment.json').read_bytes())['deployment']
     state=Path(config['state']);endpoint=Path(config['endpoint'])
     if not (state/'policy.sealed.json').is_file():raise RuntimeError('owner_initialization_required')

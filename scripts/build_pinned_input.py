@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Explicit developer build. Does not install, approve or run the input adapter."""
 import argparse
+import hashlib,json
 import subprocess
 import sys
 from pathlib import Path
@@ -26,6 +27,10 @@ def main():
         str(root/'adapters/macos'/source),
         '-Xlinker',str(core),'-Xlinker',str(crypto),'-lsqlite3','-lc++',
         '-o',str(output)],check=True)
+    output.with_suffix('.build.json').write_text(json.dumps({
+        'source_sha256':hashlib.sha256((root/'adapters/macos'/source).read_bytes()).hexdigest(),
+        'core_sha256':hashlib.sha256(core.read_bytes()).hexdigest(),
+        'output_sha256':hashlib.sha256(output.read_bytes()).hexdigest()},sort_keys=True))
     print('Experimental adapter compiled; not installed or enabled.')
 
 

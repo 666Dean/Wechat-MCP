@@ -122,6 +122,8 @@ class AuthorityNavigation:
                 'account':action.resource.account_id,'identity':action.resource.conversation_id,
                 'visual_binding':action.payload['visual_binding'],
                 'guard_context':{'authority_endpoint':self.endpoint,'proof':canonical(proof).decode()}}
+            if mode=='navigate' and 'phase' in action.payload.get('navigation_binding',{}):
+                request['navigation_phase']=action.payload['navigation_binding']['phase']
             frame=canonical(request)+b'\n'
             if len(frame)>1024*1024:raise AXRError('wechat_native_bridge_frame_budget')
             check()

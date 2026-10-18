@@ -178,6 +178,17 @@ public:
     }
 };
 std::mutex claimsMutex;std::map<std::string,Json> claimed;std::set<std::string> attempted;
+thread_local const char* lastFailure="none";
+thread_local std::unique_ptr<Channel> connection;
+thread_local std::string connectionEndpoint;
+thread_local bool connectionFailed=false;
+Channel& Connection(const char* endpoint){
+    if(connectionFailed||!endpoint)Denied();
+    if(!connection){connectionEndpoint=endpoint;connection=std::make_unique<Channel>(connectionEndpoint);}
+    if(connectionEndpoint!=endpoint)Denied();
+    return *connection;
+}
+void FailConnection(){connectionFailed=true;connection.reset();}
 void Scope(const Json& proof,const Json& scope){
     const auto& action=proof.at("body").at("action");ValidateAction(action);
     if(!scope.is_object()||scope.size()<2||scope.size()>5)Denied();
@@ -189,32 +200,53 @@ void Scope(const Json& proof,const Json& scope){
     }
 }
 int Invoke(const char* endpoint,const char* encoded,const char* scope,bool claim){
+    const char* stage="scope";lastFailure="none";
     try{
-        if(!endpoint||!encoded||!scope)Denied();auto proof=ParseBounded(encoded);Scope(proof,ParseBounded(scope));Channel channel(endpoint);channel.CheckProof(proof);
+        if(!endpoint||!encoded||!scope)Denied();auto proof=ParseBounded(encoded);Scope(proof,ParseBounded(scope));
+        // Reuse the authenticated directional-MAC session within this helper
+        // birth. Every frame still revalidates the OS peer; any error closes
+        // the channel permanently. There is no reconnect or request replay.
+        stage="channel";auto& channel=Connection(endpoint);stage="proof";channel.CheckProof(proof);
         const auto& body=proof.at("body");auto nonce=body.at("nonce").get<std::string>();std::lock_guard lock(claimsMutex);
         if(claim){
             if(attempted.size()>=10000||!attempted.insert(nonce).second)Denied();
-            auto permit=channel.Request("Commit",{{"phase","claim"},{"proof",proof}});
+            stage="claim";auto permit=channel.Request("Commit",{{"phase","claim"},{"proof",proof}});
+            stage="permit";
             if(!VerifyCommitPermit(permit,channel.publicKey,channel.rootId,channel.epoch,nonce,body.at("seal").get<std::string>(),channel.self,Now()))Denied();
             claimed[nonce]=permit;return 1;
         }
-        auto check=channel.Request("Access",{{"phase","preflight"},{"proof",proof}});
+        stage="preflight";auto check=channel.Request("Access",{{"phase","preflight"},{"proof",proof}});
         if(check.at("ready")!=true||check.at("nonce")!=nonce||check.at("seal")!=body.at("seal"))Denied();
         if(check.at("claimed")==true){auto found=claimed.find(nonce);if(found==claimed.end()||!VerifyCommitPermit(found->second,channel.publicKey,channel.rootId,channel.epoch,nonce,body.at("seal").get<std::string>(),channel.self,Now()))Denied();}
         return 1;
-    }catch(...){return 0;}
+    }catch(...){lastFailure=stage;FailConnection();return 0;}
 }
 } }
 extern "C" int axr_authority_preflight(const char* e,const char* p,const char* s){return Stellaria::AXR::Invoke(e,p,s,false);}
 extern "C" int axr_authority_claim(const char* e,const char* p,const char* s){return Stellaria::AXR::Invoke(e,p,s,true);}
+extern "C" const char* axr_authority_last_failure(){return Stellaria::AXR::lastFailure;}
+extern "C" int axr_authority_local_permit(const char* e,const char* p,const char* s){
+    using namespace Stellaria::AXR;
+    try{
+        if(!e||!p||!s||connectionFailed||!connection||connectionEndpoint!=e)Denied();
+        auto proof=ParseBounded(p);Scope(proof,ParseBounded(s));connection->CheckProof(proof);
+        if(connection->self.at("pid")!=Self())Denied();
+        const auto& body=proof.at("body");auto nonce=body.at("nonce").get<std::string>();
+        std::lock_guard lock(claimsMutex);auto found=claimed.find(nonce);
+        const double permitNow=std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+        if(found==claimed.end()||!VerifyCommitPermit(found->second,connection->publicKey,connection->rootId,
+            connection->epoch,nonce,body.at("seal").get<std::string>(),connection->self,permitNow))Denied();
+        return 1;
+    }catch(...){lastFailure="local_permit";FailConnection();return 0;}
+}
 extern "C" int axr_authority_observe(const char* e,const char* p,int verified,const char* evidence){
     using namespace Stellaria::AXR;
     try{
         if(!e||!p||!evidence||(verified!=0&&verified!=1))Denied();std::string digest(evidence);
         if(digest.size()!=64||digest.find_first_not_of("0123456789abcdef")!=std::string::npos)Denied();
-        auto proof=ParseBounded(p);Channel channel(e);channel.CheckProof(proof);std::lock_guard lock(claimsMutex);
+        auto proof=ParseBounded(p);auto& channel=Connection(e);channel.CheckProof(proof);std::lock_guard lock(claimsMutex);
         auto found=claimed.find(proof.at("body").at("nonce").get<std::string>());if(found==claimed.end())Denied();
         auto result=channel.Request("Commit",{{"phase","receipt"},{"proof",proof},{"verified",verified==1},{"evidence_digest",digest}});
         claimed.erase(found);return result.at("retry")==false&&result.at("delivery_confirmed")==false?1:0;
-    }catch(...){return 0;}
+    }catch(...){lastFailure="observe";FailConnection();return 0;}
 }

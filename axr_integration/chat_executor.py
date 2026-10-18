@@ -103,7 +103,7 @@ def execute_plan(store,state,helper,plan,*,principal=None,action_purpose='finite
    req={'mode':mode,'operation':action.operation,'expected_text':action.payload['text'],'account':action.resource.account_id,'identity':action.resource.conversation_id,'visual_binding':sealed,'guard_context':check.commit_proof()}
    result=supervisor.invoke([str(HELPER)],req)['result'];check()
    native_results[action.execution_id]=result
-   verified=(result.get('navigation_invoked') is True and result.get('query_echo_match') is True and result.get('main_window_verified') is True) if mode=='navigate' else result.get('draft_match') is True and result.get('send_invoked') is False
+   verified=(result.get('navigation_invoked') is True and (result.get('query_echo_match') is True or result.get('query_input_submitted') is True) and result.get('main_window_verified') is True) if mode=='navigate' else result.get('draft_match') is True and result.get('send_invoked') is False
    if mode=='send':verified=False
    return {'epoch':epoch,'verified':verified,'evidence_digest':digest(result),'output':result}
   def read_handler(action,check,epoch):

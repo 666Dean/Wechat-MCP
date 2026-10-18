@@ -44,7 +44,12 @@ class Controller(QObject):
     def openSystemPermission(self,kind):
         if self.fixture or sys.platform!='darwin':return
         pane={'database':'Privacy_AllFiles','accessibility':'Privacy_Accessibility'}.get(kind)
-        if pane:QDesktopServices.openUrl(QUrl('x-apple.systempreferences:com.apple.preference.security?'+pane))
+        if pane:
+            from axr.platform.macos_application import register_bundle
+            try:register_bundle(Path('/Library/Application Support/Stellaria AXR/AXR Authority.app'))
+            except AXRError:
+                self._notice='应用尚未完成安装，无法准备系统权限入口。';self.noticeChanged.emit();return
+            QDesktopServices.openUrl(QUrl('x-apple.systempreferences:com.apple.preference.security?'+pane))
     @Slot()
     def loadAssistant(self):
         if not self.fixture:self.run('assistant_load',lambda:call(self.state,'control.assistant_settings',owner=True))
@@ -115,7 +120,9 @@ class Controller(QObject):
                 'automatic_reply_scope_invalid':'请选择至少两个已绑定私聊，或全部可用私聊。',
                 'automatic_reply_already_active':'自动回复已经开启，请先停止当前会话。',
                 'wechat_full_disk_access_required':'请先在系统设置中允许 AXR Authority 完全磁盘访问，再开启服务；尚未请求身份认证。',
-                'wechat_accessibility_required':'请先在系统设置中允许 AXR Authority 使用辅助功能，再开启自动回复；尚未请求身份认证。',
+                'wechat_accessibility_required':'请先允许 AXR Authority 使用“设备控制和数据访问”（旧版名为“辅助功能”），再开启自动回复；尚未请求身份认证。',
+                'wechat_main_window_unavailable':'请打开微信主窗口后重试；尚未请求身份认证。',
+                'runtime_account_witness_changed':'当前微信账号与已绑定账号不一致，请核对登录账号；尚未请求身份认证。',
                 'wechat_owner_review_expired_or_changed':'本次确认已过期或范围发生变化，未开启服务。请核对范围后重新开启。',
                 'wechat_initialization_approval_changed':'设置与已批准内容不一致，已保留进度。请先核对配置，避免重复认证。',
                 'wechat_initialization_recovery_requires_review':'初始化已有运行记录，不能按空事务接续。请保留数据并检查服务状态。',
@@ -269,10 +276,13 @@ class Controller(QObject):
     def stop(self):
         if self.fixture:return
         self.run('stop',lambda:call(self.state,'control.revoke_all',owner=True))
-    @Slot('QVariantList',int,int)
-    def startAutomatic(self,targets,minutes,replies):
+    @Slot('QVariantList',int,int,bool)
+    def startAutomatic(self,targets,minutes,replies,overwrite=False):
         if self.fixture:return
-        self.run('automatic',lambda:call(self.state,'control.start_automatic',(list(targets),minutes*60,replies),owner=True,timeout=90))
+        if overwrite and not authority_installed():
+            self._notice='强制覆盖需要独立安全服务。';self.noticeChanged.emit();return
+        arguments=(list(targets),minutes*60,replies,overwrite) if authority_installed() else (list(targets),minutes*60,replies)
+        self.run('automatic',lambda:call(self.state,'control.start_automatic',arguments,owner=True,timeout=180))
     @Slot()
     def stopAutomatic(self):
         if self.fixture:return

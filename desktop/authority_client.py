@@ -37,15 +37,15 @@ def call(state,method,args=(),kwargs=None,*,owner=False,timeout=180):
             'expires':scope.get('expires',0),
             'remaining':max(0,scope['max_replies']-status['reply_count']) if scope.get('max_replies') else None,
             'targets':scope.get('reply_targets',[])}
-        value['grants']=[{'conversation_id':identity,'operations':['messages.read','reply.prepare','messages.send'],
+        value['grants']=[{'conversation_id':identity,'operations':['messages.read','reply.prepare']+(['messages.send'] if identity in scope.get('reply_targets',[]) else []),
             'expires':scope.get('expires',0),'remaining':status['automatic_reply']['remaining'],
             'destinations':['Codex'],'exact_intent':True} for identity in scope.get('targets',[])]
         return value
     if method in ('control.revoke_all','control.stop_automatic'):return control('stop')
     if method=='control.start_automatic':
-        targets,seconds,count=args
+        targets,seconds,count=args[:3]
         return control('start',{'targets':'all' if not targets or targets==['*'] else targets,'seconds':seconds,
-            'max_replies':count,'automatic':True,'disclose':True},timeout=180)
+            'max_replies':count,'automatic':True,'disclose':True,'overwrite_drafts':bool(args[3]) if len(args)>3 else False},timeout=180)
     if method=='control.assistant_settings':return control('assistant_settings')
     if method=='control.save_assistant_settings':return control('save_assistant_settings',dict(args[0]))
     if method in ('control.draft','control.manual_draft'):

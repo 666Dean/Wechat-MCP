@@ -5,7 +5,7 @@ The installation's protected bootstrap chooses an application registration. No
 MCP request or command line can choose modules, keys, executables or policy files.
 An unqualified application registration leaves this service unavailable.
 """
-import importlib,re,signal,threading
+import importlib,os,re,signal,threading
 from .aet import AXRError
 from .storage import AuthoritySecretStore,Vault
 from . import _axr_native as native
@@ -28,6 +28,17 @@ def main():
     from .authority_server import AuthorityServer
     if not isinstance(server,AuthorityServer) or server.kernel.development_fixture:raise AXRError('authority_application_registration_invalid')
     _server=server
+    previous={}
+    if os.name!='nt':
+        def interrupt(signum,frame):raise KeyboardInterrupt
+        for signum in (signal.SIGTERM,signal.SIGINT):
+            previous[signum]=signal.signal(signum,interrupt)
     try:server.serve()
     except KeyboardInterrupt:pass
-    finally:server.close();server.kernel.close();_server=None
+    finally:
+        try:
+            try:server.close()
+            finally:server.kernel.close()
+        finally:
+            _server=None
+            for signum,handler in previous.items():signal.signal(signum,handler)

@@ -35,6 +35,7 @@ ApplicationWindow {
     onPageChanged: { if(page===6)owner.loadAssistant() }
     property int autoMinutes: 15
     property int autoReplies: 4
+    property bool overwriteDrafts: false
     property var drafts: window.backend.drafts || []
     property var jobs: window.backend.jobs || []
     property var pending: jobs.filter(function(j){return ["Ready","AwaitingApproval","Executing","Prepared","Verifying"].indexOf(j.state)>=0 && j.expires*1000>Date.now()})
@@ -392,9 +393,9 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                                         ButtonX { text: "打开磁盘访问设置"; visible: !(window.status.permissions || {}).database; onClicked: owner.openSystemPermission("database") }
                                     }
                                     RowLayout { Layout.fillWidth: true
-                                        Caption { text: "微信操作：" + ((window.status.permissions || {}).accessibility ? "已允许" : "需要辅助功能") }
+                                        Caption { text: "微信操作：" + ((window.status.permissions || {}).accessibility ? "已允许" : "需要设备控制权限") }
                                         Item { Layout.fillWidth: true }
-                                        ButtonX { text: "打开辅助功能设置"; visible: !(window.status.permissions || {}).accessibility; onClicked: owner.openSystemPermission("accessibility") }
+                                        ButtonX { text: "打开设备控制设置"; visible: !(window.status.permissions || {}).accessibility; onClicked: owner.openSystemPermission("accessibility") }
                                     }
                                 }
                                 Caption { Layout.fillWidth: true; visible: !!(window.status.security || {}).automatic_block; text: "自动回复已暂停。完成安全服务升级后，再为指定对象开启授权。" }
@@ -420,7 +421,9 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                                     ButtonX { objectName: "autoStart"; text: "授权并开启"; primary: true; enabled: window.connected && window.systemReady && window.autoReply.supported === true && !window.autoReply.active && (window.autoAll || window.autoTargets.length>=2) && Qt.platform.os === "osx"; onClicked: autoDialog.open() }
                                     ButtonX { objectName: "autoStop"; text: "停止自动回复"; danger: true; enabled: window.connected && (window.autoReply.active || window.backend.automatic_pending === true || (window.backend.automatic_worker || {}).running === true); onClicked: owner.stopAutomatic() }
                                 }
-                                Caption { Layout.fillWidth: true; text: "仅回复开启后的入站文字。次数填 0 表示不限；不确定的发送不会重发。Codex 忙时只排队索引，正文按需重读。停止、到期或退出服务后撤权。" }
+                                CheckBox { visible: window.independentService && !window.autoReply.active; text: "强制覆盖已有输入"; checked: window.overwriteDrafts; onToggled: window.overwriteDrafts=checked }
+                                Caption { Layout.fillWidth: true; visible: window.overwriteDrafts && !window.autoReply.active; text: "会清空当前输入后写入回复。无法确认的附件、窗口或发送结果仍会停止。" }
+                                Caption { Layout.fillWidth: true; text: "仅回复开启后的入站文字。次数填 0 表示不限；不确定的发送不会重发。停止、到期或退出服务后撤权。" }
                             }
                         }
                         Panel { Layout.fillWidth: true; implicitHeight: assistantRows.implicitHeight+40
@@ -646,8 +649,8 @@ ButtonX { text: "系统认证并批准"; primary: true; enabled: !window.preview
         onAccepted: owner.approveAuthorization(window.authorizationRequest.id)
     }
     Dialog { id: autoDialog; anchors.centerIn: parent; width: Math.min(560,window.width-60); modal: true; title: "确认自动回复授权"; standardButtons: Dialog.Cancel | Dialog.Ok
-        contentItem: Copy { text: "目标：" + (window.autoAll ? "当前账号全部可用私聊及后续新核验的私聊；排除群、公众号、系统会话" : window.autoTargets.map(window.targetName).join("、")) + "\n时长：" + (window.autoMinutes ? window.autoMinutes + " 分钟" : "不限时长，直到停止") + "，回复：" + (window.autoReplies ? "最多 " + window.autoReplies + " 次" : "不限次数") + "。\n\n允许把所选私聊的新消息发给 Codex 生成回复，再自动发送到原私聊。发送时微信会置前；请勿同时操作输入区。已有草稿或身份核对失败会停止。\n\n接下来需要本机系统身份认证，单次原生提交凭据保持短期；不限会话只在当前服务中续发，停止立即撤权。" }
-        onAccepted: owner.startAutomatic(window.autoAll ? ["*"] : window.autoTargets,window.autoMinutes,window.autoReplies)
+        contentItem: Copy { text: "目标：" + (window.autoAll ? "当前已核验的全部可用私聊；排除群、公众号、系统会话" : window.autoTargets.map(window.targetName).join("、")) + "\n时长：" + (window.autoMinutes ? window.autoMinutes + " 分钟" : "不限时长，直到停止") + "，回复：" + (window.autoReplies ? "最多 " + window.autoReplies + " 次" : "不限次数") + "。\n\n允许把所选私聊的新消息发给 Codex 生成回复，再自动发送到原私聊。发送时微信会置前；请勿同时操作输入区。" + (window.overwriteDrafts ? "强制覆盖已开启，将清空已有输入。" : "检测到已有输入将停止，微信提示文字不算草稿。") + "身份或附件状态无法核对时仍停止。\n\n接下来需要本机系统身份认证，单次原生提交凭据保持短期；不限会话只在当前服务中续发，停止立即撤权。" }
+        onAccepted: owner.startAutomatic(window.autoAll ? ["*"] : window.autoTargets,window.autoMinutes,window.autoReplies,window.overwriteDrafts)
     }
     Dialog { id: cacheDialog; anchors.centerIn: parent; width: 540; modal: true; title: "设置本地缓存范围"; standardButtons: Dialog.Cancel | Dialog.Ok
         background: Rectangle { radius: 14; color: Theme.surface; border.color: Theme.border }

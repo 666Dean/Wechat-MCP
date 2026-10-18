@@ -6,6 +6,11 @@
 #include <iostream>
 using namespace Stellaria::AXR;
 int main() {
+    assert(axr_authority_preflight(nullptr,nullptr,nullptr)==0);
+    assert(std::string(axr_authority_last_failure())=="scope");
+    assert(axr_authority_local_permit("unconnected","{}","{}")==0);
+    assert(std::string(axr_authority_last_failure())=="local_permit");
+    std::thread isolated([]{assert(std::string(axr_authority_last_failure())=="none");});isolated.join();
     const std::string key(32,'k');
     assert(Digest("abc")=="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     auto encrypted=Encrypt(key,"private","job-1");assert(encrypted.find("private")==std::string::npos);

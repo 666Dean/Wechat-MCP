@@ -71,6 +71,22 @@ CREATE TABLE SearchRecent(username TEXT,query TEXT,last_click_time INTEGER);INSE
     def test_navigation_exact_witness(self):
         rows=self.use({'kind':'unique_draft','text':'exact fixture draft'})[0]['rows'];self.assertEqual(len(rows),1)
         with self.assertRaisesRegex(RuntimeError,'unique_draft'):self.use({'kind':'unique_draft','text':'partial'})
+    def test_fixed_session_schema_has_no_values_and_rejects_parameters(self):
+        rows=self.use({'kind':'session_schema'})[0]['rows']
+        self.assertEqual(rows,[{'name':'username','type':'TEXT'},{'name':'draft','type':'TEXT'}])
+        with self.assertRaisesRegex(RuntimeError,'request_invalid'):self.use({'kind':'session_schema','table':'contact'})
+    def test_empty_null_draft_is_distinct_from_a_budget_rejected_draft(self):
+        from axr_applications.wechat_database import NativeDatabase
+        handle=C.c_void_p();self.assertEqual(self.api.sqlite3_open_v2(os.fsencode(self.path),C.byref(handle),6,None),0)
+        raw_key=("x'"+self.key.hex()+"'").encode();self.assertEqual(self.api.sqlite3_key(handle,raw_key,len(raw_key)),0)
+        try:
+            self.assertEqual(self.api.sqlite3_exec(handle,b'UPDATE SessionTable SET draft=NULL',None,None,None),0)
+            db=NativeDatabase(self.consumer,self.account)
+            self.assertEqual(db.navigation(self.peer,'draft',lambda:None),[{'draft':'','size':None}])
+            self.assertEqual(self.api.sqlite3_exec(handle,b"UPDATE SessionTable SET draft=replace(hex(zeroblob(10000)),'0','x')",None,None,None),0)
+            row=db.navigation(self.peer,'draft',lambda:None)[0]
+            self.assertIsNone(row['draft']);self.assertEqual(row['size'],20000)
+        finally:self.api.sqlite3_close_v2(handle)
     def test_wrong_key_is_failure_not_empty(self):
         bad=self.module.fixture_consumer('fixture-handler',canonical(self.config).decode(),{'fixture-key':b'\0'*32})
         with self.assertRaises(RuntimeError):native.CredentialConsumer.use(bad,canonical(asdict(self.resource)).decode(),'database.query','{"kind":"messages"}',lambda:None)

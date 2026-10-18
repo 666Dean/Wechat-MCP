@@ -46,9 +46,21 @@ def stdlib_archive(stdlib,target):
                 if not name.endswith('.py'):continue
                 path=Path(directory)/name;archive.writestr(str(path.relative_to(stdlib)),path.read_bytes())
 
+def verify_navigation_build(root,build):
+    output=build/'wechat-chat-navigation-experimental'
+    try:
+        manifest=json.loads(output.with_suffix('.build.json').read_bytes())
+        actual={'source_sha256':hashlib.sha256((root/'adapters/macos/experimental_chat_navigation.swift').read_bytes()).hexdigest(),
+                'core_sha256':hashlib.sha256((build/'AXR/libaxr.a').read_bytes()).hexdigest(),
+                'output_sha256':hashlib.sha256(output.read_bytes()).hexdigest()}
+        if manifest!=actual:raise ValueError()
+    except (OSError,ValueError):raise ValueError('native navigation helper must be rebuilt from reviewed source/core') from None
+    return output
+
 def stage(root,build,output,deployment,*,identity='-'):
     if sys.platform!='darwin' or sys.version_info[:2]!=(3,12):raise ValueError('macOS Python 3.12 packaging required')
     if not identity or identity=='-':raise ValueError('dynamic embedded runtime requires one local signing team; ad-hoc needs a fully static host')
+    if deployment.get('application',{}).get('navigation_helper'):verify_navigation_build(root,build)
     output=output.absolute()
     if output.exists() or output.is_symlink():raise ValueError('output must be new; existing bundles are never overwritten')
     app=output/'AXR Authority.app';contents=app/'Contents';resources=contents/'Resources';executables=contents/'MacOS';frameworks=contents/'Frameworks'

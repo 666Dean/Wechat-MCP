@@ -10,6 +10,36 @@ from axr.aet import AXRError, Resource, canonical, digest
 from axr import _axr_native as native
 from adapters.wcdb import decode_text
 
+def empty_saved_draft(value, size):
+    """Recognize storage absence, never interpret nonempty user text as empty."""
+    if value is None:return size is None
+    if size==0 and value in ('',b''):return True
+    return False
+
+def saved_draft_metadata(row):
+    """Owner-only structure diagnostics; never return text or unknown labels."""
+    value=row.get('draft');out={'type':type(value).__name__,'bytes':row.get('size')}
+    if not isinstance(value,(str,bytes)):return out
+    try:text=value.decode('utf-8',errors='strict') if isinstance(value,bytes) else value
+    except UnicodeError:return {**out,'encoding':'binary'}
+    out.update(characters=len(text),control_characters=sum(ord(c)<32 for c in text),
+               whitespace_characters=sum(c.isspace() for c in text),
+               nul_characters=text.count('\0'),format='text')
+    try:obj=json.loads(text)
+    except (ValueError,RecursionError):obj=None
+    if isinstance(obj,dict):
+        known={'text','plainText','content','type','version','atuserlist'}
+        out.update(format='json',fields={k if k in known else 'other':type(v).__name__ for k,v in obj.items()},
+                   empty_string_values=sum(v=='' for v in obj.values()))
+    elif text.lstrip().startswith('<') and '<!' not in text and '<?' not in text:
+        from xml.etree import ElementTree as ET
+        try:
+            nodes=list(ET.fromstring(text).iter());known={'msg','draft','text','content','type','atuserlist','richtext','img','p','br'}
+            out.update(format='xml',nodes=len(nodes),tags=sorted({n.tag if n.tag in known else 'other' for n in nodes}),
+                       nonempty_text_nodes=sum(bool((n.text or '').strip()) for n in nodes),attributes=sum(len(n.attrib) for n in nodes))
+        except ET.ParseError:out['format']='unrecognized_markup'
+    return out
+
 class NativeDatabase:
     def __init__(self, consumer, account):
         if not isinstance(consumer, native.CredentialConsumer):
@@ -56,11 +86,17 @@ class NativeDatabase:
                 'complete_history':False,'delivery_confirmed':False}
 
     def navigation(self, identity, kind, check, **parameters):
-        if kind not in ('draft','unique_draft','recent'):
+        if kind not in ('draft','unique_draft','recent','session_schema'):
             raise AXRError('wechat_native_navigation_operation')
         batches=self.use(identity, {'kind':kind,**parameters}, check)
         if len(batches)!=1:raise AXRError('wechat_native_navigation_shard_required')
-        return batches[0]['rows']
+        rows=batches[0]['rows']
+        if kind=='draft':
+            # SQL NULL with a NULL length means WeChat has no saved draft.
+            # A budget-rejected large draft also returns NULL content, but its
+            # nonzero length must remain blocked and must never be overwritten.
+            rows=[{**row,'draft':''} if 'size' in row and empty_saved_draft(row.get('draft'),row['size']) else row for row in rows]
+        return rows
 
 def actor_records(page):
     """Trusted source snapshot for an incoming actor; no raw credential fields.

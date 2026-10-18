@@ -19,7 +19,7 @@ from axr.aet import AXRError,Action,Resource,Provenance,canonical,digest
 from axr.authority import AuthorityKernel
 from axr.ipc import PeerContext,process_identity
 from axr.security import TaskContract
-from .wechat_database import NativeDatabase,actor_records
+from .wechat_database import NativeDatabase,actor_records,saved_draft_metadata
 from .wechat_execution import AuthorityNavigation
 from .codex_source import CodexSourceProvider
 
@@ -118,13 +118,13 @@ class WeChatService:
         readiness=self.readiness()
         if not readiness['database']:raise AXRError('wechat_full_disk_access_required')
         if arguments.get('automatic',False) and not readiness['accessibility']:raise AXRError('wechat_accessibility_required')
-        if type(arguments) is not dict or set(arguments)-{'targets','reply_targets','seconds','max_replies','automatic','disclose','style','attribution'}:raise AXRError('wechat_owner_scope_invalid')
+        if type(arguments) is not dict or set(arguments)-{'targets','reply_targets','seconds','max_replies','automatic','disclose','style','attribution','overwrite_drafts'}:raise AXRError('wechat_owner_scope_invalid')
         targets=arguments.get('targets',[])
         if targets=='all':targets=list(self.resources)
         if type(targets) is not list or not targets or len(set(targets))!=len(targets) or set(targets)-set(self.resources):raise AXRError('wechat_owner_scope_invalid')
         seconds=arguments.get('seconds',3600);count=arguments.get('max_replies',4)
         if type(seconds) is not int or not 0<=seconds<=86400 or type(count) is not int or not 0<=count<=100000:raise AXRError('wechat_owner_scope_invalid')
-        for key in ('automatic','disclose','attribution'):
+        for key in ('automatic','disclose','attribution','overwrite_drafts'):
             if key in arguments and type(arguments[key]) is not bool:raise AXRError('wechat_owner_scope_invalid')
         settings=self.state.get('assistant',{'persona':'','style':'简洁、自然、直接；不编造事实。','attribution':False,'thread_id':'','thread_title':''})
         style=arguments.get('style',settings.get('persona','')+'\n'+settings['style'])
@@ -132,14 +132,18 @@ class WeChatService:
         if arguments.get('automatic',False) and not arguments.get('disclose',True):raise AXRError('wechat_model_disclosure_required')
         reply_targets=arguments.get('reply_targets',targets)
         if type(reply_targets) is not list or not reply_targets or set(reply_targets)-set(targets):raise AXRError('wechat_owner_scope_invalid')
+        # Metadata/account checks run BEFORE the hardware-authentication UI.
+        # A missing window must not consume another owner approval.
+        if arguments.get('automatic',False):self.inspect_binding()
         scope={'targets':targets,'reply_targets':reply_targets,'expires':time.time()+seconds if seconds else 0,'max_replies':count,
                'automatic':arguments.get('automatic',False),'disclose':arguments.get('disclose',True),
-               'style':style,'attribution':arguments.get('attribution',settings['attribution'])}
+               'style':style,'attribution':arguments.get('attribution',settings['attribution']),
+               'overwrite_drafts':arguments.get('overwrite_drafts',False)}
         challenge={'version':2,'kind':'wechat-standing-scope','root_id':self.kernel.root_id,'epoch':self.kernel.epoch,
                    'owner':peer.principal,'peer':peer.witness,'nonce':secrets.token_hex(32),'expires':time.time()+120,
                    'scope':scope,'policy_version':self.kernel.security.guard.version,
                'operations':list(OPERATIONS),'model_destinations':[CodexSourceProvider.destination,'model:codex-mcp'],
-                   'send_destinations':['wechat:'+self.resources[i].key for i in targets],
+                   'send_destinations':['wechat:'+self.resources[i].key for i in reply_targets],
                    'execution':'foreground original-app keyboard; once; Unknown never retries',
                    'restart_restores_authority':False}
         with self.scope_lock:
@@ -244,7 +248,10 @@ class WeChatService:
             if row and row[0] not in ('Prepared','Executing'):self.kernel.security.bindings.pop(execution_id,None)
             return {'state':row[0] if row else 'FailedSafe','execution_id':execution_id,'retry':False,'delivery_confirmed':False}
     def binding(self):
-        self.check();helper=self.config['navigation_helper']
+        self.check()
+        return self.inspect_binding()
+    def inspect_binding(self):
+        helper=self.config['navigation_helper']
         p=subprocess.run([helper],input=canonical({'mode':'binding'}),capture_output=True,timeout=6)
         import json
         reply=json.loads(p.stdout)
@@ -257,16 +264,31 @@ class WeChatService:
         return binding
     def navigate(self,identity):
         started=time.time();binding=self.binding();text=self.catalog[identity]['display_name']
-        action=self.action(identity,'application.navigate',{'mode':'navigate','text':text,'visual_binding':binding,
-            'navigation_binding':{'menu_path':['编辑','搜索'],'main_window_id':binding['window_id'],'query':text}})
-        result=self.navigation.invoke(action,check=self.check)
-        if result['receipt']['state']!='Completed':raise AXRError('wechat_navigation_unconfirmed')
+        # One exact navigation transaction. The native helper validates its
+        # five-second permit locally between keys, avoiding per-key RPC stalls.
+        for phase in ('complete',):
+            action=self.action(identity,'application.navigate',{'mode':'navigate','text':text,'visual_binding':binding,
+                'navigation_binding':{'menu_path':['编辑','搜索'],'main_window_id':binding['window_id'],'query':text,'phase':phase}})
+            result=self.navigation.invoke(action,check=self.check)
+            if result['receipt']['state']!='Completed':
+                # Fixed native machine codes only, never raw diagnostics/data.
+                import re
+                code=(result.get('native') or {}).get('error','unconfirmed')
+                if not isinstance(code,str) or not re.fullmatch('[a-z][a-z0-9_]{0,63}',code):code='unconfirmed'
+                raise AXRError('wechat_navigation_'+phase+'_'+code)
+        self.check()
+        data=result.get('native') or {}
+        if (data.get('navigation_invoked') is not True or data.get('query_input_submitted') is not True
+            or data.get('main_window_verified') is not True or data.get('send_invoked') is not False):
+            raise AXRError('wechat_navigation_result_unconfirmed')
         rows=self.nav_state(identity,'recent',query=text,since=int(started)-1)
         if len(rows)!=1 or rows[0]['username']!=identity or rows[0]['query']!=text or not started-1<=rows[0]['last_click_time']<=time.time()+1:
             raise AXRError('wechat_unique_fresh_recipient_required')
         return binding,started,rows
     def send(self,identity,text,*,sources=()):
         if not isinstance(text,str) or not text.strip() or len(text.encode())>16000:raise AXRError('wechat_text_budget')
+        self.check()
+        if identity not in self.scope['reply_targets']:raise AXRError('wechat_send_target_not_authorized')
         with self.execution_lock:
             if any(j['state']=='Unknown' and j['conversation_id']==identity and j.get('text')==text for j in self.jobs.values()):raise AXRError('wechat_uncertain_text_never_retry')
             self.check();parking=next((i for i in self.scope['targets'] if i!=identity),None)
@@ -274,11 +296,16 @@ class WeChatService:
             elif identity==self.config['account_id']:parking=next((i for i in self.scope['reply_targets'] if i!=identity),parking)
             if parking is None:raise AXRError('wechat_parking_conversation_required')
             rows=self.nav_state(identity,'draft')
-            if len(rows)!=1 or rows[0]['draft']!='':raise AXRError('wechat_existing_draft_preserved')
+            if len(rows)!=1:raise AXRError('wechat_existing_draft_preserved')
+            # SessionTable can retain text after the user cleared the live
+            # composer. The pinned helper checks current edit-command state
+            # immediately before insertion; cached nonempty text is not proof.
             before=int(time.time())-30;baseline=self.read(identity,since=before);prior={r['reference'] for r in baseline['messages']}
             if baseline['has_more']:raise AXRError('wechat_send_baseline_requires_bounded_page')
             window,_,_=self.navigate(identity)
-            staged=self.navigation.invoke(self.action(identity,'application.draft',{'mode':'stage_draft','text':text,'visual_binding':window}),check=self.check)
+            stage_binding={**window,'draft_policy':'replace' if self.scope.get('overwrite_drafts',False) else 'preserve'}
+            staged=self.navigation.invoke(self.action(identity,'application.draft',{'mode':'stage_draft','text':text,'visual_binding':stage_binding}),check=self.check)
+            if (staged.get('native') or {}).get('error')=='existing_input_preserved':raise AXRError('wechat_existing_draft_preserved')
             if staged['receipt']['state']!='Completed' or staged.get('native',{}).get('draft_match') is not True:raise AXRError('wechat_exact_input_required')
             self.navigate(parking)
             cache=self.nav_state(identity,'unique_draft',text=text);observed=time.time();observed_mono=time.monotonic()
@@ -308,6 +335,7 @@ class WeChatService:
     def queue(self,identity,text,request_id,*,manual=False):
         self.check()
         if identity not in self.scope['targets']:raise AXRError('wechat_target_not_authorized')
+        if not manual and identity not in self.scope['reply_targets']:raise AXRError('wechat_send_target_not_authorized')
         if not isinstance(text,str) or not text.strip() or len(text.encode())>16000:raise AXRError('wechat_text_budget')
         key=digest([identity,request_id])
         with self.job_lock:
@@ -392,6 +420,23 @@ class WeChatService:
                     'drafts':[{'job_id':k,'display_name':self.catalog[j['conversation_id']]['display_name'],
                         'expires':j['expires']} for k,j in self.jobs.items() if j['state']=='Draft' and j['expires']>time.time()],
                     'grants':[],'summaries':[]}
+            if method=='check_target':
+                self.check();identity=args.get('conversation_id')
+                if (set(args)-{'conversation_id','metadata_only'} or 'conversation_id' not in args
+                    or type(args.get('metadata_only',False)) is not bool
+                    or identity not in self.scope['reply_targets']):raise AXRError('wechat_owner_scope_invalid')
+                started=time.monotonic()
+                try:
+                    if not args.get('metadata_only',False):self.navigate(identity)
+                    rows=self.nav_state(identity,'draft')
+                    return {'navigation_verified':not args.get('metadata_only',False),'draft_present':len(rows)!=1 or rows[0]['draft']!='',
+                        'cached_draft_metadata':saved_draft_metadata(rows[0]) if len(rows)==1 else {},
+                        'session_schema':self.nav_state(identity,'session_schema') if args.get('metadata_only',False) else [],
+                        'elapsed_ms':round((time.monotonic()-started)*1000),'send_invoked':False}
+                except AXRError as error:
+                    code=str(error)
+                    if not __import__('re').fullmatch('[a-z][a-z0-9_]{0,99}',code):code='wechat_target_check_failed'
+                    return {'navigation_verified':False,'error':code,'elapsed_ms':round((time.monotonic()-started)*1000),'send_invoked':False}
             if method=='manual_draft':
                 job=self.jobs.get(args['job_id'])
                 if not job or job['state']!='Draft' or job['expires']<=time.time():raise AXRError('wechat_manual_draft_expired')

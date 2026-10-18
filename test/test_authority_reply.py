@@ -53,7 +53,7 @@ class ReplyTransaction(unittest.TestCase):
             self.cache[self.active]=self.input;self.active=cid;self.input=self.cache[cid]
             self.recent=[{'username':cid,'query':label,'last_click_time':self.wall}]
             if self.ambiguous:self.recent.append({**self.recent[0],'username':'fixture-other'})
-            data.update(navigation_invoked=True,query_echo_match=True,main_window_verified=True)
+            data.update(navigation_invoked=True,query_input_submitted=True,main_window_verified=True)
         elif mode == 'stage_draft':
             if self.input:raise AssertionError('must preserve user text')
             self.stages+=1;self.input=action.payload['text'];data['draft_match']=True
