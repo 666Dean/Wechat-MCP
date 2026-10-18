@@ -110,6 +110,41 @@ class OwnerControl(unittest.TestCase):
         self.assertIs(self.f.application.manual_approval_required,True)
         self.assertTrue(self.channels[0].closed)
 
+    def test_local_job_review_signs_only_the_exact_server_action(self):
+        read=self.f.application.dispatch(self.f.client,{'method':'read_context',
+            'parameters':{'conversation_id':'fixture-peer'},'capability':self.f.capability})
+        proposed=self.f.application.dispatch(self.f.client,{'method':'disclose_context',
+            'parameters':{'conversation_id':'fixture-peer','context_id':read['result']['context_id']},
+            'capability':self.f.capability})
+        source=LocalInput(False)
+        source.next=canonical({'operation':'approve-job','job_id':proposed['id']})+b'\n'
+        result=self.run_control(source)
+        self.assertTrue(result['approved'])
+        self.assertEqual(source.outputs[0]['review']['action']['operation'],'disclosure.send')
+        self.assertEqual(len(self.signers),1)
+        self.assertNotIn('fixture-secret',json.dumps(source.outputs))
+
+    def test_changed_exact_job_preview_is_refused_before_requesting_a_key(self):
+        read=self.f.application.dispatch(self.f.client,{'method':'read_context',
+            'parameters':{'conversation_id':'fixture-peer'},'capability':self.f.capability})
+        proposed=self.f.application.dispatch(self.f.client,{'method':'disclose_context',
+            'parameters':{'conversation_id':'fixture-peer','context_id':read['result']['context_id']},
+            'capability':self.f.capability})
+        original=self.connect
+        def changed(*args):
+            channel=original(*args);request=channel.request
+            def tampered(*a,**kw):
+                result=request(*a,**kw)
+                if kw.get('phase')=='review-application':result['review']['action']['purpose']='changed'
+                return result
+            channel.request=tampered
+            return channel
+        self.connect=changed
+        source=LocalInput(False)
+        source.next=canonical({'operation':'approve-job','job_id':proposed['id']})+b'\n'
+        with self.assertRaisesRegex(AXRError,'review_invalid'):self.run_control(source)
+        self.assertEqual(self.signers,[]);self.assertEqual(source.outputs,[])
+
     @unittest.skipUnless(sys.platform=='win32','Windows owner named pipe')
     def test_signed_control_over_real_os_authenticated_owner_pipe(self):
         actual=process_identity(os.getpid())
@@ -139,6 +174,42 @@ class OwnerControl(unittest.TestCase):
             server.close()
             thread.join(timeout=3)
             self.assertFalse(thread.is_alive(),'owner pipe must stop without a dummy authenticated request')
+
+    @unittest.skipUnless(sys.platform=='win32','Windows synchronous pipe cancellation')
+    def test_idle_connection_does_not_block_independent_owner_or_helper_connection(self):
+        script=r'''
+import os,secrets,threading,time
+from axr.authority_server import AuthorityServer,AuthorityClient
+from axr.ipc import PeerRegistry,process_identity
+from test.test_authority_mcp import application_fixture
+f=application_fixture()
+actual=process_identity(os.getpid())
+registry=PeerRegistry(f.store,development_fixture=True)
+registry.enroll(actual,'owner',f.owner.principal,lambda:actual['user'])
+f.k.integrity.persist()
+endpoint=r'\\.\pipe\Stellaria.AXR.concurrent-fixture.'+secrets.token_hex(12)
+server=AuthorityServer(f.k,registry,endpoint)
+thread=threading.Thread(target=server.serve,daemon=True);thread.start()
+first=second=None
+try:
+    deadline=time.monotonic()+3
+    while server.listener is None:
+        if time.monotonic()>deadline:raise RuntimeError('fixture_listener_failed')
+        time.sleep(.01)
+    first=AuthorityClient.connect(endpoint,actual)
+    second=AuthorityClient.connect(endpoint,actual)
+    response=second.request('Authorize',phase='review-approval-setting',manual_approval_required=False)
+    assert response['challenge']['kind']=='wechat-approval-setting'
+finally:
+    if first:first.close()
+    if second:second.close()
+    server.close();thread.join(3)
+    assert not thread.is_alive()
+    assert not server.io_threads
+    f.doCleanups()
+'''
+        result=subprocess.run([sys.executable,'-c',script],capture_output=True,timeout=15)
+        self.assertEqual(result.returncode,0,result.stderr.decode(errors='replace'))
 
     @unittest.skipUnless(sys.platform=='win32','Windows synchronous pipe cancellation')
     def test_pipe_shutdown_is_bounded_during_accept_handshake_and_idle_session(self):

@@ -39,6 +39,16 @@ class WindowsFrames(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform=='win32','Windows durable attempt marker')
 class WindowsAttempts(unittest.TestCase):
+    def test_directory_traversal_does_not_request_write_or_delete_on_a_shared_directory(self):
+        from axr import windows_files as files
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)
+            handle=files.kernel.CreateFileW(str(path),0x80000000,0x1,None,3,0x02000000,None)
+            self.assertNotEqual(handle,__import__('ctypes').c_void_p(-1).value)
+            try:
+                opened=files.open_root(path)
+                files.close(opened)
+            finally:files.close(handle)
     def test_concurrent_claims_have_one_winner_and_cannot_overwrite_marker(self):
         from concurrent.futures import ThreadPoolExecutor
         with tempfile.TemporaryDirectory() as directory:

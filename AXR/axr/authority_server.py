@@ -13,12 +13,20 @@ from .ipc import SecureSession,SocketTransport,PipeTransport,create_pipe
 class AuthorityServer:
     def __init__(self,kernel,registry,endpoint,*,maximum_connections=16):
         if registry.development_fixture!=kernel.development_fixture:raise AXRError('authority_profile_mismatch')
+        if type(maximum_connections) is not int or not 1<=maximum_connections<=64:raise AXRError('authority_connection_budget')
         self.kernel=kernel;self.registry=registry;self.endpoint=str(endpoint)
+        self.maximum_connections=maximum_connections
         self.stop_event=threading.Event();self.slots=threading.BoundedSemaphore(maximum_connections)
         self.sessions=set();self.lock=threading.Lock();self.listener=None;self.inode=None;self.windows_thread=None
+        self.io_threads={}
     def _serve(self,transport):
-        session=None
+        session=None;io_thread=None
         try:
+            if os.name=='nt':
+                import win32api
+                io_thread=win32api.OpenThread(0x0001,False,threading.get_native_id())
+                with self.lock:self.io_threads[threading.get_native_id()]=io_thread
+            if self.stop_event.is_set():return
             session=SecureSession.server_handshake(transport,self.registry,self.kernel.epoch,authority={'public_key':self.kernel.root_public_key.hex(),'root_id':self.kernel.root_id})
             with self.lock:self.sessions.add(session)
             window=time.monotonic();count=0
@@ -42,6 +50,10 @@ class AuthorityServer:
                 with self.lock:self.sessions.discard(session)
                 session.close()
             else:transport.close()
+            if io_thread:
+                with self.lock:
+                    self.io_threads.pop(threading.get_native_id(),None)
+                    io_thread.Close()
             self.slots.release()
     def serve(self):
         if os.name=='nt':return self._windows()
@@ -71,23 +83,40 @@ class AuthorityServer:
         import win32api,win32pipe,pywintypes
         thread=win32api.OpenThread(0x0001,False,threading.get_native_id()) # THREAD_TERMINATE for CancelSynchronousIo
         with self.lock:self.windows_thread=thread
+        listener=None
         try:
+            # Keep a live instance continuously. Only the first creation may
+            # acquire a new pipe name; replacements never abandon that name
+            # while an accepted helper/client connection is still in use.
+            listener=create_pipe(self.endpoint,(self.registry.user,),
+                maximum_instances=self.maximum_connections+1)
+            self.listener=listener
             while not self.stop_event.is_set():
-                listener=create_pipe(self.endpoint,(self.registry.user,));self.listener=listener
                 try:
-                    if self.stop_event.is_set():listener.Close();break
+                    if self.stop_event.is_set():break
                     try:win32pipe.ConnectNamedPipe(listener,None)
                     except pywintypes.error as exc:
                         if exc.winerror!=535:raise
-                    if self.stop_event.is_set():listener.Close();break
-                    if not self.slots.acquire(False):listener.Close();continue
-                    # FIRST_PIPE_INSTANCE intentionally permits one live pipe;
-                    # handle this connection before accepting a replacement.
-                    self._serve(PipeTransport(listener))
+                    if self.stop_event.is_set():break
+                    if not self.slots.acquire(False):
+                        win32pipe.DisconnectNamedPipe(listener)
+                        continue
+                    accepted=listener
+                    try:
+                        listener=create_pipe(self.endpoint,(self.registry.user,),first_instance=False,
+                            maximum_instances=self.maximum_connections+1)
+                        self.listener=listener
+                    except BaseException:
+                        self.slots.release()
+                        raise
+                    # Native helpers must be able to authenticate/preflight
+                    # while the initiating client is connected. Kernel state
+                    # changes are still serialized by the kernel's own lock.
+                    threading.Thread(target=self._serve,args=(PipeTransport(accepted),),daemon=True).start()
                 except Exception:
-                    listener.Close()
                     if not self.stop_event.is_set():raise
         finally:
+            if listener:listener.Close()
             with self.lock:self.windows_thread=None;thread.Close()
     def close(self):
         self.stop_event.set()
@@ -96,11 +125,8 @@ class AuthorityServer:
             # Closing a handle from another thread can wait forever on its
             # synchronous ConnectNamedPipe/ReadFile. Cancel the serving thread's
             # pending I/O; that thread owns transport cleanup.
-            with self.lock:
-                if self.windows_thread:
-                    cancel=ctypes.WinDLL('kernel32',use_last_error=True).CancelSynchronousIo
-                    cancel.argtypes=[ctypes.c_void_p];cancel.restype=ctypes.c_int
-                    cancel(int(self.windows_thread))
+            cancel=ctypes.WinDLL('kernel32',use_last_error=True).CancelSynchronousIo
+            cancel.argtypes=[ctypes.c_void_p];cancel.restype=ctypes.c_int
             # Covers cancellation racing just before ConnectNamedPipe starts.
             # No data is sent and anonymous SQOS denies impersonation.
             try:
@@ -108,6 +134,16 @@ class AuthorityServer:
                     0,None,win32con.OPEN_EXISTING,0x00100000,None)
                 wake.Close()
             except Exception:pass
+            # Repeat cancellation over a bounded shutdown window to cover a
+            # thread entering ReadFile just after an earlier cancellation.
+            deadline=time.monotonic()+2
+            while True:
+                with self.lock:
+                    handles=[*self.io_threads.values()]
+                    if self.windows_thread:handles.append(self.windows_thread)
+                    for handle in handles:cancel(int(handle))
+                if not handles or time.monotonic()>=deadline:break
+                time.sleep(.01)
             return
         with self.lock:sessions=list(self.sessions)
         for session in sessions:session.close()

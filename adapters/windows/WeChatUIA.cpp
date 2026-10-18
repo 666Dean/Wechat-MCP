@@ -20,6 +20,8 @@ static std::wstring Wide(const std::string& s){if(s.empty())return {};int n=Mult
 static std::string Value(IUIAutomationElement* e){ComPtr<IUIAutomationValuePattern> p;if(SUCCEEDED(e->GetCurrentPatternAs(UIA_ValuePatternId,IID_PPV_ARGS(&p)))){BSTR b=nullptr;if(SUCCEEDED(p->get_CurrentValue(&b))){auto v=Utf8(b?std::wstring(b,SysStringLen(b)):L"");SysFreeString(b);return v;}}return Name(e);}
 static std::string Id(IUIAutomationElement* e){BSTR b=nullptr;if(FAILED(e->get_CurrentAutomationId(&b)))return {};std::string v=Utf8(b?std::wstring(b,SysStringLen(b)):L"");SysFreeString(b);return v;}
 static std::string Draft(IUIAutomationValuePattern* p){BSTR b=nullptr;if(FAILED(p->get_CurrentValue(&b)))throw std::runtime_error("draft_value_unavailable");auto text=Utf8(b?std::wstring(b,SysStringLen(b)):L"");SysFreeString(b);return text;}
+static std::string Birth(HANDLE process){FILETIME created,exited,kernel,user;if(!GetProcessTimes(process,&created,&exited,&kernel,&user))throw std::runtime_error("wechat_process_birth_unavailable");ULARGE_INTEGER value;value.LowPart=created.dwLowDateTime;value.HighPart=created.dwHighDateTime;return std::to_string(value.QuadPart);}
+static void SetValue(IUIAutomationValuePattern* input,const std::string& text){auto wide=Wide(text);BSTR prepared=SysAllocStringLen(wide.data(),UINT(wide.size()));if(!prepared)throw std::runtime_error("draft_allocation_failed");auto changed=input->SetValue(prepared);SysFreeString(prepared);if(FAILED(changed))throw std::runtime_error("input_prepare_failed");}
 static std::string Role(IUIAutomationElement* e){CONTROLTYPEID t=0;e->get_CurrentControlType(&t);switch(t){case UIA_TextControlTypeId:return "Text";case UIA_EditControlTypeId:return "Edit";case UIA_ListControlTypeId:return "List";case UIA_ButtonControlTypeId:return "Button";default:return "Other";}}
 static std::vector<ComPtr<IUIAutomationElement>> Children(IUIAutomationTreeWalker* walker,IUIAutomationElement* e){std::vector<ComPtr<IUIAutomationElement>> v;ComPtr<IUIAutomationElement> child;walker->GetFirstChildElement(e,&child);while(child&&v.size()<500){v.push_back(child);ComPtr<IUIAutomationElement> next;walker->GetNextSiblingElement(child.Get(),&next);child=next;}return v;}
 static ComPtr<IUIAutomationElement> Path(IUIAutomationTreeWalker* walker,ComPtr<IUIAutomationElement> root,const Json& parts){for(const auto& n:parts){auto children=Children(walker,root.Get());int index=n.get<int>();if(index<0||std::size_t(index)>=children.size())throw std::runtime_error("selector_changed");root=children[index];}return root;}
@@ -43,7 +45,8 @@ static Json Main(const Json& req,const Json* authority=nullptr){
     if(candidate.windows.size()!=1)throw std::runtime_error("wechat_window_missing_or_ambiguous");
     HWND window=candidate.windows[0];DWORD pid=0;GetWindowThreadProcessId(window,&pid);
     HANDLE p=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);wchar_t exe[32768];DWORD size=32768;
-    if(!p||!QueryFullProcessImageNameW(p,0,exe,&size)){if(p)CloseHandle(p);throw std::runtime_error("wechat_identity_unavailable");}CloseHandle(p);
+    if(!p||!QueryFullProcessImageNameW(p,0,exe,&size)){if(p)CloseHandle(p);throw std::runtime_error("wechat_identity_unavailable");}
+    std::string birth;try{birth=Birth(p);}catch(...){CloseHandle(p);throw;}CloseHandle(p);
     std::ifstream file(std::filesystem::path(std::wstring(exe,size)),std::ios::binary);
     if(!file||std::filesystem::file_size(std::filesystem::path(std::wstring(exe,size)))>512ull*1024*1024)throw std::runtime_error("executable_identity_read_failed");
     std::string bytes((std::istreambuf_iterator<char>(file)),{});
@@ -67,7 +70,16 @@ static Json Main(const Json& req,const Json* authority=nullptr){
         nodes.push_back(item);for(std::size_t i=0;i<children.size();++i){auto childPath=path;childPath.push_back(i);walk(children[i],childPath,depth+1,read);}
     };
     if(op=="structure"){walk(root,Json::array(),0,false);return {{"nodes",nodes},{"pid",pid},{"text_redacted",true}};}
+    if(authority&&op=="binding"){
+        Authority(*authority);
+        if(Value(Path(walker.Get(),root,req.at("account_path")).Get())!=req.at("expected_account").get<std::string>())throw std::runtime_error("runtime_account_witness_changed");
+        Authority(*authority,true);
+        auto binding=authority->at("visual_binding");
+        binding["expected_pid"]=pid;binding["window_id"]=reinterpret_cast<std::uintptr_t>(window);binding["process_birth"]=birth;
+        return {{"binding",binding},{"main_window_verified",true},{"send_invoked",false},{"content_disclosed",false}};
+    }
     if(req.at("expected_pid").get<DWORD>()!=pid)throw std::runtime_error("application_epoch_changed");
+    if(authority&&(req.at("window_id").get<std::uintptr_t>()!=reinterpret_cast<std::uintptr_t>(window)||req.at("process_birth")!=birth))throw std::runtime_error("main_window_instance_changed");
     ComPtr<IUIAutomationElement> boundTarget;
     auto verify=[&]{
         if(authority)Authority(*authority);
@@ -76,16 +88,39 @@ static Json Main(const Json& req,const Json* authority=nullptr){
                     {"operations",op=="send_text"?Json::array({"messages.send"}):Json::array({"messages.read","messages.search"})}};
         if(op=="send_text")scope["text"]=req.at("text");
         if(!axr_check_scoped_commit(control.at("store").get<std::string>().c_str(),control.at("proof").get<std::string>().c_str(),scope.dump().c_str()))throw std::runtime_error("authority_or_requested_scope_changed");}
-        if(Value(Path(walker.Get(),root,req.at("header_path")).Get())!=req.at("expected_title").get<std::string>())throw std::runtime_error("target_identity_changed");
+        if(op!="navigate"&&Value(Path(walker.Get(),root,req.at("header_path")).Get())!=req.at("expected_title").get<std::string>())throw std::runtime_error("target_identity_changed");
         DWORD current=0;GetWindowThreadProcessId(window,&current);if(current!=pid)throw std::runtime_error("application_epoch_changed");
+        if(authority){HANDLE currentProcess=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);if(!currentProcess)throw std::runtime_error("application_epoch_changed");std::string currentBirth;try{currentBirth=Birth(currentProcess);}catch(...){CloseHandle(currentProcess);throw;}CloseHandle(currentProcess);if(currentBirth!=birth)throw std::runtime_error("application_epoch_changed");}
         if(boundTarget){BOOL same=FALSE;auto fresh=Path(walker.Get(),root,req.at("path"));if(FAILED(automation->CompareElements(boundTarget.Get(),fresh.Get(),&same))||!same)throw std::runtime_error("control_epoch_changed");}
         if(op=="send_text"||op=="read"||authority){
             for(auto pair:{std::pair{"account_path","expected_account"},std::pair{"identity_path","expected_identity"}}){
+                if(op=="navigate"&&std::string(pair.first)=="identity_path")continue;
                 auto expected=req.at(pair.second).get<std::string>();
                 if(expected.empty()||Value(Path(walker.Get(),root,req.at(pair.first)).Get())!=expected)throw std::runtime_error("stable_identity_witness_changed");
             }
         }};
-    verify();auto target=Path(walker.Get(),root,req.at("path"));boundTarget=target;verify();
+    verify();
+    if(authority&&op=="navigate"){
+        auto search=Path(walker.Get(),root,req.at("search_path"));ComPtr<IUIAutomationValuePattern> input;
+        if(FAILED(search->GetCurrentPatternAs(UIA_ValuePatternId,IID_PPV_ARGS(&input))))throw std::runtime_error("search_input_unavailable");
+        // Preserve the user's unfinished search as well as their chat draft.
+        if(!Draft(input.Get()).empty())throw std::runtime_error("existing_search_never_overwrite");
+        verify();Authority(*authority,true);auto query=req.at("text").get<std::string>();SetValue(input.Get(),query);
+        if(Draft(input.Get())!=query)throw std::runtime_error("search_query_echo_changed");
+        verify();auto selected=Path(walker.Get(),root,req.at("search_result_path"));
+        if(Value(selected.Get())!=req.at("search_result_title").get<std::string>())throw std::runtime_error("search_result_label_changed");
+        ComPtr<IUIAutomationSelectionItemPattern> selection;ComPtr<IUIAutomationInvokePattern> invoke;
+        bool select=SUCCEEDED(selected->GetCurrentPatternAs(UIA_SelectionItemPatternId,IID_PPV_ARGS(&selection)));
+        if(!select&&FAILED(selected->GetCurrentPatternAs(UIA_InvokePatternId,IID_PPV_ARGS(&invoke))))throw std::runtime_error("search_result_action_unavailable");
+        verify();BOOL same=FALSE;auto fresh=Path(walker.Get(),root,req.at("search_result_path"));
+        if(FAILED(automation->CompareElements(selected.Get(),fresh.Get(),&same))||!same||Draft(input.Get())!=query)throw std::runtime_error("search_result_epoch_changed");
+        auto status=select?selection->Select():invoke->Invoke();if(FAILED(status))throw std::runtime_error("search_selection_unknown");
+        verify();
+        if(Value(Path(walker.Get(),root,req.at("header_path")).Get())!=req.at("expected_title").get<std::string>()||
+           Value(Path(walker.Get(),root,req.at("identity_path")).Get())!=req.at("expected_identity").get<std::string>())throw std::runtime_error("selected_conversation_witness_changed");
+        return {{"navigation_invoked",true},{"query_echo_match",true},{"main_window_verified",true},{"send_invoked",false},{"content_disclosed",false}};
+    }
+    auto target=Path(walker.Get(),root,req.at("path"));boundTarget=target;verify();
     if(authority){
         auto text=req.at("text").get<std::string>();
         ComPtr<IUIAutomationValuePattern> input;
@@ -150,7 +185,7 @@ static Json V2(const Json& request){
     auto mode=request.at("mode").get<std::string>(),op=request.at("operation").get<std::string>();
     auto text=request.at("expected_text").get<std::string>();
     if(text.empty()||text.size()>16000||!request.at("visual_binding").is_object())throw std::runtime_error("authority_scope_invalid");
-    std::map<std::string,std::string> operations={{"navigate","application.navigate"},{"stage_draft","application.draft"},{"read_draft","status.read"},{"send","messages.send"}};
+    std::map<std::string,std::string> operations={{"binding","status.read"},{"navigate","application.navigate"},{"stage_draft","application.draft"},{"read_draft","status.read"},{"send","messages.send"}};
     if(!operations.contains(mode)||operations.at(mode)!=op)throw std::runtime_error("authority_operation_mismatch");
     if(mode=="send"){
         const auto& binding=request.at("visual_binding");
@@ -163,9 +198,11 @@ static Json V2(const Json& request){
             throw std::runtime_error("recipient_witness_required");
     }
     Authority(request);
-    if(mode=="navigate")throw std::runtime_error("windows_search_navigation_not_qualified");
     auto req=request.at("visual_binding");req["op"]=mode=="send"?"commit_draft":mode;
-    req["text"]=text;req["expected_account"]=request.at("account");req["expected_identity"]=request.at("identity");
+    if(req.contains("expected_account")&&req.at("expected_account")!=request.at("account"))throw std::runtime_error("authority_account_mismatch");
+    if(mode!="navigate"&&mode!="binding"&&req.contains("expected_identity")&&req.at("expected_identity")!=request.at("identity"))throw std::runtime_error("authority_recipient_mismatch");
+    req["text"]=text;req["expected_account"]=request.at("account");
+    if(mode!="navigate")req["expected_identity"]=request.at("identity");
     return Main(req,&request);
 }
 int main(int argc,char** argv){HRESULT initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);Json result,request;bool v2=argc==2&&std::string(argv[1])=="--authority-v2";
@@ -175,6 +212,6 @@ int main(int argc,char** argv){HRESULT initialized=CoInitializeEx(nullptr,COINIT
     catch(const std::exception& e){result={{"error",e.what()}};}
     if(v2){result["send_invoked"]=sendInvoked;result["content_disclosed"]=false;
         if(authorityClaimed){auto& context=request.at("guard_context");auto endpoint=context.at("authority_endpoint").get<std::string>(),proof=context.at("proof").get<std::string>(),evidence=Stellaria::AXR::Digest(result.dump());
-            bool verified=!sendInvoked&&!result.contains("error")&&result.value("draft_match",false);
+            bool verified=!sendInvoked&&!result.contains("error")&&(result.value("draft_match",false)||result.value("main_window_verified",false));
             result["authority_receipt_recorded"]=axr_authority_observe(endpoint.c_str(),proof.c_str(),verified?1:0,evidence.c_str())==1;}}
     std::cout<<result.dump()<<std::endl;if(SUCCEEDED(initialized))CoUninitialize();return 0;}

@@ -11,7 +11,8 @@ from axr.aet import AXRError, Action, Provenance, Resource, canonical, digest, i
 from axr_integration.content_safety import mask_credentials
 
 
-METHODS = frozenset({'status', 'read_context', 'disclose_context', 'prepare_reply', 'receipt', 'execute'})
+METHODS = frozenset({'status', 'read_context', 'disclose_context', 'prepare_reply', 'submit_reply',
+                     'reply_status', 'receipt', 'execute'})
 
 
 def attach_windows_mcp(kernel, configuration):
@@ -36,6 +37,11 @@ def attach_windows_mcp(kernel, configuration):
         save_approval_setting=save_setting)
     kernel.application = application.dispatch
     kernel.application_owner = application.owner_dispatch
+    if configuration.get('reply_navigation'):
+        from .wechat_controller import AuthorityReplyController
+        application.replies=AuthorityReplyController(application,configuration['reply_navigation'])
+        kernel.application_close=application.replies.close
+        kernel.security.revoke_domain=application.replies.stop
     return application
 
 
@@ -57,6 +63,7 @@ class WeChatMCPApplication:
             if not isinstance(database, NativeDatabase):
                 raise AXRError('wechat_native_consumer_required')
         self.journal, self.guard = kernel.store.journal, kernel.security.guard
+        self.replies = None
 
     def dispatch(self, peer, packet):
         if peer.role != 'client':raise AXRError('authority_client_channel_required')
@@ -71,12 +78,17 @@ class WeChatMCPApplication:
             return {'backend':'independent-authority', 'authority_connected':True,
                 'trust_state':state, 'send_available':False, 'body_disclosed':False,
                 'unknown_retry':False, 'manual_replies':True,
+                'reply_controller_available':self.replies is not None,
                 'manual_approval_required':self.manual_approval_required}
         capability = packet['capability']
         if method == 'receipt':
             if set(parameters) != {'execution_id'}:raise AXRError('wechat_authority_parameters_invalid')
             return self.kernel.receipt(peer, capability, identifier(parameters['execution_id']))
         task = self.kernel._task(peer, capability)
+        if method == 'reply_status':
+            if set(parameters)!={'job_id'}:raise AXRError('wechat_authority_parameters_invalid')
+            if self.replies is None:raise AXRError('wechat_reply_controller_unavailable')
+            return self.replies.status(peer,task,parameters['job_id'])
         if method == 'execute':
             if set(parameters) != {'job_id'}:raise AXRError('wechat_authority_parameters_invalid')
             return self.execute_pending(peer,capability,task,parameters['job_id'])
@@ -89,6 +101,9 @@ class WeChatMCPApplication:
             return self.read(peer, capability, task, resource, parameters)
         if method == 'disclose_context':
             return self.disclose(peer, capability, task, resource, parameters)
+        if method == 'submit_reply':
+            if self.replies is None:raise AXRError('wechat_reply_controller_unavailable')
+            return self.replies.propose(peer,capability,task,resource,parameters)
         return self.prepare(peer, capability, task, resource, parameters)
 
     def execute(self, peer, capability, action, operation):
@@ -196,10 +211,11 @@ class WeChatMCPApplication:
         if row is None or row['expires']<=self.journal.clock() or row['policy_version']!=self.guard.version:
             raise AXRError('context_expired_revoked_or_out_of_scope')
         context = self.journal.vault.open(row['payload'],handle)
-        if context.get('kind')!='pending-disclosure':raise AXRError('wechat_pending_job_required')
+        kinds={'pending-disclosure':'disclosure.send','pending-send':'messages.send'}
+        if context.get('kind') not in kinds:raise AXRError('wechat_pending_job_required')
         job = self.journal.get(context['job_id'],row['principal'])
         action = self.journal.action(job)
-        if action.resource.key!=row['resource'] or action.principal!=row['principal'] or action.operation!='disclosure.send':
+        if action.resource.key!=row['resource'] or action.principal!=row['principal'] or action.operation!=kinds[context['kind']]:
             raise AXRError('wechat_pending_job_scope_changed')
         return context,job,action
 
@@ -226,10 +242,12 @@ class WeChatMCPApplication:
                 'job_id':packet['job_id'],'seal':action.seal,'contract':task['id'],
                 'expires':min(now+60,task['expires'],job['expires'])}
             self.kernel.challenges[nonce] = challenge
-            preview = self.journal.context(action.payload['context_id'],action.principal,action.resource,self.guard.version)
-            return {'challenge':challenge,'review':{'action':asdict(action),
-                'messages':[{'reference':message['reference'],'text':mask_credentials(message['text'])[0]}
-                            for message in preview['messages']]}}
+            review={'action':asdict(action)}
+            if action.operation=='disclosure.send':
+                preview = self.journal.context(action.payload['context_id'],action.principal,action.resource,self.guard.version)
+                review['messages']=[{'reference':message['reference'],'text':mask_credentials(message['text'])[0]}
+                                    for message in preview['messages']]
+            return {'challenge':challenge,'review':review}
         challenge = self.kernel.challenges.pop(packet['challenge_id'],None)
         if (not challenge or challenge.get('kind')!='wechat-application-review' or challenge['peer']!=peer.witness or
                 challenge['owner']!=peer.principal or challenge['job_id']!=packet['job_id'] or
@@ -282,6 +300,9 @@ class WeChatMCPApplication:
         pending,job,action = self.pending(handle)
         if pending['contract']!=task['id'] or action.principal!=peer.principal:
             raise AXRError('wechat_pending_job_scope_changed')
+        if pending['kind']=='pending-send':
+            if self.replies is None:raise AXRError('wechat_reply_controller_unavailable')
+            return self.replies.schedule(peer,capability,task,handle)
         if job['state'] in ('Completed','Unknown','FailedSafe','Expired'):
             return self.journal.receipt(job['id'],peer.principal)
         if job['state']!='Ready':raise AXRError('wechat_exact_owner_approval_required')

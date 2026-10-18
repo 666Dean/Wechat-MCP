@@ -28,7 +28,10 @@ class AuthorityKernel:
     def close(self):
         if not self.closed:
             self.closed=True
-            self.lifetime.__exit__()
+            try:
+                close=getattr(self,'application_close',None)
+                if callable(close):close()
+            finally:self.lifetime.__exit__()
     def _initialize(self,security,signer,owner_public_key,*,identity,environment,handler_for,clock,development_fixture,initialize,recovery_verifier):
         if getattr(native,'security_release',False) and development_fixture:raise AXRError('release_identity_downgrade_forbidden')
         if not development_fixture:

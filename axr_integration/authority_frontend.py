@@ -117,6 +117,16 @@ def register(mcp, frontend):
         """Store a source-bound encrypted manual draft. This tool never sends WeChat messages."""
         return frontend.call('prepare_reply',conversation_id=conversation_id,text=text,context_ids=context_ids)
 
+    @mcp.tool()
+    def wechat_submit_reply(conversation_id:str,draft_id:str)->dict:
+        """Propose a fixed source-bound send plan; independent owner approval and task scope still apply."""
+        return frontend.call('submit_reply',conversation_id=conversation_id,draft_id=draft_id)
+
+    @mcp.tool(annotations={'readOnlyHint':True})
+    def wechat_reply_status(job_id:str)->dict:
+        """Observe this task's reply job; database observation never proves delivery or authorizes retry."""
+        return frontend.call('reply_status',job_id=job_id)
+
     @mcp.tool(annotations={'readOnlyHint':True})
     def axr_receipt(execution_id:str)->dict:
         """Read the authenticated task's own execution receipt; Unknown is never retried."""

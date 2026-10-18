@@ -155,7 +155,10 @@ class Supervisor:
                         if failure.get("error")=="strict_sandbox_failed" and stage in {
                             "sandbox_profile_failed","sandbox_process_start_failed","sandbox_job_failed",
                             "sandbox_attributes_failed","sandbox_acl_read_failed","sandbox_acl_grant_failed",
-                            "sandbox_reparse_path_denied","sandbox_runtime_too_large","sandbox_timeout","child_exit"}:
+                            "sandbox_reparse_path_denied","sandbox_runtime_path_unavailable","sandbox_absolute_runtime_required",
+                            "sandbox_runtime_canonical_failed","sandbox_executable_canonical_failed","sandbox_runtime_enumeration_failed",
+                            "sandbox_working_directory_unavailable",
+                            "sandbox_runtime_too_large","sandbox_timeout","child_exit"}:
                             code=failure.get("system_error",failure.get("exit_code"))
                             if type(code) is int:raise AXRError(stage+"_code_"+str(code))
                     except (ValueError,AttributeError):pass

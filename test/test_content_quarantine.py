@@ -75,6 +75,24 @@ class IsolatedContent(unittest.TestCase):
         self.assertEqual(len(list(q.directory.glob('*.sealed'))),2)
         self.assertNotIn(b'fixture text',next(q.directory.glob('*.sealed')).read_bytes())
         with self.assertRaises(AXRError):q.inspect(b'MZfixture','notes.txt',source='task:one',policy_version=2,check=lambda:None)
+    @unittest.skipUnless(sys.platform=='win32','Windows extended paths and reparse boundary')
+    def test_long_staged_runtime_still_parses_and_denies_a_junction(self):
+        import subprocess
+        launcher=os.environ.get('AXR_TEST_WINDOWS_LAUNCHER')
+        if not launcher:self.skipTest('native Windows launcher not provided')
+        area=self.root
+        while len(str(area))<290:area=area/'synthetic-long-runtime-component'
+        area.mkdir(parents=True)
+        store=SimpleNamespace(directory=area,vault=self.store.vault)
+        q=ContentQuarantine(store,windows_launcher=launcher)
+        result=q.inspect(b'long path fixture','notes.txt',source='task:long',policy_version=1,check=lambda:None)
+        self.assertEqual(result['text'],'long path fixture')
+        command,sandbox=q._invocation();outside=self.root/'outside';outside.mkdir()
+        link=Path(sandbox.windows_root)/'junction'
+        created=subprocess.run(['cmd','/c','mklink','/J','\\\\?\\'+str(link),str(outside)],capture_output=True)
+        self.assertEqual(created.returncode,0)
+        with self.assertRaisesRegex(AXRError,'sandbox_reparse_path_denied'):
+            q.supervisor.invoke(command,{'content':'Zml4dHVyZQ==','filename':'notes.txt'},sandbox=sandbox)
     @unittest.skipUnless(sys.platform=='darwin','real macOS OS sandbox')
     def test_same_profile_denies_private_file_loopback_and_other_executable(self):
         q=ContentQuarantine(self.store);command,sandbox=q._invocation()

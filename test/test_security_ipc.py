@@ -20,6 +20,14 @@ class SecurityIPC(unittest.TestCase):
         with self.assertRaisesRegex(AXRError,'process_changed'):registry.enroll(forged,'owner','owner',lambda:self.actual['user'])
         with self.assertRaises(AXRError):registry.enroll(self.actual,'client','agent',lambda:self.actual['user'])
         self.assertFalse(registry.rows)
+    def test_retiring_a_managed_handler_removes_only_the_exact_birth(self):
+        registry=PeerRegistry(self.store,development_fixture=True)
+        registry.enroll(self.actual,'handler','fixture-handler',lambda:self.actual['user'])
+        registry.retire({**self.actual,'birth':'another-instance'})
+        self.assertEqual(registry.accept(self.actual).principal,'fixture-handler')
+        registry.retire(self.actual)
+        with self.assertRaisesRegex(AXRError,'not_enrolled'):registry.accept(self.actual)
+        self.assertFalse(PeerRegistry(self.store,development_fixture=True).rows)
     def pair(self):
         registry=PeerRegistry(self.store,development_fixture=True)
         registry.enroll(self.actual,'client','fixture-agent',lambda:self.actual['user'])

@@ -73,6 +73,13 @@ class PeerRegistry:
             if actual['user'] not in self._users(row['role']):continue
             return PeerContext(row['role'],row['principal'],digest(actual),actual['pid'],actual['birth'])
         raise AXRError('ipc_peer_not_enrolled')
+    def retire(self,identity):
+        """Trusted managed-process cleanup. Removes this exact birth only."""
+        rows=[row for row in self.rows if row['identity']!=identity]
+        if rows==self.rows:return
+        if not native.durable_write(str(self.path),self.store.vault.seal(rows,'axr-peer-registry-v2')):
+            raise AXRError('peer_registry_write_failed')
+        self.rows=rows;self.on_change()
 
 class SocketTransport:
     def __init__(self,sock):self.sock=sock;self.stream=sock.makefile('rb');self.closed=False
@@ -157,7 +164,7 @@ class SecureSession:
     def close(self):
         if not self.closed:self.closed=True;self.transport.close()
 
-def create_pipe(name,allowed_sids=()):
+def create_pipe(name,allowed_sids=(),*,first_instance=True,maximum_instances=1):
     """Current-user/SYSTEM plus explicit managed AppContainer SIDs only."""
     import win32api,win32con,win32file,win32pipe,win32security,pywintypes
     token=win32security.OpenProcessToken(win32api.GetCurrentProcess(),win32con.TOKEN_QUERY)
@@ -168,5 +175,8 @@ def create_pipe(name,allowed_sids=()):
         acl.AddAccessAllowedAce(win32security.ACL_REVISION,win32con.GENERIC_READ|win32con.GENERIC_WRITE,sid)
     descriptor=win32security.SECURITY_DESCRIPTOR();descriptor.SetSecurityDescriptorDacl(1,acl,0)
     attrs=pywintypes.SECURITY_ATTRIBUTES();attrs.SECURITY_DESCRIPTOR=descriptor
-    return win32pipe.CreateNamedPipe(name,win32pipe.PIPE_ACCESS_DUPLEX|0x00080000,
-        win32pipe.PIPE_TYPE_MESSAGE|win32pipe.PIPE_READMODE_MESSAGE|win32pipe.PIPE_WAIT|0x8,1,MAX_FRAME,MAX_FRAME,5000,attrs)
+    if type(maximum_instances) is not int or not 1<=maximum_instances<=65:
+        raise AXRError('ipc_pipe_instance_budget')
+    return win32pipe.CreateNamedPipe(name,win32pipe.PIPE_ACCESS_DUPLEX|(0x00080000 if first_instance else 0),
+        win32pipe.PIPE_TYPE_MESSAGE|win32pipe.PIPE_READMODE_MESSAGE|win32pipe.PIPE_WAIT|0x8,
+        maximum_instances,MAX_FRAME,MAX_FRAME,5000,attrs)

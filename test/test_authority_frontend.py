@@ -91,7 +91,8 @@ class WindowsMCPProtocol(unittest.IsolatedAsyncioTestCase):
                     await client.initialize()
                     names={tool.name for tool in (await client.list_tools()).tools}
                     self.assertEqual(names,{'wechat_status','wechat_read_context','wechat_disclose_context',
-                                            'wechat_prepare_reply','axr_execute','axr_receipt'})
+                                            'wechat_prepare_reply','wechat_submit_reply','wechat_reply_status',
+                                            'axr_execute','axr_receipt'})
                     status=await client.call_tool('wechat_status',{})
                     self.assertFalse(status.is_error)
                     self.assertFalse(json.loads(status.content[0].text)['manual_approval_required'])

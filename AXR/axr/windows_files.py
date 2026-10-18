@@ -29,7 +29,10 @@ def child(parent,name,*,directory=False,create=False,write_through=False):
     text=c.create_unicode_buffer(name);value=Unicode(len(name.encode('utf-16-le')),len(name.encode('utf-16-le'))+2,c.cast(text,w.LPWSTR))
     attrs=Attributes(c.sizeof(Attributes),parent,c.pointer(value),0x40,None,None);io=IOStatus();handle=HANDLE()
     access=0x100000|0x80|(0x1 if not create else 0x2|0x1|0x10000)
-    if directory:access=0x02000000|0x100000 # maximum allowed, no demand for volume-root write rights
+    # Traversal needs only list/traverse/read-attributes/synchronize. Requesting
+    # MAXIMUM_ALLOWED also acquires write/delete on ordinary owned directories
+    # and conflicts with another process's working-directory handle.
+    if directory:access=0x100000|0x80|0x20|0x1
     options=0x00200000|0x20|(0x1 if directory else 0x40)
     if write_through:options|=0x2 # FILE_WRITE_THROUGH
     status=nt.NtCreateFile(c.byref(handle),access,c.byref(attrs),c.byref(io),None,0x80,0x7,2 if create else 1,options,None,0)

@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import re
 import subprocess
 import time
 from dataclasses import asdict
@@ -26,23 +27,49 @@ from axr.security import SecurityService
 BASE=Path('/Library/Application Support/Stellaria AXR')
 
 def resources_root():
-    actual=process_identity(os.getpid());return Path(actual['image']).parent.parent/'Resources'
+    actual=process_identity(os.getpid());image=Path(actual['image'])
+    return image.parent/'runtime' if os.name=='nt' else image.parent.parent/'Resources'
 
 def _configuration(value):
     if type(value) is not dict or set(value)-{'state','endpoint','application','legacy_namespace','owner_public_key'} or not {'state','endpoint','application'}<=set(value):raise AXRError('wechat_deployment_configuration_invalid')
     root=resources_root();application=dict(value['application'])
     if type(application.get('manual_approval_required',True)) is not bool:raise AXRError('wechat_approval_setting_invalid')
+    def asset(value):
+        if not isinstance(value,str):raise AXRError('wechat_deployment_asset_invalid')
+        if not value.startswith('@resources/'):return value
+        relative=value[len('@resources/'):]
+        from pathlib import PurePosixPath
+        if (not relative or '\\' in relative or PurePosixPath(relative).is_absolute() or
+                any(part in ('.','..') for part in relative.split('/'))):
+            raise AXRError('wechat_deployment_asset_invalid')
+        path=(root/relative).resolve(strict=True)
+        if not path.is_relative_to(root.resolve(strict=True)) or not path.is_file():
+            raise AXRError('wechat_deployment_asset_invalid')
+        return str(path)
     for field in ('sqlcipher_library','navigation_helper'):
-        if field in application and application[field].startswith('@resources/'):
-            application[field]=str((root/application[field][len('@resources/'):]).resolve(strict=True))
-    state=Path(value['state']).absolute()
+        if field in application:application[field]=asset(application[field])
+    state=Path(value['state'])
     if not state.is_absolute() or str(state)==str(Path.home()) or state.is_symlink():raise AXRError('wechat_deployment_state_invalid')
-    endpoint=Path(value['endpoint'])
-    if not endpoint.is_absolute() or len(os.fsencode(endpoint))>100:raise AXRError('wechat_deployment_endpoint_invalid')
+    endpoint=value['endpoint']
+    if not isinstance(endpoint,str):raise AXRError('wechat_deployment_endpoint_invalid')
+    if os.name=='nt':
+        prefix='\\\\.\\pipe\\Stellaria.AXR.'
+        if not endpoint.startswith(prefix) or re.fullmatch(r'[A-Za-z0-9_.-]{1,120}',endpoint[len(prefix):]) is None:
+            raise AXRError('wechat_deployment_endpoint_invalid')
+    elif not Path(endpoint).is_absolute() or len(os.fsencode(endpoint))>100:
+        raise AXRError('wechat_deployment_endpoint_invalid')
+    if 'reply_navigation' in application:
+        navigation=dict(application['reply_navigation'])
+        navigation['helper']=asset(navigation['helper'])
+        if navigation['endpoint']!=endpoint or navigation['helper']!=application.get('navigation_helper'):
+            raise AXRError('wechat_deployment_navigation_mismatch')
+        application['reply_navigation']=navigation
     if not application.get('resources') or len(application['resources'])>4096:raise AXRError('wechat_deployment_resources_required')
+    seen=set()
     for row in application['resources']:
         resource=Resource(**row)
-        if resource.platform!='wechat' or resource.account_id!=application['account_id']:raise AXRError('wechat_deployment_resource_mismatch')
+        if resource.platform!='wechat' or resource.account_id!=application['account_id'] or resource.key in seen:raise AXRError('wechat_deployment_resource_mismatch')
+        seen.add(resource.key)
     return {**value,'state':str(state),'application':application}
 
 def owner_setup_review(value):
