@@ -70,6 +70,9 @@ def stage(root,build,output,deployment,*,identity='-'):
         shutil.copy2(found[0],resources/'lib-dynload'/found[0].name)
     # Resolve each dependency using the SOURCE image's rpaths before rewriting.
     origins={exe:(build/'AXR/axr-authority').resolve(),resources/'packages/axr'/native.name:native.resolve(),resources/'packages/axr_applications'/consumer.name:consumer.resolve()}
+    enclave=build/'AXR/libaxr-enclave.dylib'
+    if not enclave.is_file():raise ValueError('native Secure Enclave bridge required')
+    shutil.copy2(enclave,frameworks/enclave.name);origins[frameworks/enclave.name]=enclave.resolve()
     for path in (resources/'lib-dynload').iterdir():origins[path]=(stdlib/'lib-dynload'/path.name).resolve()
     # WeChat text can be Zstd-compressed. Do not accidentally depend on the
     # developer virtualenv when decoding a real message in the installed host.
@@ -149,6 +152,16 @@ def stage(root,build,output,deployment,*,identity='-'):
     command(['/usr/bin/codesign','--force','--sign',identity,'--options','runtime','--timestamp=none',owner_exe])
     command(['/usr/bin/codesign','--force','--sign',identity,'--options','runtime','--timestamp=none','--identifier','org.stellaria.axr.owner',owner])
     command(['/usr/bin/codesign','--verify','--deep','--strict',owner])
+    frontend=output/'AXR MCP.app';shutil.copytree(app,frontend)
+    frontend_exe=frontend/'Contents/MacOS/axr-frontend'
+    (frontend/'Contents/MacOS/axr-authority').unlink();shutil.copy2(build/'AXR/axr-frontend',frontend_exe)
+    for before,after in zip(dependencies(build/'AXR/axr-authority'),dependencies(exe)):
+        if before!=after:command(['/usr/bin/install_name_tool','-change',before,after,frontend_exe])
+    for rp in rpaths(frontend_exe):command(['/usr/bin/install_name_tool','-delete_rpath',rp,frontend_exe])
+    with (frontend/'Contents/Info.plist').open('wb') as stream:plistlib.dump({'CFBundleIdentifier':'org.stellaria.axr.frontend','CFBundleExecutable':'axr-frontend','CFBundleName':'WeChat MCP','CFBundlePackageType':'APPL','LSUIElement':True},stream)
+    command(['/usr/bin/codesign','--force','--sign',identity,'--options','runtime','--timestamp=none',frontend_exe])
+    command(['/usr/bin/codesign','--force','--sign',identity,'--options','runtime','--timestamp=none','--identifier','org.stellaria.axr.frontend',frontend])
+    command(['/usr/bin/codesign','--verify','--deep','--strict',frontend])
     # Separate, non-authority development tool. Never install this validation
     # surface in the customer application. It cannot open authority-only keys.
     validation=output/'AXR Runtime Check.app';shutil.copytree(app,validation)

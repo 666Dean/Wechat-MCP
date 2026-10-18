@@ -4,7 +4,23 @@
 #include <cmath>
 #include <set>
 #include <stdexcept>
+#if defined(__APPLE__)
+#include <sys/stat.h>
+#endif
 namespace Stellaria::AXR {
+void RequireProtectedHost(const Json& actual,bool owner){
+#if defined(__APPLE__)
+    std::filesystem::path expected=owner?"/Library/Application Support/Stellaria AXR/AXR Owner.app/Contents/MacOS/axr-owner":"/Library/Application Support/Stellaria AXR/AXR Authority.app/Contents/MacOS/axr-authority";
+    if(actual.at("image")!=expected.string())throw std::runtime_error("protected_host_installation_required");
+    for(auto path=expected;!path.empty();path=path.parent_path()){
+        struct stat info{};
+        if(lstat(path.c_str(),&info)||S_ISLNK(info.st_mode)||info.st_uid!=0||(info.st_mode&0022))throw std::runtime_error("protected_host_installation_required");
+        if(path==path.root_path())break;
+    }
+#else
+    (void)actual;(void)owner;throw std::runtime_error("protected_host_platform_unavailable");
+#endif
+}
 namespace {
 [[noreturn]] void Invalid(){throw std::runtime_error("task_contract_invalid");}
 bool In(const Json& a,const Json& b){return a.is_array()&&std::find(a.begin(),a.end(),b)!=a.end();}

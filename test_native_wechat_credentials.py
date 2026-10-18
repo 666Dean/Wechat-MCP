@@ -40,6 +40,7 @@ CREATE TABLE {table}(server_id INTEGER,create_time INTEGER,local_type INTEGER,me
 INSERT INTO {table} VALUES(41,100,1,'hello native',2,0),(42,101,1,'owner reply',1,0);
 CREATE TABLE SessionTable(username TEXT,draft TEXT);INSERT INTO SessionTable VALUES('{self.peer}','exact fixture draft');
 CREATE TABLE SearchRecent(username TEXT,query TEXT,last_click_time INTEGER);INSERT INTO SearchRecent VALUES('{self.peer}','Fixture peer',100);'''
+        sql+=f"CREATE TABLE contact(username TEXT,nick_name TEXT,remark TEXT,delete_flag INTEGER);INSERT INTO contact VALUES('{self.account}','Fixture owner','',0),('{self.peer}','Fixture peer','',0);"
         self.assertEqual(self.api.sqlite3_exec(handle,sql.encode(),None,None,None),0)
         self.api.sqlite3_close_v2(handle)
         self.config={'account_id':self.account,'sqlcipher_library':self.library,
@@ -47,6 +48,7 @@ CREATE TABLE SearchRecent(username TEXT,query TEXT,last_click_time INTEGER);INSE
           'shards':[{'id':'fixture-message','path':str(self.path),'role':'message','cipher_profile':'sqlcipher4','key_reference':'fixture-key'},
                     {'id':'fixture-session','path':str(self.path),'role':'session','cipher_profile':'sqlcipher4','key_reference':'fixture-key'},
                     {'id':'fixture-general','path':str(self.path),'role':'general','cipher_profile':'sqlcipher4','key_reference':'fixture-key'}]}
+        self.config['shards'].append({'id':'fixture-contact','path':str(self.path),'role':'contact','cipher_profile':'sqlcipher4','key_reference':'fixture-key'})
         self.consumer=self.module.fixture_consumer('fixture-handler',canonical(self.config).decode(),{'fixture-key':self.key})
     def use(self,request,resource=None,check=lambda:None):
         return json.loads(native.CredentialConsumer.use(self.consumer,canonical(asdict(resource or self.resource)).decode(),'database.query',canonical(request).decode(),check))
@@ -77,3 +79,8 @@ CREATE TABLE SearchRecent(username TEXT,query TEXT,last_click_time INTEGER);INSE
         self.config['account_id']='wxid_missing';self.config['resources']=[asdict(Resource('wechat','wxid_missing',self.peer))]
         other=self.module.fixture_consumer('fixture-handler',canonical(self.config).decode(),{'fixture-key':self.key})
         with self.assertRaisesRegex(RuntimeError,'self_identity'):native.CredentialConsumer.use(other,canonical(self.config['resources'][0]).decode(),'database.query','{"kind":"messages"}',lambda:None)
+    def test_native_catalog_paging_and_budget(self):
+        rows=self.use({'kind':'catalog','offset':0,'limit':1})
+        self.assertEqual(len(rows),1);self.assertEqual(len(rows[0]['rows']),1)
+        self.assertEqual(rows[0]['rows'][0]['username'],self.account)
+        with self.assertRaisesRegex(RuntimeError,'catalog_budget'):self.use({'kind':'catalog','offset':-1})

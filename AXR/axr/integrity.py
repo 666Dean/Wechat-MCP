@@ -9,7 +9,13 @@ from .aet import AXRError,canonical,digest
 
 class AuthorityIntegrity:
     TABLES={'security_contracts':'id','security_claims':'execution_id','security_events':'id','authority_commits':'nonce','security_execution_reviews':'execution_id'}
-    def __init__(self,store):self.store=store;self.journal=store.journal
+    def __init__(self,store,*,application_tables=None):
+        import re
+        self.store=store;self.journal=store.journal;self.tables=dict(self.TABLES)
+        for table,primary in (application_tables or {}).items():
+            if not re.fullmatch(r'[a-z][a-z0-9_]{0,63}',table) or not re.fullmatch(r'[a-z][a-z0-9_]{0,63}',primary) or table in self.tables:
+                raise AXRError('authority_application_table_invalid')
+            self.tables[table]=primary
     def state_digest(self):
         db=self.journal.db;tables={}
         def rows(cursor):
@@ -21,7 +27,7 @@ class AuthorityIntegrity:
                 if len(data)>2*1024*1024:raise AXRError('authority_record_budget')
                 h.update(len(data).to_bytes(8,'big'));h.update(data)
             return h.hexdigest()
-        for table,primary in self.TABLES.items():
+        for table,primary in self.tables.items():
             if db.execute('SELECT 1 FROM sqlite_master WHERE name=?',(table,)).fetchone():
                 tables[table]=rows(db.execute('SELECT * FROM '+table+' ORDER BY '+primary))
         import sqlite3

@@ -12,6 +12,7 @@
 #if defined(__APPLE__)
 #include <Security/Security.h>
 #include <unistd.h>
+#include <dlfcn.h>
 #elif defined(_WIN32)
 #define NOMINMAX
 #include <windows.h>
@@ -30,11 +31,68 @@ namespace {
 #if defined(__APPLE__)
 CFStringRef Name(std::string_view value){return CFStringCreateWithBytes(nullptr,reinterpret_cast<const UInt8*>(value.data()),value.size(),kCFStringEncodingUTF8,false);}
 std::string Bytes(CFDataRef v){return std::string(reinterpret_cast<const char*>(CFDataGetBytePtr(v)),CFDataGetLength(v));}
+// The representation is encrypted by Secure Enclave and bound to this device;
+// it is not SEC1/PKCS8 private key material. Native creator ACLs protect the
+// opaque blob without requiring a provisioned data-protection access group.
+std::string EnclaveBlob(const std::string& name,bool owner,const std::string* write=nullptr){
+    auto service=Name(owner?"Stellaria.AXR.Enclave.Owner.v2":"Stellaria.AXR.Enclave.Authority.v2"),account=Name(name);
+    auto query=CFDictionaryCreateMutable(nullptr,0,&kCFTypeDictionaryKeyCallBacks,&kCFTypeDictionaryValueCallBacks);
+    CFDictionarySetValue(query,kSecClass,kSecClassGenericPassword);CFDictionarySetValue(query,kSecAttrService,service);CFDictionarySetValue(query,kSecAttrAccount,account);
+    CFRelease(service);CFRelease(account);
+    if(write){
+        auto data=CFDataCreate(nullptr,reinterpret_cast<const UInt8*>(write->data()),write->size());
+        CFDictionarySetValue(query,kSecValueData,data);
+        SecTrustedApplicationRef app=nullptr;SecAccessRef access=nullptr;
+        auto image=ProcessIdentity(unsigned(getpid())).at("image").get<std::string>();
+        if(SecTrustedApplicationCreateFromPath(image.c_str(),&app)!=errSecSuccess){CFRelease(data);CFRelease(query);Unavailable();}
+        const void* values[]={app};auto apps=CFArrayCreate(nullptr,values,1,&kCFTypeArrayCallBacks);auto title=Name("AXR device-bound hardware signing key");
+        auto status=SecAccessCreate(title,apps,&access);CFRelease(title);CFRelease(apps);CFRelease(app);
+        if(status!=errSecSuccess||!access){CFRelease(data);CFRelease(query);Unavailable();}
+        CFDictionarySetValue(query,kSecAttrAccess,access);CFRelease(access);
+        status=SecItemAdd(query,nullptr);CFRelease(data);CFRelease(query);
+        if(status!=errSecSuccess)throw std::runtime_error("hardware_wrapped_key_store_failed");
+        return {};
+    }
+    CFDictionarySetValue(query,kSecUseAuthenticationUI,kSecUseAuthenticationUIFail);CFDictionarySetValue(query,kSecReturnData,kCFBooleanTrue);CFDictionarySetValue(query,kSecMatchLimit,kSecMatchLimitOne);
+    CFTypeRef result=nullptr;auto status=SecItemCopyMatching(query,&result);CFRelease(query);
+    if(status==errSecItemNotFound)return {};
+    if(status!=errSecSuccess||!result)throw std::runtime_error("hardware_wrapped_key_access_denied");
+    if(CFGetTypeID(result)!=CFDataGetTypeID()){CFRelease(result);Unavailable();}
+    auto blob=Bytes(static_cast<CFDataRef>(result));CFRelease(result);
+    if(blob.empty()||blob.size()>4096)Unavailable();return blob;
+}
+struct WrappedEnclave {
+    void* library=nullptr;void* key=nullptr;
+    using Create=void*(*)(int32_t,const unsigned char*,intptr_t);
+    using Copy=intptr_t(*)(void*,unsigned char*,intptr_t);
+    using Sign=intptr_t(*)(void*,const unsigned char*,intptr_t,unsigned char*,intptr_t);
+    using Release=void(*)(void*);
+    Create create=nullptr;Copy representation=nullptr,pub=nullptr;Sign sign=nullptr;Release release=nullptr;
+    WrappedEnclave(const std::string& name,bool make,bool owner){
+        RequireProtectedHost(ProcessIdentity(unsigned(getpid())),owner);
+        auto image=Utf8Path(ProcessIdentity(unsigned(getpid())).at("image").get<std::string>());
+        auto path=image.parent_path().parent_path()/"Frameworks/libaxr-enclave.dylib";
+        library=dlopen(path.c_str(),RTLD_NOW|RTLD_LOCAL);if(!library)throw std::runtime_error("hardware_bridge_unavailable");
+        create=reinterpret_cast<Create>(dlsym(library,"axr_enclave_create"));representation=reinterpret_cast<Copy>(dlsym(library,"axr_enclave_representation"));pub=reinterpret_cast<Copy>(dlsym(library,"axr_enclave_public"));sign=reinterpret_cast<Sign>(dlsym(library,"axr_enclave_sign"));release=reinterpret_cast<Release>(dlsym(library,"axr_enclave_release"));
+        if(!create||!representation||!pub||!sign||!release)Unavailable();
+        auto blob=EnclaveBlob(name,owner);
+        if(blob.empty()&&!make)throw std::runtime_error("hardware_key_not_provisioned");
+        key=create(owner?1:0,blob.empty()?nullptr:reinterpret_cast<const unsigned char*>(blob.data()),blob.size());
+        if(!key)Unavailable();
+        if(blob.empty()){
+            blob.resize(4096);auto size=representation(key,reinterpret_cast<unsigned char*>(blob.data()),blob.size());
+            if(size<=0||size>4096)Unavailable();blob.resize(size);EnclaveBlob(name,owner,&blob);
+        }
+        OPENSSL_cleanse(blob.data(),blob.size());
+    }
+    ~WrappedEnclave(){if(key&&release)release(key);if(library)dlclose(library);}
+};
 #endif
 }
 struct HardwareSigningKey::Impl {
 #if defined(__APPLE__)
     SecKeyRef key=nullptr;
+    std::unique_ptr<WrappedEnclave> wrapped;
     ~Impl(){if(key)CFRelease(key);}
 #elif defined(_WIN32)
     NCRYPT_PROV_HANDLE provider=0;NCRYPT_KEY_HANDLE key=0;
@@ -45,6 +103,7 @@ HardwareSigningKey::HardwareSigningKey(std::string name,bool create,bool userPre
     if(name.empty()||name.size()>128||!std::all_of(name.begin(),name.end(),[](unsigned char c){return (c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='.'||c=='-'||c=='_';}))throw std::runtime_error("trust_root_name_invalid");
 #if defined(AXR_SECURITY_RELEASE) && defined(__APPLE__)
     const auto caller=ProcessIdentity(unsigned(getpid()));
+    RequireProtectedHost(caller,userPresence);
     const char* expected=userPresence?"org.stellaria.axr.owner":"org.stellaria.axr.authority";
     if(caller.at("signature_valid")!=true||caller.at("hardened_runtime")!=true||caller.at("signing_id")!=expected)
         throw std::runtime_error("trust_root_process_identity_required");
@@ -56,6 +115,11 @@ HardwareSigningKey::HardwareSigningKey(std::string name,bool create,bool userPre
     // Separate names prevent silently reopening a background key as an owner
     // presence key. Provisioning selects a purpose, not a mutable runtime flag.
     name+=userPresence?".owner-presence-v2":".authority-v2";
+#ifdef AXR_OWNER_DEPLOYMENT
+    if((userPresence?std::string_view(AXR_OWNER_KEYCHAIN_GROUP):std::string_view(AXR_AUTHORITY_KEYCHAIN_GROUP)).empty()){
+        impl_->wrapped=std::make_unique<WrappedEnclave>(name,create,userPresence);return;
+    }
+#endif
     auto tag=CFDataCreate(nullptr,reinterpret_cast<const UInt8*>(name.data()),name.size());
     const void* keys[]={kSecClass,kSecAttrApplicationTag,kSecAttrKeyType,kSecReturnRef,kSecUseAuthenticationUI};
     const void* values[]={kSecClassKey,tag,kSecAttrKeyTypeECSECPrimeRandom,kCFBooleanTrue,(ownerInteraction||userPresence)?kSecUseAuthenticationUIAllow:kSecUseAuthenticationUIFail};
@@ -126,6 +190,7 @@ std::string HardwareSigningKey::Provider() const {
 }
 std::string HardwareSigningKey::PublicKey() const {
 #if defined(__APPLE__)
+    if(impl_->wrapped){std::string value(65,'\0');if(impl_->wrapped->pub(impl_->wrapped->key,reinterpret_cast<unsigned char*>(value.data()),value.size())!=65)Unavailable();return value;}
     auto publicKey=SecKeyCopyPublicKey(impl_->key);if(!publicKey)Unavailable();
     CFErrorRef error=nullptr;auto data=SecKeyCopyExternalRepresentation(publicKey,&error);CFRelease(publicKey);
     if(error){CFRelease(error);error=nullptr;}if(!data)Unavailable();auto result=Bytes(data);CFRelease(data);return result;
@@ -141,6 +206,7 @@ std::string HardwareSigningKey::PublicKey() const {
 std::string HardwareSigningKey::Sign(std::string_view message) const {
     if(message.size()>MaximumFrameBytes)throw std::runtime_error("trust_root_message_budget");
 #if defined(__APPLE__)
+    if(impl_->wrapped){std::string value(80,'\0');auto size=impl_->wrapped->sign(impl_->wrapped->key,reinterpret_cast<const unsigned char*>(message.data()),message.size(),reinterpret_cast<unsigned char*>(value.data()),value.size());if(size<=0||size>80)Unavailable();value.resize(size);return value;}
     auto bytes=CFDataCreate(nullptr,reinterpret_cast<const UInt8*>(message.data()),message.size());CFErrorRef error=nullptr;
     auto signature=SecKeyCreateSignature(impl_->key,kSecKeyAlgorithmECDSASignatureMessageX962SHA256,bytes,&error);CFRelease(bytes);
     if(error){CFRelease(error);error=nullptr;}if(!signature)Unavailable();auto result=Bytes(signature);CFRelease(signature);return result;

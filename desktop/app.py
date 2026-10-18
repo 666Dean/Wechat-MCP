@@ -10,14 +10,18 @@ import sys
 import time
 from pathlib import Path
 from PySide6.QtCore import QObject, Property, Signal, Slot, QTimer, QUrl, QEvent, QCoreApplication, Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon,QDesktopServices
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QFileDialog
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickWindow
 from PySide6.QtQuickControls2 import QQuickStyle
 from axr.aet import AXRError
-from axr_integration.broker import call, read_connection
-from .codex_config import snippet,install,restore
+from axr_integration.broker import call as legacy_call, read_connection
+from .authority_client import call as authority_call,installed as authority_installed
+from .codex_config import snippet,native_snippet,install,restore
+
+def call(*args,**kwargs):
+    return (authority_call if authority_installed() else legacy_call)(*args,**kwargs)
 
 
 class Controller(QObject):
@@ -30,11 +34,17 @@ class Controller(QObject):
         self.pool=concurrent.futures.ThreadPoolExecutor(max_workers=2);self.inflight=set();self.broker_process=None;self.worker_process=None;self.worker_job=None
         self.completed.connect(self.accept)
         self.timer=QTimer(self);self.timer.timeout.connect(self.refresh);self.timer.start(5000)
+        if not self.fixture and authority_installed():QTimer.singleShot(0,self.start)
         self.refresh()
     @Property('QVariantMap',notify=assistantChanged)
     def assistant(self):return self._assistant
     @Property('QVariantList',notify=threadsChanged)
     def codexThreads(self):return self._threads
+    @Slot(str)
+    def openSystemPermission(self,kind):
+        if self.fixture or sys.platform!='darwin':return
+        pane={'database':'Privacy_AllFiles','accessibility':'Privacy_Accessibility'}.get(kind)
+        if pane:QDesktopServices.openUrl(QUrl('x-apple.systempreferences:com.apple.preference.security?'+pane))
     @Slot()
     def loadAssistant(self):
         if not self.fixture:self.run('assistant_load',lambda:call(self.state,'control.assistant_settings',owner=True))
@@ -104,6 +114,12 @@ class Controller(QObject):
                 'automatic_reply_helper_required':'请更新本地服务以启用自动回复。',
                 'automatic_reply_scope_invalid':'请选择至少两个已绑定私聊，或全部可用私聊。',
                 'automatic_reply_already_active':'自动回复已经开启，请先停止当前会话。',
+                'wechat_full_disk_access_required':'请先在系统设置中允许 AXR Authority 完全磁盘访问，再开启服务；尚未请求身份认证。',
+                'wechat_accessibility_required':'请先在系统设置中允许 AXR Authority 使用辅助功能，再开启自动回复；尚未请求身份认证。',
+                'wechat_owner_review_expired_or_changed':'本次确认已过期或范围发生变化，未开启服务。请核对范围后重新开启。',
+                'wechat_initialization_approval_changed':'设置与已批准内容不一致，已保留进度。请先核对配置，避免重复认证。',
+                'wechat_initialization_recovery_requires_review':'初始化已有运行记录，不能按空事务接续。请保留数据并检查服务状态。',
+                'independent_authority_control_unavailable':'本地安全服务未连接，请先启动服务；无需重新登录微信。',
                 'unlimited_requires_bound_codex_thread':'请先选择并保存固定 Codex 对话，再开启不限模式。',
                 'stop_automatic_before_settings_change':'请先停止自动回复，再更改助理偏好。',
                 'authority_missing_expired_revoked_or_exhausted':'当前操作需要授权，或原授权已到期。',
@@ -194,6 +210,12 @@ class Controller(QObject):
     def start(self):
         if self.fixture:return
         def launch():
+            if authority_installed():
+                subprocess.run(['/bin/launchctl','kickstart','gui/'+str(os.getuid())+'/org.stellaria.axr.authority'],check=True,capture_output=True)
+                for _ in range(30):
+                    try:return authority_call(self.state,'status')
+                    except AXRError:time.sleep(.2)
+                raise AXRError('independent_authority_control_unavailable')
             try:read_connection(self.state);call(self.state,'status');return {'already_running':True}
             except Exception:pass
             if self.broker_process is not None and self.broker_process.poll() is None:raise AXRError('broker_start_pending')
@@ -292,7 +314,7 @@ class Controller(QObject):
         self.selected=None
         path=Path.home()/'.codex/config.toml'
         raw=path.read_bytes() if path.exists() else b''
-        value=snippet(sys.executable,Path(__file__).resolve().parent.parent/'server.py',self.state)
+        value=native_snippet() if authority_installed() else snippet(sys.executable,Path(__file__).resolve().parent.parent/'server.py',self.state)
         self.config_review=(path,value,hashlib.sha256(raw).hexdigest())
         self._detail=value;self.detailChanged.emit();self._notice='确认后连接 Codex。现有设置会保留。';self.noticeChanged.emit()
     @Slot()
@@ -317,8 +339,9 @@ class Controller(QObject):
             from mcp.client.stdio import stdio_client
             async def test():
                 async with asyncio.timeout(15):
-                    params=StdioServerParameters(command=sys.executable,args=[str(Path(__file__).resolve().parent.parent/'server.py'),
-                        '--axr-state',str(Path(self.state).resolve()),'--broker'])
+                    params=(StdioServerParameters(command='/Library/Application Support/Stellaria AXR/AXR MCP.app/Contents/MacOS/axr-frontend',args=['--mcp'])
+                        if authority_installed() else StdioServerParameters(command=sys.executable,args=[str(Path(__file__).resolve().parent.parent/'server.py'),
+                        '--axr-state',str(Path(self.state).resolve()),'--broker']))
                     async with stdio_client(params) as (r,w):
                         async with ClientSession(r,w) as c:
                             await c.initialize();tools=await c.list_tools();status=await c.call_tool('wechat_status',{})

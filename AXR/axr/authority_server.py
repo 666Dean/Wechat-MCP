@@ -28,6 +28,8 @@ class AuthorityServer:
                 with self.lock:self.io_threads[threading.get_native_id()]=io_thread
             if self.stop_event.is_set():return
             session=SecureSession.server_handshake(transport,self.registry,self.kernel.epoch,authority={'public_key':self.kernel.root_public_key.hex(),'root_id':self.kernel.root_id})
+            if session.peer.role=='owner' and hasattr(transport,'sock'):
+                transport.sock.settimeout(180) # Keep one exact review alive during OS user presence.
             with self.lock:self.sessions.add(session)
             window=time.monotonic();count=0
             while not self.stop_event.is_set():

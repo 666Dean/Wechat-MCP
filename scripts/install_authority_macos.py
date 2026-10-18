@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Install reviewed native code with the owner's macOS administrator approval.
+
+No credentials are imported and no service permissions are granted by install.
+The source file inventory is compared again AFTER the protected copy is made.
+An existing installation is refused; updates require explicit stop/re-enrollment.
+"""
+import argparse
+import hashlib
+import json
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+import uuid
+
+BASE=Path('/Library/Application Support/Stellaria AXR')
+BUNDLES=('AXR Authority.app','AXR Owner.app','AXR MCP.app')
+
+def install(package,*,replace_uninitialized=False):
+    if sys.platform!='darwin':raise RuntimeError('macOS required')
+    package=Path(package).resolve(strict=True)
+    manifest=json.loads((package/'package-review.json').read_bytes())['files']
+    files={}
+    for name in BUNDLES:
+        for path in (package/name).rglob('*'):
+            if path.is_symlink():raise RuntimeError('package links denied')
+            if path.is_file():
+                relative=str(path.relative_to(package))
+                if '\n' in relative or '\\' in relative:raise RuntimeError('package filename rejected')
+                expected=manifest.get(relative)
+                if expected!=hashlib.sha256(path.read_bytes()).hexdigest():raise RuntimeError('package changed since review')
+                files[relative]=expected
+        subprocess.run(['/usr/bin/codesign','--verify','--deep','--strict',str(package/name)],check=True,capture_output=True)
+    if BASE.exists():
+        if not replace_uninitialized:raise RuntimeError('existing installation requires explicit update workflow')
+        current=json.loads((BASE/'AXR Authority.app/Contents/Resources/deployment.json').read_bytes())['deployment']
+        proposed=json.loads((package/'AXR Authority.app/Contents/Resources/deployment.json').read_bytes())['deployment']
+        from axr.initialization import empty_initialization
+        if current!=proposed or not empty_initialization(current['state']) or Path(current['endpoint']).exists():
+            raise RuntimeError('initialized deployment requires stop and authenticated re-enrollment')
+    temporary=BASE.with_name('Stellaria AXR.install-'+uuid.uuid4().hex)
+    q=shlex.quote
+    lines=['set -eu','umask 022']
+    if not replace_uninitialized:lines.append('/bin/test ! -e '+q(str(BASE)))
+    lines.append('/bin/mkdir '+q(str(temporary)))
+    for name in BUNDLES:lines.append('/usr/bin/ditto '+q(str(package/name))+' '+q(str(temporary/name)))
+    lines+=['/usr/sbin/chown -R root:wheel '+q(str(temporary)), '/bin/chmod -R go-w '+q(str(temporary))]
+    for name in BUNDLES:lines.append('/usr/bin/codesign --verify --deep --strict '+q(str(temporary/name)))
+    inventory=''.join(sha+'  '+str(temporary/relative)+'\n' for relative,sha in sorted(files.items()))
+    lines.append('/usr/bin/printf %s '+q(inventory)+' | /usr/bin/shasum -a 256 -c - >/dev/null')
+    if replace_uninitialized:
+        previous=BASE.with_name('Stellaria AXR.previous-'+uuid.uuid4().hex)
+        lines.append('/bin/mv '+q(str(BASE))+' '+q(str(previous)))
+    lines.append('/bin/mv '+q(str(temporary))+' '+q(str(BASE)))
+    # The complete fixed script is embedded in the OS approval request. It is
+    # not executed from a user-writable script file after authentication.
+    script='do shell script '+json.dumps('\n'.join(lines),ensure_ascii=False)+' with administrator privileges'
+    result=subprocess.run(['/usr/bin/osascript','-e',script],capture_output=True,text=True)
+    if result.returncode:raise RuntimeError('installation_not_completed')
+    return {'installed':True,'owner_enrolled':False,'wechat_authorized':False}
+
+if __name__=='__main__':
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--package',required=True,type=Path)
+    parser.add_argument('--replace-uninitialized',action='store_true')
+    args=parser.parse_args();print(json.dumps(install(args.package,replace_uninitialized=args.replace_uninitialized)))

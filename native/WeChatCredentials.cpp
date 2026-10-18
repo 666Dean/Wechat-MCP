@@ -118,6 +118,7 @@ struct Database {
 };
 std::string Table(const std::string& id){unsigned char hash[16];unsigned n=0;if(!EVP_Digest(id.data(),id.size(),hash,&n,EVP_md5(),nullptr)||n!=16)throw std::runtime_error("wcdb_table_digest_failed");return "Msg_"+Database::Hex({reinterpret_cast<char*>(hash),16});}
 std::vector<std::string> ResourceKeys(const Json& config){std::vector<std::string> keys;for(auto& r:config.at("resources"))keys.push_back(Digest(r.dump()));return keys;}
+std::string NativeKeyName(const std::string& reference){return "wcdb-"+Digest(reference);}
 class WeChatConsumer final:public CredentialConsumer {
     Json config;Cipher api;
 #ifndef AXR_SECURITY_RELEASE
@@ -136,6 +137,7 @@ protected:
         const std::map<std::string,std::set<std::string>> fields={
             {"messages",{"kind","since","until","after","cursors","limit"}},
             {"recent",{"kind","query","since"}},{"draft",{"kind"}},
+            {"catalog",{"kind","offset","limit"}},
             {"unique_draft",{"kind","text"}}};
         auto permitted=fields.find(kind);
         if(permitted==fields.end())throw std::runtime_error("wcdb_native_operation_not_registered");
@@ -143,15 +145,22 @@ protected:
         Json result=Json::array();
         for(auto& shard:config.at("shards")){
             auto purpose=shard.at("role").get<std::string>();
+            if(kind=="catalog"&&purpose!="contact")continue;
+            if(kind!="catalog"&&purpose=="contact")continue;
             if((kind=="messages"&&purpose!="message")||(kind=="recent"&&purpose!="general")||((kind=="draft"||kind=="unique_draft")&&purpose!="session"))continue;
-            if(kind!="messages"&&kind!="recent"&&kind!="draft"&&kind!="unique_draft")throw std::runtime_error("wcdb_native_operation_not_registered");
             std::string key;
 #ifndef AXR_SECURITY_RELEASE
             if(!fixtureKeys.empty())key=fixtureKeys.at(shard.at("key_reference"));else
 #endif
-            key=ProtectedStore(config.at("credential_namespace")).Get(shard.at("key_reference"));
+            key=ProtectedStore(config.at("credential_namespace")).Get(NativeKeyName(shard.at("key_reference")));
             Database db(api,shard,key);Json rows;
-            if(kind=="messages"){
+            if(kind=="catalog"){
+                auto offset=request.value("offset",0),limit=request.value("limit",1000);
+                if(offset<0||offset>10000||limit<1||limit>1000)throw std::runtime_error("wcdb_native_catalog_budget");
+                auto self=db.run("SELECT username FROM contact WHERE username=? LIMIT 2",Json::array({config.at("account_id")}));
+                if(self.size()!=1)throw std::runtime_error("wcdb_native_self_identity_missing");
+                rows=db.run("SELECT username,nick_name,remark FROM contact WHERE delete_flag=0 ORDER BY username LIMIT ? OFFSET ?",Json::array({limit,offset}));
+            }else if(kind=="messages"){
                 auto table=Table(id);db.run("BEGIN");auto present=db.run("SELECT name FROM sqlite_master WHERE type='table' AND name=?",Json::array({table}));if(present.empty())continue;
                 auto columns=db.run("PRAGMA table_info(\""+table+"\")");std::set<std::string> names;for(auto& c:columns)names.insert(c.at("name"));
                 for(auto name:{"server_id","create_time","local_type","message_content","real_sender_id"})if(!names.contains(name))throw std::runtime_error("wcdb_native_schema_unqualified");
@@ -177,6 +186,14 @@ Json ImportLegacy(const Json& configuration,const std::string& legacyNamespace){
     ProtectedStore destination(configuration.at("credential_namespace"));
     Cipher api(configuration.at("sqlcipher_library"));unsigned count=0;
     for(auto& shard:configuration.at("shards")){
+        // Continue a verified partial migration without another legacy-item
+        // access dialog. Existing but invalid keys fail; never guess/replace.
+        try {
+            auto key=destination.Get(NativeKeyName(shard.at("key_reference")));
+            Database verify(api,shard,key);++count;continue;
+        }catch(const std::runtime_error& error){
+            if(std::string_view(error.what())!="owner_secret_not_provisioned")throw;
+        }
         auto service=Text(legacyNamespace),account=Text(shard.at("key_reference"));
         const void* keys[]={kSecClass,kSecAttrService,kSecAttrAccount,kSecReturnData,kSecMatchLimit};
         const void* values[]={kSecClassGenericPassword,service,account,kCFBooleanTrue,kSecMatchLimitOne};
@@ -188,7 +205,7 @@ Json ImportLegacy(const Json& configuration,const std::string& legacyNamespace){
         if(encoded.size()!=44||encoded.back()!='=')throw std::runtime_error("wcdb_native_legacy_record_invalid");
         std::string key(33,'\0');int n=EVP_DecodeBlock(reinterpret_cast<unsigned char*>(key.data()),reinterpret_cast<const unsigned char*>(encoded.data()),int(encoded.size()));OPENSSL_cleanse(encoded.data(),encoded.size());
         if(n!=33){OPENSSL_cleanse(key.data(),key.size());throw std::runtime_error("wcdb_native_legacy_record_invalid");}key.resize(32);
-        try {auto verifyKey=key;Database verify(api,shard,verifyKey);destination.Put(shard.at("key_reference"),key);}
+        try {auto verifyKey=key;Database verify(api,shard,verifyKey);destination.Put(NativeKeyName(shard.at("key_reference")),key);}
         catch(...){OPENSSL_cleanse(key.data(),key.size());throw;}
         OPENSSL_cleanse(key.data(),key.size());++count;
     }

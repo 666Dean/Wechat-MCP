@@ -25,7 +25,9 @@ ApplicationWindow {
     property var platform: status.platform || ({})
     property bool previewMode: window.backend.scope === "synthetic_preview"
     property bool connected: window.backend.connected === true && !previewMode
+    property bool independentService: window.status.authority === "independent-native-v2"
     property var autoReply: status.automatic_reply || ({active:false})
+    property bool systemReady: !status.permissions || (status.permissions.database === true && status.permissions.accessibility === true)
     property var autoTargets: []
     property bool autoAll: false
     property var authorizationRequest: ({})
@@ -45,7 +47,7 @@ ApplicationWindow {
     property bool sendAvailable: !previewMode && platform.send_available === true
     Binding { target: Theme; property: "dark"; value: window.darkMode }
     function operation(op){return ({"messages.read":"读取消息","messages.search":"搜索消息","files.read":"解析本地附件","reply.prepare":"生成回复草稿","disclosure.send":"内容披露审批","messages.send":"提交微信回复","workspace.write":"保存工作文档","application.navigate":"应用导航","expired":"已过期任务"})[op] || "处理任务"}
-    function stateLabel(state){return ({"AwaitingApproval":"等待你的批准","Ready":"等待执行","Executing":"正在处理","Prepared":"已准备","Verifying":"核验结果","Completed":"已完成","Unknown":"结果待核对","FailedSafe":"已安全停止","Expired":"已过期","Cancelled":"已取消","Denied":"已拒绝","Proposed":"待检查","PolicyChecked":"已检查权限"})[state] || "待验证"}
+    function stateLabel(state){return ({"AwaitingApproval":"等待你的批准","Ready":"等待执行","Queued":"等待处理","Draft":"等待人工回复","Observed":"已核对本机发出记录","Executing":"正在处理","Prepared":"已准备","Verifying":"核验结果","Completed":"已完成","Unknown":"结果待核对","FailedSafe":"已安全停止","Expired":"已过期","Cancelled":"已取消","Denied":"已拒绝","Proposed":"待检查","PolicyChecked":"已检查权限"})[state] || "待验证"}
     function destinationLabel(value){return value === "local" ? "仅本机" : value === "model:codex" ? "Codex" : value && value.indexOf("wechat:")===0 ? "指定微信会话" : value && value.indexOf("model:")===0 ? "模型：" + value.slice(6) : value || "—"}
     function targetName(cid){var list=window.backend.conversations || [];for(var i=0;i<list.length;i++)if(list[i].conversation_id===cid)return list[i].display_name;return cid || "本地操作"}
     function timeLabel(value){return value ? new Date(value*1000).toLocaleString(Qt.locale(),"MM-dd HH:mm") : "—"}
@@ -308,7 +310,9 @@ ButtonX { text: "查看消息任务"; onClicked: window.page=2 } }
                             ButtonX { text: "撤销全部授权"; danger: true; enabled: window.connected; onClicked: revokeDialog.open() }
                         }
                         Panel { Layout.fillWidth: true; visible: !(window.backend.conversations || []).length; implicitHeight: 122; Empty { anchors.fill: parent; anchors.margins: 22; heading: "还没有绑定会话"; explanation: window.previewMode ? "演示模式不会创建真实权限。" : "请先完成本机账号与会话的所有者初始化。"; symbol: "lock" } }
-                        Repeater { model: window.backend.conversations || []; delegate: Panel {
+                        TextField { id: permissionSearch; Layout.fillWidth: true; placeholderText: "搜索会话"; Accessible.name: "搜索会话权限" }
+                        Caption { Layout.fillWidth: true; visible: (window.backend.conversations || []).length>40; text: "共 " + (window.backend.conversations || []).length + " 个会话，每次显示最多 40 个搜索结果。" }
+                        Repeater { model: window.page===3 ? (window.backend.conversations || []).filter(function(c){return (c.display_name+" "+c.conversation_id).toLowerCase().indexOf(permissionSearch.text.toLowerCase())>=0}).slice(0,40) : []; delegate: Panel {
                             required property var modelData
                             property var grants: window.grantsFor(modelData.conversation_id)
                             Layout.fillWidth: true; implicitHeight: resourceContent.implicitHeight+44
@@ -330,7 +334,7 @@ Copy { text: window.autoReply.active ? "已按所选范围授权" : window.autoR
                                 } }
                                 RowLayout { Layout.fillWidth: true
                                     Caption { Layout.fillWidth: true; text: "授权仅覆盖这一会话。正文与来源变化后，原精确批准不再适用。" }
-                                    ButtonX { text: "授权本地读取"; primary: true; enabled: window.connected; onClicked: {window.selectedConversation=modelData.conversation_id;window.selectedLabel=modelData.display_name;grantDialog.open()} }
+                                    ButtonX { text: window.independentService ? "设置授权范围" : "授权本地读取"; primary: true; enabled: window.connected; onClicked: {if(window.independentService){window.autoTargets=[modelData.conversation_id];window.autoAll=false;window.page=6}else{window.selectedConversation=modelData.conversation_id;window.selectedLabel=modelData.display_name;grantDialog.open()}} }
                                     ButtonX { text: "整理最近消息"; enabled: window.connected && window.permitted(modelData.conversation_id,"messages.read"); onClicked: owner.requestTask(modelData.conversation_id) }
                                 }
                             }
@@ -379,10 +383,24 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                         Panel { Layout.fillWidth: true; implicitHeight: autoRows.implicitHeight+40
                             ColumnLayout { id: autoRows; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 20; spacing: 14
                                 Copy { text: "自动回复"; font.pixelSize: 18; font.weight: Font.Medium }
+                                ColumnLayout { Layout.fillWidth: true; visible: window.connected && !!window.status.permissions && !window.systemReady; spacing: 10
+                                    Copy { text: "先完成系统权限设置"; font.weight: Font.Medium }
+                                    Caption { Layout.fillWidth: true; text: "为 AXR Authority 开启以下权限后即可授权服务。同一批准范围内无需逐次认证，停止无需认证。" }
+                                    RowLayout { Layout.fillWidth: true
+                                        Caption { text: "微信数据访问：" + ((window.status.permissions || {}).database ? "已允许" : "需要完全磁盘访问") }
+                                        Item { Layout.fillWidth: true }
+                                        ButtonX { text: "打开磁盘访问设置"; visible: !(window.status.permissions || {}).database; onClicked: owner.openSystemPermission("database") }
+                                    }
+                                    RowLayout { Layout.fillWidth: true
+                                        Caption { text: "微信操作：" + ((window.status.permissions || {}).accessibility ? "已允许" : "需要辅助功能") }
+                                        Item { Layout.fillWidth: true }
+                                        ButtonX { text: "打开辅助功能设置"; visible: !(window.status.permissions || {}).accessibility; onClicked: owner.openSystemPermission("accessibility") }
+                                    }
+                                }
                                 Caption { Layout.fillWidth: true; visible: !!(window.status.security || {}).automatic_block; text: "自动回复已暂停。完成安全服务升级后，再为指定对象开启授权。" }
                                 Caption { Layout.fillWidth: true; text: window.autoReply.active ? "已开启 · " + (window.autoReply.expires ? "有效至 " + window.timeLabel(window.autoReply.expires) : "不限时长，直至停止") + " · 剩余 " + (window.autoReply.remaining===null ? "不限" : window.autoReply.remaining) + " 次" : "允许 Codex 阅读范围内的新消息、生成回复并发送。发送时微信会置前。" }
                                 Caption { Layout.fillWidth: true; visible: window.autoReply.active; text: "范围：已授权 " + (window.autoReply.targets || []).length + " 个私聊，可在权限管理查看。" }
-                                CheckBox { visible: !window.autoReply.active; text: "全部可用私聊（含后续核验的新会话）"; checked: window.autoAll; enabled: !window.autoReply.active; onToggled: window.autoAll=checked }
+                                CheckBox { visible: !window.autoReply.active; text: "本次已核验的全部私聊"; checked: window.autoAll; enabled: !window.autoReply.active; onToggled: window.autoAll=checked }
                                 TextField { id: targetSearch; visible: !window.autoAll && !window.autoReply.active; Layout.fillWidth: true; placeholderText: "搜索授权对象"; enabled: !window.autoReply.active }
                                 Flow { Layout.fillWidth: true; spacing: 8; visible: !window.autoAll
                                     Repeater { model: (window.backend.conversations || []).filter(function(c){return c.display_name.indexOf(targetSearch.text)>=0}).slice(0,40)
@@ -397,9 +415,9 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                                     Caption { visible: !window.autoReply.active; text: "有效时长" }
                                     ComboBox { objectName: "autoDuration"; visible: !window.autoReply.active; model: ["5 分钟", "15 分钟", "30 分钟", "60 分钟", "不限时长"]; currentIndex: 1; enabled: !window.autoReply.active; onActivated: window.autoMinutes=[5,15,30,60,0][currentIndex]; Accessible.name: "自动回复有效时长" }
                                     Caption { visible: !window.autoReply.active; text: "最多回复" }
-                                    SpinBox { objectName: "autoReplyLimit"; visible: !window.autoReply.active; from: 0; to: 1000000; value: 4; textFromValue: function(value,locale){return value===0 ? "不限" : value.toString()}; enabled: !window.autoReply.active; onValueModified: window.autoReplies=value; Accessible.name: "最多自动回复次数" }
+                                    SpinBox { objectName: "autoReplyLimit"; visible: !window.autoReply.active; from: 0; to: 100000; value: 4; textFromValue: function(value,locale){return value===0 ? "不限" : value.toString()}; enabled: !window.autoReply.active; onValueModified: window.autoReplies=value; Accessible.name: "最多自动回复次数" }
                                     Item { Layout.fillWidth: true }
-                                    ButtonX { objectName: "autoStart"; text: "授权并开启"; primary: true; enabled: window.connected && window.autoReply.supported === true && !window.autoReply.active && (window.autoAll || window.autoTargets.length>=2) && Qt.platform.os === "osx"; onClicked: autoDialog.open() }
+                                    ButtonX { objectName: "autoStart"; text: "授权并开启"; primary: true; enabled: window.connected && window.systemReady && window.autoReply.supported === true && !window.autoReply.active && (window.autoAll || window.autoTargets.length>=2) && Qt.platform.os === "osx"; onClicked: autoDialog.open() }
                                     ButtonX { objectName: "autoStop"; text: "停止自动回复"; danger: true; enabled: window.connected && (window.autoReply.active || window.backend.automatic_pending === true || (window.backend.automatic_worker || {}).running === true); onClicked: owner.stopAutomatic() }
                                 }
                                 Caption { Layout.fillWidth: true; text: "仅回复开启后的入站文字。次数填 0 表示不限；不确定的发送不会重发。Codex 忙时只排队索引，正文按需重读。停止、到期或退出服务后撤权。" }

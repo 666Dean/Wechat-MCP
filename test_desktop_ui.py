@@ -123,6 +123,13 @@ class DesktopUI(unittest.TestCase):
             self.assertFalse(start.isEnabled());self.assertFalse(stop.isEnabled())
             w.setProperty('autoTargets',['peer','self']);QTest.qWait(20)
             self.assertEqual(start.isEnabled(),os.sys.platform=='darwin')
+            c._data['status']['permissions']={'database':False,'accessibility':True}
+            c.changed.emit();QTest.qWait(20);self.assertFalse(start.isEnabled())
+            c._data['status']['permissions']={'database':True,'accessibility':False}
+            c.changed.emit();QTest.qWait(20);self.assertFalse(start.isEnabled())
+            c._data['status']['permissions']={'database':True,'accessibility':True}
+            c.changed.emit();QTest.qWait(20)
+            self.assertEqual(start.isEnabled(),os.sys.platform=='darwin')
             c._data['automatic_pending']=True;c.changed.emit();QTest.qWait(20)
             self.assertTrue(stop.isEnabled());c.fixture=False
             with patch.object(c,'run') as run:

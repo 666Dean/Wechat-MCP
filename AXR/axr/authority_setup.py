@@ -8,6 +8,11 @@ from .owner import authenticate
 from . import _axr_native as native
 
 def main(runtime_root):
+    from .host import Lease
+    with Lease(Path.home()/'.stellaria-axr'/'leases',['owner-setup',str(Path(runtime_root).resolve())]):
+        return initialize(runtime_root)
+
+def initialize(runtime_root):
     if not getattr(native,'security_release',False):raise AXRError('authority_formal_build_required')
     root=Path(runtime_root);path=root/'deployment.json'
     if path.is_symlink() or path.stat().st_size>32768:raise AXRError('authority_deployment_configuration_invalid')
@@ -25,13 +30,40 @@ def main(runtime_root):
     # The application review is data on the trusted local owner surface; not a
     # model prompt. It must include deployment owner, resources and entry points.
     print(json.dumps({'operation':'Initialize owner-deployed AXR authority','build_review':review,'configuration_digest':digest(configuration)},ensure_ascii=False))
+    # A protected application may finish the SAME previously authenticated
+    # first-setup transaction. The bootstrap check above excludes an existing
+    # operational deployment. Receipt MAC/empty ledger/OS audit anchor checks
+    # belong to the trusted registration; no MCP flag selects this workflow.
+    resume=getattr(registration,'resume_owner_setup',None)
+    deployment=resume(configuration['deployment']) if callable(resume) else None
+    if deployment is not None:
+        if path.read_bytes()!=data:raise AXRError('authority_deployment_changed_during_authentication')
+        signer=native.HardwareSigningKey('Stellaria.AXR.Root.v2')
+        return complete(backend,configuration,deployment,signer)
     helper=root/'bin'/('axr-owner-auth.exe' if sys.platform=='win32' else 'axr-helper')
-    authenticate(helper)
+    hardware_enrollment=getattr(registration,'authenticate_owner_setup',None)
+    enrollment=None
+    if callable(hardware_enrollment):
+        # One exact hardware user-presence challenge replaces a redundant
+        # generic password/Touch ID check, not authentication itself. The hook
+        # belongs to protected installation code, never deployment JSON/MCP.
+        enrollment=hardware_enrollment(configuration['deployment'])
+        try:
+            challenge=enrollment['challenge'];identity=enrollment['identity']
+            if (identity['signing_id']!='org.stellaria.axr.owner' or identity['signature_valid'] is not True or identity['hardened_runtime'] is not True
+                or identity['user']!=__import__('axr.ipc',fromlist=['process_identity']).process_identity(os.getpid())['user']
+                or challenge['expires']<=__import__('time').time() or not native.verify_root_signature(bytes.fromhex(enrollment['public_key']),canonical(challenge),bytes.fromhex(enrollment['signature']))):raise ValueError()
+        except Exception:raise AXRError('owner_hardware_enrollment_required') from None
+    else:authenticate(helper)
     if path.read_bytes()!=data:raise AXRError('authority_deployment_changed_during_authentication')
     signer=native.HardwareSigningKey('Stellaria.AXR.Root.v2',create=True)
     # Application enrollment handles the owner-presence key and managed peers;
     # it cannot obtain a software fallback or automatic legacy authority restore.
-    deployment=registration.initialize_owner(configuration['deployment'],signer)
+    deployment=(registration.initialize_owner(configuration['deployment'],signer,enrollment) if enrollment is not None
+                else registration.initialize_owner(configuration['deployment'],signer))
+    return complete(backend,configuration,deployment,signer)
+
+def complete(backend,configuration,deployment,signer):
     if type(deployment) is not dict:raise AXRError('authority_owner_enrollment_invalid')
     vault_key=os.urandom(32);vault=Vault(vault_key)
     value={**configuration,'deployment':deployment}

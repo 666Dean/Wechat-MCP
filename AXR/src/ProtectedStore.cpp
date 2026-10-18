@@ -37,6 +37,9 @@ void ProtectedStore::Identity() const {
     if(std::string_view(AXR_AUTHORITY_KEYCHAIN_GROUP).empty())throw std::runtime_error("protected_keychain_group_not_configured");
 #endif
     const auto identity=ProcessIdentity(unsigned(getpid()));
+#ifdef AXR_SECURITY_RELEASE
+    RequireProtectedHost(identity);
+#endif
     if(identity.at("signature_valid")!=true||identity.at("hardened_runtime")!=true||identity.at("signing_id")!="org.stellaria.axr.authority")throw std::runtime_error("protected_service_identity_required");
 #elif defined(_WIN32)
     HANDLE token=nullptr;if(!OpenProcessToken(GetCurrentProcess(),TOKEN_QUERY,&token))throw std::runtime_error("protected_service_identity_required");

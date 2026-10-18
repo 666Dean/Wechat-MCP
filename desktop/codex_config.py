@@ -12,6 +12,11 @@ from axr import _axr_native as native
 
 NAME='wechat_axr'
 
+def native_snippet():
+    return '\n'.join(['[mcp_servers.wechat_axr]',
+        'command = '+json.dumps('/Library/Application Support/Stellaria AXR/AXR MCP.app/Contents/MacOS/axr-frontend'),
+        'args = ["--mcp"]','enabled = true','required = false','startup_timeout_sec = 15','tool_timeout_sec = 90',''])
+
 
 def snippet(python,server,state):
     args=[str(Path(server).resolve()),'--axr-state',str(Path(state).resolve()),'--broker']

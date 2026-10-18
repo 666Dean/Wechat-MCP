@@ -15,7 +15,7 @@ from .ipc import PeerContext
 from .integrity import AuthorityIntegrity
 
 class AuthorityKernel:
-    def __init__(self,security,signer,owner_public_key,*,identity,environment,handler_for,clock=time.time,development_fixture=False,initialize=False,recovery_verifier=None):
+    def __init__(self,security,signer,owner_public_key,*,identity,environment,handler_for,clock=time.time,development_fixture=False,initialize=False,recovery_verifier=None,application_tables=None):
         # Hold the same journal lease as the application before recovery. A
         # second service must never reclassify a live process's Prepared work.
         from .host import Lease
@@ -23,6 +23,7 @@ class AuthorityKernel:
         self.closed=False
         self.lifetime=Lease(Path.home()/'.stellaria-axr'/'leases',['journal',str(security.store.directory)])
         self.lifetime.__enter__()
+        self.application_tables=application_tables
         try:self._initialize(security,signer,owner_public_key,identity=identity,environment=environment,handler_for=handler_for,clock=clock,development_fixture=development_fixture,initialize=initialize,recovery_verifier=recovery_verifier)
         except BaseException:self.close();raise
     def close(self):
@@ -50,7 +51,7 @@ class AuthorityKernel:
         self.epoch=uuid.uuid4().hex;self.lock=security.lock;self.challenges={}
         self.db=self.store.journal.db
         self.db.execute('CREATE TABLE IF NOT EXISTS authority_commits(nonce TEXT PRIMARY KEY,execution_id TEXT UNIQUE,principal TEXT,helper TEXT,state TEXT,payload BLOB)')
-        self.integrity=AuthorityIntegrity(self.store)
+        self.integrity=AuthorityIntegrity(self.store,application_tables=self.application_tables)
         if initialize:
             # Called only by a separately authenticated installer/owner workflow.
             if self.db.execute('SELECT 1 FROM authority_commits LIMIT 1').fetchone():raise AXRError('authority_already_initialized')

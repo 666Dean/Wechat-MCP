@@ -23,6 +23,7 @@ from axr.ipc import PeerContext, PeerRegistry, process_identity
 from axr.policy import OwnerStore
 from axr.release import ReleaseGate
 from axr.security import SecurityService
+from .wechat_service import WeChatKernel,WeChatService,PRINCIPAL,BOUNDARY
 
 BASE=Path('/Library/Application Support/Stellaria AXR')
 
@@ -39,6 +40,13 @@ def _configuration(value):
         if not value.startswith('@resources/'):return value
         relative=value[len('@resources/'):]
         from pathlib import PurePosixPath
+        # macOS signs dylibs in Contents/Frameworks. This one fixed sibling is
+        # part of the reviewed bundle; arbitrary parent traversal stays denied.
+        if os.name!='nt' and relative=='../Frameworks/libwechat-sqlcipher.dylib':
+            path=(root/relative).resolve(strict=True)
+            if path.parent!=(root.parent/'Frameworks').resolve(strict=True) or not path.is_file():
+                raise AXRError('wechat_deployment_asset_invalid')
+            return str(path)
         if (not relative or '\\' in relative or PurePosixPath(relative).is_absolute() or
                 any(part in ('.','..') for part in relative.split('/'))):
             raise AXRError('wechat_deployment_asset_invalid')
@@ -70,19 +78,23 @@ def _configuration(value):
         resource=Resource(**row)
         if resource.platform!='wechat' or resource.account_id!=application['account_id'] or resource.key in seen:raise AXRError('wechat_deployment_resource_mismatch')
         seen.add(resource.key)
+        identity=resource.conversation_id
+        if os.name!='nt' and ('@' in identity or identity.startswith('gh_') or identity in ('filehelper','weixin','fmessage','newsapp','medianote','floatbottle','qmessage','qqmail','tmessage','feedsapp','notification_messages')):raise AXRError('wechat_private_resource_required')
     return {**value,'state':str(state),'application':application}
 
 def owner_setup_review(value):
     config=_configuration(value)
+    if os.name!='nt' and ('conversations' not in config['application'] or 'codex_provider' not in config['application']):raise AXRError('wechat_application_routes_required')
     return {'application':'WeChat MCP','fresh_state':config['state'],'endpoint':config['endpoint'],
         'credential_import':'native OS store to native OS store; keys never returned to Python',
         'resources':config['application']['resources'],'shard_count':len(config['application']['shards']),
         'automatic_reply_enabled':False,'legacy_permissions_restored':False,'vendor_certificate_required':False,
         'manual_approval_required':config['application'].get('manual_approval_required',True)}
 
-def initialize_owner(value, signer):
+def authenticate_owner_setup(value):
     config=_configuration(value);directory=Path(config['state'])
-    if directory.exists() and any(directory.iterdir()):raise AXRError('wechat_fresh_authority_state_required')
+    from axr.initialization import empty_initialization
+    if not empty_initialization(directory):raise AXRError('wechat_fresh_authority_state_required')
     # The second process is a fixed protected owner identity. Its hardware key
     # can require user presence; the authority cannot open that private key.
     owner=BASE/'AXR Owner.app/Contents/MacOS/axr-owner'
@@ -101,27 +113,84 @@ def initialize_owner(value, signer):
             validate_response(challenge,response,trust_roots(resources_root()))
     finally:
         if process.poll() is None:process.kill();process.wait()
+    return {'challenge':challenge,'public_key':response['public_key'],'signature':response['signature'],'identity':actual}
+
+def initialize_owner(value, signer, enrollment=None):
+    config=_configuration(value);directory=Path(config['state'])
+    from axr.initialization import empty_initialization
+    if not empty_initialization(directory):raise AXRError('wechat_fresh_authority_state_required')
+    if enrollment is None:enrollment=authenticate_owner_setup(value)
+    challenge=enrollment['challenge'];actual=enrollment['identity'];response=enrollment
+    if challenge['configuration_digest']!=digest(config) or challenge['expires']<=time.time() or not native.verify_root_signature(bytes.fromhex(response['public_key']),canonical(challenge),bytes.fromhex(response['signature'])):raise AXRError('wechat_owner_enrollment_signature_invalid')
     with __import__('contextlib').closing(OwnerStore(directory,provision=True,authority_service=True)) as store:
+        if not store.journal.verify_audit() or store.journal.checkpoint.read()['sequence']!=0:raise AXRError('wechat_empty_initialization_checkpoint_required')
         application=config['application']
         from . import _wechat_credentials
         if config.get('legacy_namespace'):
             _wechat_credentials.import_legacy_credentials(canonical(application).decode(),config['legacy_namespace'])
+        # This first-setup metadata read is part of the authenticated setup
+        # review. No message body or prior permission is imported.
+        consumer=_wechat_credentials.WeChatConsumer('owner-initialization',canonical(application).decode())
+        catalog=[]
+        for offset in range(0,5000,1000):
+            batches=json.loads(native.CredentialConsumer.use(consumer,canonical(asdict(Resource('wechat',application['account_id'],application['account_id']))).decode(),
+                'database.query',canonical({'kind':'catalog','offset':offset,'limit':1000}).decode(),lambda:None))
+            if len(batches)!=1:raise AXRError('wechat_contact_shard_required')
+            rows=batches[0]['rows']
+            for row in rows:
+                identity=row['username']
+                if '@' in identity or identity.startswith('gh_') or identity in ('filehelper','weixin','fmessage','newsapp','medianote','floatbottle','qmessage','qqmail','tmessage','feedsapp','notification_messages'):continue
+                catalog.append({'conversation_id':identity,'display_name':row['remark'] or row['nick_name'] or identity,'data_class':'personal'})
+            if len(rows)<1000:break
+        else:raise AXRError('wechat_contact_catalog_budget')
+        if not catalog or len(catalog)>4096:raise AXRError('wechat_contact_catalog_budget')
+        application={**application,'conversations':catalog,'resources':[asdict(Resource('wechat',application['account_id'],r['conversation_id'])) for r in catalog]}
         # No authority comes from the imported keys, including unlimited legacy
         # sessions. Only new separately signed owner contracts can enable use.
         store.seal_config({'version':2,'application':application,'owner_public_key':response['public_key'],
                            'owner_user':actual['user'],'enrollment':digest(challenge)})
-        deployment=OwnerDeployment(store.secrets,store.vault)
+        finish_initialization(store,signer)
+    return {'state':str(directory),'endpoint':config['endpoint'],'owner_public_key':response['public_key']}
+
+def finish_initialization(store,signer):
+        # Only the empty, audit-anchored FIRST setup may enroll its completed
+        # build after an interrupted transaction. No existing task is restored.
+        config=store.config();application=config['application']
+        if not store.journal.verify_audit() or store.journal.checkpoint.read()['sequence']!=0:raise AXRError('wechat_empty_initialization_checkpoint_required')
+        from axr.initialization import empty_initialization
+        deployment=OwnerDeployment(store.secrets,store.vault,revoke_for_update=lambda:
+            empty_initialization(store.directory) and store.journal.verify_audit() and store.journal.checkpoint.read()['sequence']==0)
         helper=Path(application['navigation_helper'])
         assets=[{'path':'AXR Authority.app/Contents/MacOS/axr-authority','roles':['server','handler']},
                 {'path':'AXR Owner.app/Contents/MacOS/axr-owner','roles':['owner']},
+                {'path':'AXR MCP.app/Contents/MacOS/axr-frontend','roles':['client']},
                 {'path':str(helper.relative_to(BASE)),'roles':['handler']}]
-        deployment.enroll(BASE,assets,lambda:True)
-        kernel,registry=_kernel(store,signer,response['public_key'],initialize=True)
+        deployment.enroll(BASE,assets,lambda:store.config()==config and config['owner_user']==process_identity(os.getpid())['user'])
+        kernel,registry=_kernel(store,signer,config['owner_public_key'],initialize=True)
         try:kernel.integrity.persist()
         finally:kernel.close()
-    return {'state':str(directory),'endpoint':config['endpoint'],'owner_public_key':response['public_key']}
 
-def _kernel(store,signer,owner_public_key,*,initialize=False):
+def resume_owner_setup(value):
+    """Finish an already authenticated setup; never authorize an operation.
+
+    The receipt is an existing native-Root-MAC policy, not a caller flag. The
+    generic host additionally refuses this path once its bootstrap key exists.
+    Active/previous task state and nonzero protected audit heads are rejected.
+    """
+    config=_configuration(value);directory=Path(config['state'])
+    if not (directory/'policy.sealed.json').exists():return None
+    from axr.initialization import empty_initialization
+    if not empty_initialization(directory):raise AXRError('wechat_initialization_recovery_requires_review')
+    with __import__('contextlib').closing(OwnerStore(directory,authority_service=True)) as store:
+        approved=store.config();current={k:v for k,v in config['application'].items() if k not in ('resources','conversations')}
+        original={k:v for k,v in approved.get('application',{}).items() if k not in ('resources','conversations')}
+        if (approved.get('version')!=2 or original!=current or approved.get('owner_user')!=process_identity(os.getpid())['user']
+            or len(approved.get('enrollment',''))!=64 or len(bytes.fromhex(approved['owner_public_key']))!=65):raise AXRError('wechat_initialization_approval_changed')
+        signer=native.HardwareSigningKey('Stellaria.AXR.Root.v2')
+        finish_initialization(store,signer)
+        return {'state':str(directory),'endpoint':config['endpoint'],'owner_public_key':approved['owner_public_key']}
+
+def _windows_kernel(store,signer,owner_public_key,*,initialize=False):
     config=store.config();application=config['application'];deployment=OwnerDeployment(store.secrets,store.vault)
     registry=PeerRegistry(store,owner_user=config['owner_user'],owner_deployment=deployment)
     # The controller is trusted root code; native database operations stay in the
@@ -147,6 +216,55 @@ def _kernel(store,signer,owner_public_key,*,initialize=False):
     kernel.wechat_registry=registry;kernel.wechat_handlers=pending
     return kernel,registry
 
+def _kernel(store,signer,owner_public_key,*,initialize=False):
+    if os.name=='nt':return _windows_kernel(store,signer,owner_public_key,initialize=initialize)
+    config=store.config();application=config['application'];deployment=OwnerDeployment(store.secrets,store.vault)
+    registry=PeerRegistry(store,owner_user=config['owner_user'],owner_deployment=deployment)
+    # The controller is trusted root code; native database operations stay in the
+    # same protected process. It is registered as a handler, never as a model.
+    actual=process_identity(os.getpid())
+    credential_peer=PeerContext('handler',PRINCIPAL,digest(actual),actual['pid'],actual['birth'])
+    def identity(peer):return {'agent':peer.principal,'application':'wechat','identity_verified':registry.accept(process_identity(peer.pid))==peer}
+    def environment(peer):
+        row=next((r for r in registry.rows if r['identity']['pid']==peer.pid and r['identity']['birth']==peer.birth),None)
+        sandbox=(row or {}).get('sandbox')
+        return {'sandbox':BOUNDARY,'environment_valid':bool(sandbox) or peer==credential_peer,
+            'audit_valid':store.journal.verify_audit(),'network_allowed':True}
+    security=SecurityService(store,lambda:{},lambda:{},revoke_domain=lambda scope:None)
+    pending={}
+    def handler(operation,resource):
+        if operation not in ('application.navigate','application.draft','messages.send'):return credential_peer
+        peer=pending.get('native')
+        if peer is None:raise AXRError('wechat_native_handler_not_ready')
+        return peer
+    store.journal.db.execute('CREATE TABLE IF NOT EXISTS wechat_state(name TEXT PRIMARY KEY,payload BLOB)')
+    kernel=WeChatKernel(security,signer,bytes.fromhex(owner_public_key),identity=identity,environment=environment,
+            handler_for=handler,initialize=initialize,recovery_verifier=lambda peer,scope:store.journal.verify_audit(),
+            application_tables={'wechat_state':'name'})
+    kernel.controller_peer=credential_peer
+    registry.on_change=kernel.integrity.persist
+    registry.enroll(actual,'handler',PRINCIPAL,lambda:config['owner_user'])
+    original_accept=registry.accept
+    def accept(candidate):
+        try:return original_accept(candidate)
+        except AXRError:
+            # Only fixed, owner-enrolled native images can enter dynamically.
+            # Frontend's sole C++ entry applies Seatbelt before Python/input.
+            role='owner' if candidate.get('image')==str(BASE/'AXR Owner.app/Contents/MacOS/axr-owner') else 'client'
+            if not deployment.verify_process(candidate,role):raise AXRError('ipc_peer_not_enrolled') from None
+            with kernel.lock:
+                kernel._check_integrity()
+                def alive(row):
+                    try:return process_identity(row['identity']['pid'])==row['identity']
+                    except AXRError:return False
+                registry.rows=[r for r in registry.rows if alive(r)]
+                registry.enroll(candidate,role,'wechat:owner' if role=='owner' else PRINCIPAL,lambda:config['owner_user'],
+                    managed_sandbox={'pid':candidate['pid'],'birth':candidate['birth'],'profile':BOUNDARY} if role=='client' else None)
+                return original_accept(candidate)
+    registry.accept=accept
+    kernel.wechat_registry=registry;kernel.wechat_handlers=pending
+    return kernel,registry
+
 def release_gate(value):
     # These providers report observed deployment facts. In particular no JSON
     # UI flag can declare the incoming actor or MCP bridge qualified.
@@ -156,12 +274,20 @@ def release_gate(value):
         from . import _wechat_credentials
         return hasattr(_wechat_credentials,'import_legacy_credentials') and not hasattr(_wechat_credentials,'fixture_consumer')
     def integration():
-        # Qualified frontend/source-handler enrollment is a protected setup
-        # artifact, absent in older deployments. No legacy fallback is used.
+        if os.name=='nt':return False # Windows deployment remains independently gated.
         with __import__('contextlib').closing(OwnerStore(value['state'],authority_service=True)) as store:
-            store.config()
-            return False  # Managed MCP frontend is not deployed in this build.
-    return ReleaseGate({'identity':identity,'authorization':identity,'content':lambda:False,
+            config=store.config();app=config['application'];pins=OwnerDeployment(store.secrets,store.vault)._load()
+            front=BASE/'AXR MCP.app/Contents/MacOS/axr-frontend'
+            enrolled=any(p['path']==str(front) and p['roles']==['client'] and p['sha256']==hashlib.sha256(front.read_bytes()).hexdigest() for p in pins['assets'])
+            provider=app['codex_provider']
+            return (enrolled and bool(app.get('conversations')) and
+                hashlib.sha256(Path(provider['binary']).read_bytes()).hexdigest()==provider['sha256'] and
+                hashlib.sha256(Path(provider['tls_bundle']).read_bytes()).hexdigest()==provider['tls_sha256'] and
+                Path('/usr/bin/sandbox-exec').is_file())
+    def content():
+        from .wechat_database import actor_records
+        return actor_records({'messages':[{'outgoing':False,'text':'密码：qualification-fixture','reference':'synthetic'}]})[0]['text'].find('qualification-fixture')<0
+    return ReleaseGate({'identity':identity,'authorization':identity,'content':content,
         'data':data,'isolation':integration,'containment':identity,'distribution':identity,
         'adversarial':integration,'experience':integration})
 
@@ -174,7 +300,17 @@ def create_authority(value):
         if os.name=='nt':
             from .wechat_mcp import attach_windows_mcp
             attach_windows_mcp(kernel,store.config()['application'])
+            server=AuthorityServer(kernel,registry,value['endpoint']);server.wechat_store=store
+            return server
         server=AuthorityServer(kernel,registry,value['endpoint']);server.wechat_store=store
+        service=WeChatService(kernel,registry,store.config()['application'],value['endpoint']);kernel.application=service
+        old_serve=server.serve;old_close=server.close
+        def serve():
+            service.start()
+            return old_serve()
+        def close():
+            service.close();old_close()
+        server.serve=serve;server.close=close
         return server
     except BaseException:store.close();raise
 
@@ -186,6 +322,10 @@ def owner_control(runtime_root):
     from .windows_owner import main
     return main(runtime_root)
 
+def frontend_main(runtime_root):
+    from .wechat_frontend import main
+    return main(runtime_root)
+
 def validate_runtime():
     from . import _wechat_credentials
     from .wechat_database import NativeDatabase
@@ -195,6 +335,7 @@ def validate_runtime():
     import sqlite3
     # No live file, credential lookup, service, GUI or model call is used.
     return {'formal_native':native.security_release is True,
+        'utf8_runtime':__import__('sys').getfilesystemencoding()=='utf-8' and __import__('sys').stdout.encoding.lower().replace('-','')=='utf8',
         'no_fixture_key_constructor':not hasattr(_wechat_credentials,'fixture_consumer'),
         'native_wcdb':hasattr(_wechat_credentials,'WeChatConsumer'),
         'compressed_text':zstandard.ZstdDecompressor().decompress(zstandard.ZstdCompressor().compress(b'AXR runtime fixture'))==b'AXR runtime fixture',

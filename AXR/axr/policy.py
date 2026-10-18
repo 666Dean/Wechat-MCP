@@ -38,13 +38,14 @@ class OwnerStore:
     def seal_config(self,value):
         encoded=canonical({"version":1,"policy":value})
         document=canonical({"body":json.loads(encoded),"mac":hmac.new(self.key,encoded,"sha256").hexdigest()})
+        if len(document)>1024*1024:raise AXRError('owner_policy_budget')
         if not native.durable_write(str(self.directory/"policy.sealed.json"),document):
             raise AXRError("policy_durable_write_failed")
 
     def config(self):
         try:
             path=self.directory/"policy.sealed.json"
-            if path.is_symlink() or path.stat().st_size>512*1024:raise ValueError()
+            if path.is_symlink() or path.stat().st_size>1024*1024:raise ValueError()
             document=json.loads(path.read_bytes());body=document["body"]
             if body["version"]!=1 or not hmac.compare_digest(document["mac"],hmac.new(self.key,canonical(body),"sha256").hexdigest()):raise ValueError()
             return body["policy"]

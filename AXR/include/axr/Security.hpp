@@ -4,6 +4,7 @@
 namespace Stellaria::AXR {
 Json ProcessIdentity(unsigned long pid);
 Json PeerIdentity(unsigned long long handle,bool serverPeer=false);
+void RequireProtectedHost(const Json& actual,bool owner=false);
 // Deterministic decisions over observations supplied by the trusted host, never
 // values taken from an agent's request. Authorization is additionally required.
 void ValidateTaskContract(const Json& contract);

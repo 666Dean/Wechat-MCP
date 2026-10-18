@@ -6,8 +6,10 @@
 #include <Python.h>
 #include <iostream>
 #include <atomic>
+#include <fstream>
 #if defined(__APPLE__)
 #include <Security/Security.h>
+#include <sandbox.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #elif defined(_WIN32)
@@ -66,7 +68,11 @@ void Installed(const std::filesystem::path& root,bool requireOwnership=true){
 #endif
 }
 void Configure(PyConfig& config,const std::filesystem::path& root){
+    PyPreConfig pre;PyPreConfig_InitIsolatedConfig(&pre);pre.utf8_mode=1;
+    if(PyStatus_Exception(Py_PreInitialize(&pre)))throw std::runtime_error("authority_runtime_preinitialization_failed");
     PyConfig_InitIsolatedConfig(&config);config.parse_argv=0;config.use_environment=0;config.user_site_directory=0;config.site_import=0;
+    if(PyStatus_Exception(PyConfig_SetString(&config,&config.stdio_encoding,L"utf-8"))||
+       PyStatus_Exception(PyConfig_SetString(&config,&config.stdio_errors,L"strict")))throw std::runtime_error("authority_runtime_encoding_failed");
     config.write_bytecode=0;config.install_signal_handlers=1;config.module_search_paths_set=1;
     for(const auto& path:{root/"python312.zip",root/"lib-dynload",root/"packages"}){
         if(!std::filesystem::exists(path))throw std::runtime_error("authority_bundled_runtime_missing");
@@ -75,7 +81,7 @@ void Configure(PyConfig& config,const std::filesystem::path& root){
 }
 int Serve(bool initialize=false,bool ownerControl=false){
 #ifdef AXR_SECURITY_RELEASE
-#if !defined(AXR_OWNER_HOST) && !defined(AXR_VALIDATION_HOST)
+#if !defined(AXR_OWNER_HOST) && !defined(AXR_VALIDATION_HOST) && !defined(AXR_FRONTEND_HOST)
     ProtectedStore bootstrap("Stellaria.AXR.Bootstrap");
 #endif
 #if defined(_WIN32)
@@ -107,6 +113,27 @@ int Serve(bool initialize=false,bool ownerControl=false){
 #else
     Installed(root);
 #endif
+#ifdef AXR_FRONTEND_HOST
+#if defined(__APPLE__)
+    // Applied before importing any Python or reading any MCP request. The
+    // fixed installed executable has no alternative unsandboxed entry point.
+    auto frontendConfig=Json::parse(std::ifstream(root/"deployment.json"));
+    auto endpoint=frontendConfig.at("deployment").at("endpoint").get<std::string>();
+    if(endpoint.empty()||endpoint[0]!='/'||endpoint.size()>100)throw std::runtime_error("frontend_endpoint_invalid");
+    auto quote=[](const std::string& s){return Json(s).dump();};
+    std::string profile="(version 1)(deny default)(import \"system.sb\")(allow sysctl-read)"
+      "(allow file-read* (subpath \"/System/Library\") (subpath \"/usr/lib\") (literal \"/dev/urandom\") (literal \"/dev/null\"))"
+      "(allow file-read* (subpath "+quote(exe.parent_path().parent_path().string())+"))"
+      "(allow file-read* (subpath \"/Library/Application Support/Stellaria AXR/AXR Authority.app\"))"
+      "(allow file-read-metadata (literal \"/\") (subpath \"/Library\") (subpath \"/Users\") (subpath \"/private/var\"))"
+      "(allow file-read* file-write* (literal "+quote(endpoint)+"))"
+      "(allow network-outbound (remote unix-socket (literal "+quote(endpoint)+")))";
+    char* error=nullptr;
+    if(sandbox_init(profile.c_str(),0,&error)){if(error)sandbox_free_error(error);throw std::runtime_error("frontend_os_sandbox_required");}
+#else
+    throw std::runtime_error("frontend_os_sandbox_unavailable");
+#endif
+#endif
     PyConfig config;Configure(config,root);
     auto status=Py_InitializeFromConfig(&config);PyConfig_Clear(&config);
     if(PyStatus_Exception(status))throw std::runtime_error("authority_runtime_initialization_failed");
@@ -115,6 +142,8 @@ int Serve(bool initialize=false,bool ownerControl=false){
         "axr.authority_owner"
 #elif defined(AXR_VALIDATION_HOST)
         "axr.authority_validate"
+#elif defined(AXR_FRONTEND_HOST)
+        "axr.authority_frontend"
 #else
         initialize?"axr.authority_setup":"axr.authority_main"
 #endif
@@ -131,6 +160,17 @@ int Serve(bool initialize=false,bool ownerControl=false){
     else result=PyObject_CallMethod(module,"main",nullptr);
     Py_DECREF(module);
     bool ok=result!=nullptr;if(result)Py_DECREF(result);else {
+        // Only bounded machine error codes cross diagnostics. No traceback,
+        // file path, chat text, native credential or arbitrary exception text.
+        PyObject *type=nullptr,*value=nullptr,*trace=nullptr;
+        PyErr_Fetch(&type,&value,&trace);PyErr_NormalizeException(&type,&value,&trace);
+        auto text=value?PyObject_Str(value):nullptr;auto raw=text?PyUnicode_AsUTF8(text):nullptr;
+        std::string code=raw?raw:"authority_operation_failed";
+        if(code.empty()||code.size()>100||code.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")!=std::string::npos)code="authority_operation_failed";
+        std::string kind=type&&PyType_Check(type)?reinterpret_cast<PyTypeObject*>(type)->tp_name:"RuntimeError";
+        if(kind.size()>80||kind.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.")!=std::string::npos)kind="RuntimeError";
+        std::cerr<<Json{{"error_code",code},{"exception_type",kind}}.dump()<<'\n';
+        Py_XDECREF(text);Py_XDECREF(type);Py_XDECREF(value);Py_XDECREF(trace);
 #ifdef AXR_VALIDATION_HOST
         PyErr_PrintEx(0);
 #endif
@@ -158,6 +198,9 @@ int main(int argc,char** argv){
         if(argc==2&&std::string_view(argv[1])=="--owner-control")return Serve(true,true);
 #endif
         if(argc!=2||std::string_view(argv[1])!="--owner-enroll")throw std::runtime_error("owner_fixed_entrypoint_required");
+        return Serve(true);
+#elif defined(AXR_FRONTEND_HOST)
+        if(argc!=2||std::string_view(argv[1])!="--mcp")throw std::runtime_error("frontend_fixed_entrypoint_required");
         return Serve(true);
 #elif defined(AXR_VALIDATION_HOST)
         if(argc!=2||std::string_view(argv[1])!="--validate-runtime")throw std::runtime_error("validation_fixed_entrypoint_required");
