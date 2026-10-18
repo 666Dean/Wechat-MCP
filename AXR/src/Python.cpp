@@ -2,6 +2,7 @@
 #include "axr/Core.hpp"
 #include "axr/Security.hpp"
 #include "axr/TrustRoot.hpp"
+#include "axr/WindowsHello.hpp"
 #include "axr/ProtectedStore.hpp"
 #include "axr/Credentials.hpp"
 #include <pybind11/functional.h>
@@ -35,6 +36,10 @@ PYBIND11_MODULE(_axr_native,m) {
     m.def("constant_equal",&ConstantEqual);
     m.def("verify_root_signature",[](py::bytes key,py::bytes message,py::bytes signature){return VerifyRootSignature(std::string(key),std::string(message),std::string(signature));});
     m.def("verify_owner_signature",[](py::bytes key,py::bytes message,py::bytes signature){return VerifyOwnerSignature(std::string(key),std::string(message),std::string(signature));});
+    py::class_<WindowsHelloOwnerKey>(m,"WindowsHelloOwnerKey")
+      .def(py::init([](py::bytes key){auto value=std::string(key);py::gil_scoped_release release;return std::make_unique<WindowsHelloOwnerKey>(std::move(value));}),py::arg("expected_public_key"))
+      .def_property_readonly("public_key",[](const WindowsHelloOwnerKey& key){return py::bytes(key.PublicKey());})
+      .def("sign",[](const WindowsHelloOwnerKey& key,py::bytes message){auto value=std::string(message);std::string signature;{py::gil_scoped_release release;signature=key.Sign(value);}return py::bytes(signature);});
     py::class_<HardwareSigningKey>(m,"HardwareSigningKey")
       .def(py::init<std::string,bool,bool,bool>(),py::arg("name"),py::arg("create")=false,py::arg("user_presence")=false,py::arg("owner_interaction")=false)
       .def_property_readonly("public_key",[](const HardwareSigningKey& k){return py::bytes(k.PublicKey());})

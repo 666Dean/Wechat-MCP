@@ -15,6 +15,28 @@ from axr.authority_server import AuthorityClient
 from axr_integration.authority_frontend import load_connection
 
 
+def enrolled_key(runtime_root):
+    """Read only the protected install pin; never provision from a control call.
+
+    Deployment writes this after validating enrollment/hardware evidence. This
+    file does not itself attest hardware, confer a role, or replace the service's
+    enrolled public key. Native code checks the owner host and entire install
+    before it opens the credential or invokes any WinRT API.
+    """
+    path=Path(runtime_root)/'owner-key.json'
+    try:
+        with path.open('rb') as source:value=frame(source)
+        if (set(value)!={'version','provider','public_key'} or
+                type(value['version']) is not int or value['version']!=2 or
+                value['provider']!='WindowsHello/RSA2048' or
+                type(value['public_key']) is not str or len(value['public_key'])!=588):raise ValueError()
+        public=bytes.fromhex(value['public_key'])
+        if len(public)!=294 or public.hex()!=value['public_key']:raise ValueError()
+    except (OSError,ValueError,TypeError,AXRError):
+        raise AXRError('wechat_owner_enrolled_key_pin_required') from None
+    return native.WindowsHelloOwnerKey(public)
+
+
 def frame(stream):
     raw=stream.readline(32769)
     if not raw.endswith(b'\n') or len(raw)>32768:
@@ -71,8 +93,8 @@ def control(connection, source, emit, *, connect=AuthorityClient.connect,
         if clock()>=challenge['expires']:raise AXRError('wechat_owner_control_review_expired')
         # No creation or silent fallback here. Windows owner-presence provider
         # must be enrolled; current unsupported hardware/provider fails closed.
-        key=owner_key() if owner_key is not None else native.HardwareSigningKey(
-            'Stellaria.AXR.Owner.v2',create=False,user_presence=True,owner_interaction=True)
+        if owner_key is None:raise AXRError('wechat_owner_enrolled_key_pin_required')
+        key=owner_key()
         signature=key.sign(canonical(challenge))
         if clock()>=challenge['expires']:raise AXRError('wechat_owner_control_review_expired')
         result=channel.request('Authorize',phase='approve-approval-setting',
@@ -112,8 +134,8 @@ def approve_job(connection, handle, source, emit, *, connect, owner_key, clock):
               'expires':challenge['expires'],'review':review,'agent_sent':False})
         if frame(source)!={'confirm':challenge['nonce']}:raise AXRError('wechat_owner_control_cancelled')
         if clock()>=challenge['expires']:raise AXRError('wechat_owner_control_review_expired')
-        key=owner_key() if owner_key is not None else native.HardwareSigningKey(
-            'Stellaria.AXR.Owner.v2',create=False,user_presence=True,owner_interaction=True)
+        if owner_key is None:raise AXRError('wechat_owner_enrolled_key_pin_required')
+        key=owner_key()
         signature=key.sign(canonical(challenge))
         if clock()>=challenge['expires']:raise AXRError('wechat_owner_control_review_expired')
         result=channel.request('Authorize',phase='approve-application',job_id=handle,
@@ -132,4 +154,5 @@ def main(runtime_root):
     # No caller-selected config path or startup arguments are accepted.
     connection=load_connection(Path(runtime_root)/'owner-connection.json')
     return control(connection,sys.stdin.buffer,
-        lambda value:print(json.dumps(value,ensure_ascii=False),flush=True))
+        lambda value:print(json.dumps(value,ensure_ascii=False),flush=True),
+        owner_key=lambda:enrolled_key(runtime_root))

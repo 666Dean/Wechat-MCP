@@ -2,6 +2,7 @@
 #include "axr/Security.hpp"
 #include "axr/Commit.h"
 #include "axr/Credentials.hpp"
+#include "axr/WindowsHello.hpp"
 #include <cassert>
 #include <iostream>
 using namespace Stellaria::AXR;
@@ -13,6 +14,15 @@ protected:
     Json Perform(const Json&,const std::string&,const Json&) override{++calls;return {{"rows",Json::array()}};}
 };
 int main(){
+#if defined(_WIN32)
+    // This test executable is not a protected owner host. Both checks must fail
+    // before WinRT discovery/UI, in reference as well as security builds.
+    bool helloDenied=false;
+    try{WindowsHelloOwnerKey key("");}catch(const std::exception& e){helloDenied=std::string(e.what())=="hello_enrolled_public_key_required";}
+    assert(helloDenied);helloDenied=false;
+    try{WindowsHelloOwnerKey key(std::string(294,'x'));}catch(const std::exception& e){helloDenied=std::string(e.what())=="hello_protected_owner_host_required";}
+    assert(helloDenied);
+#endif
     auto now=Now();Json resource={{"platform","fixture"},{"account_id","a"},{"conversation_id","b"}};
     Json contract={{"version",2},{"id","task"},{"owner","owner"},{"agent","agent"},{"application","app"},{"goal_digest",Digest("goal")},
         {"mode","incoming"},{"trigger","external-message"},{"operations",Json{"messages.read"}},{"resources",Json{Digest(resource.dump())}},

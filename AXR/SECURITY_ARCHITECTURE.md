@@ -241,3 +241,16 @@ protection against a compromised kernel, administrator or trusted authority host
 Encryption does not repair an overprivileged process. Antivirus absence is not a
 clean-file verdict, a local database record is not delivery confirmation, and a
 passing component test is not release qualification.
+
+### Windows existing Hello credential provider
+
+`WindowsHelloOwnerKey` opens only the fixed, already enrolled owner credential.
+Before any WinRT call, native code requires the fixed interactive owner host and
+an installation/dependency tree protected against untrusted writes and reparse
+replacement. The public SPKI must equal the protected installation pin. Each
+bounded `RequestSignAsync` result is verified against the exact message; no
+boolean consent, silent TPM key, creation, replacement, deletion or private-key
+export is accepted. The control entry reads the pin only from its fixed runtime.
+This does not qualify hardware: initial provisioning, attestation chain/blob/key
+binding validation, trusted registration and actual desktop Hello UI remain
+outstanding. Neither a pin file nor Hello API success is hardware attestation.
