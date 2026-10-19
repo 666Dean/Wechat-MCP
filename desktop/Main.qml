@@ -34,11 +34,15 @@ ApplicationWindow {
     function openAccess(level){
         accessEditor.level=level;accessEditor.contacts=backend.conversations || [];
         accessEditor.authorizedIds=(backend.grants || []).map(function(g){return g.conversation_id});
-        accessEditor.selectedIds=accessEditor.authorizedIds.slice();accessEditor.overwriteDrafts=(status.scope || {}).overwrite_drafts===true;
+        accessEditor.selectedIds=accessEditor.authorizedIds.filter(function(id){return accessEditor.contacts.some(function(c){return c.conversation_id===id})});accessEditor.overwriteDrafts=(status.scope || {}).overwrite_drafts===true;
         accessEditor.allContacts=scopeActive && accessEditor.authorizedIds.length===accessEditor.contacts.length && accessEditor.contacts.length>0;
         accessEditor.activeScope=scopeActive;accessEditor.minutes=scopeActive && !autoReply.expires ? 0 : 30;
         accessEditor.replies=scopeActive && (autoReply.remaining===null || autoReply.remaining===undefined) ? 0 : 20;
-        if(level===2)riskDialog.open();else accessEditor.open()
+        accessEditor.bindingReady=!!(owner.assistant || {}).thread_id;
+        accessEditor.sendPolicy=(status.scope || {}).send_policy || "when_idle";
+        accessEditor.backgroundAvailable=status.background_send_qualified===true;
+        if(accessEditor.sendPolicy==="background_when_idle" && !accessEditor.backgroundAvailable)accessEditor.sendPolicy="when_idle";
+        if(level===2)Qt.callLater(function(){riskDialog.open()});else Qt.callLater(function(){accessEditor.open()})
     }
     property bool systemReady: !status.permissions || (status.permissions.database === true && status.permissions.accessibility === true)
     property var autoTargets: []
@@ -46,6 +50,7 @@ ApplicationWindow {
     property var authorizationRequest: ({})
     property var assistantDraft: ({})
     onPageChanged: { if(page===6)owner.loadAssistant() }
+    Component.onCompleted: if(owner.onboardingNeeded)Qt.callLater(function(){setupDialog.open()})
     property int autoMinutes: 15
     property int autoReplies: 4
     property bool overwriteDrafts: false
@@ -54,7 +59,7 @@ ApplicationWindow {
     Connections { target: owner; function onAgentApprovalChanged(){if((owner.agentApproval || {}).request_key)agentActionDialog.open();else agentActionDialog.close()} }
     property var drafts: window.backend.drafts || []
     property var jobs: window.backend.jobs || []
-    property var pending: jobs.filter(function(j){return ["Ready","AwaitingApproval","Executing","Prepared","Verifying","AwaitingAgent","HandedOff"].indexOf(j.state)>=0 && j.expires*1000>Date.now()})
+    property var pending: jobs.filter(function(j){return ["Ready","Queued","WaitingForIdle","AwaitingApproval","Executing","Prepared","Verifying","AwaitingAgent","HandedOff"].indexOf(j.state)>=0 && j.expires*1000>Date.now()})
     property var recent: jobs.slice().sort(function(a,b){return b.created-a.created}).slice(0,6)
     property var approvals: pending.filter(function(j){return j.state==="AwaitingApproval"})
     property var todos: pending.filter(function(j){return j.state!=="AwaitingApproval"})
@@ -66,7 +71,7 @@ ApplicationWindow {
     Binding { target: Theme; property: "dark"; value: window.darkMode }
     Binding { target: Theme; property: "glassSource"; value: appContent }
     function operation(op){return ({"owner.command":"本人任务","messages.read":"读取消息","messages.search":"搜索消息","files.read":"解析本地附件","reply.prepare":"生成回复草稿","disclosure.send":"内容披露审批","messages.send":"提交微信回复","workspace.write":"保存工作文档","application.navigate":"应用导航","expired":"已过期任务"})[op] || "处理任务"}
-    function stateLabel(state){return ({"AwaitingAgent":"等待 Codex 当前任务结束","HandedOff":"Codex 正在处理本人任务","AwaitingApproval":"等待你的批准","Ready":"等待执行","Queued":"等待处理","Draft":"等待人工回复","Observed":"已核对本机发出记录","Executing":"正在处理","Prepared":"已准备","Verifying":"核验结果","Completed":"已完成","Unknown":"结果待核对","FailedSafe":"已安全停止","Expired":"已过期","Cancelled":"已取消","Denied":"已拒绝","Proposed":"待检查","PolicyChecked":"已检查权限"})[state] || "待验证"}
+    function stateLabel(state){return ({"WaitingForIdle":"等待电脑空闲后发送","AwaitingAgent":"等待 Codex 当前任务结束","HandedOff":"Codex 正在处理本人任务","AwaitingApproval":"等待你的批准","Ready":"等待执行","Queued":"等待处理","Draft":"等待人工回复","Observed":"已核对本机发出记录","Executing":"正在处理","Prepared":"已准备","Verifying":"核验结果","Completed":"已完成","Unknown":"结果待核对","FailedSafe":"已安全停止","Expired":"已过期","Cancelled":"已取消","Denied":"已拒绝","Proposed":"待检查","PolicyChecked":"已检查权限"})[state] || "待验证"}
     function destinationLabel(value){return value === "local" ? "仅本机" : value === "model:codex" ? "Codex" : value && value.indexOf("wechat:")===0 ? "指定微信会话" : value && value.indexOf("model:")===0 ? "模型：" + value.slice(6) : value || "—"}
     function targetName(cid){var list=window.backend.conversations || [];for(var i=0;i<list.length;i++)if(list[i].conversation_id===cid)return list[i].display_name;return cid || "本地操作"}
     function timeLabel(value){return value ? new Date(value*1000).toLocaleString(Qt.locale(),"MM-dd HH:mm") : "—"}
@@ -169,7 +174,7 @@ ApplicationWindow {
             ColumnLayout { anchors.fill: parent; anchors.margins: 26; spacing: 7
                 RowLayout { Layout.fillWidth: true; Layout.topMargin: 18; Layout.bottomMargin: 28; spacing: 12
                     WindowDrag { }
-                    Rectangle { width: 36; height: 36; radius: 10; color: Theme.brand; Icon { anchors.centerIn: parent; name: "message"; ink: "white"; width: 23; height: 23 } }
+                    Image { source: "icon.svg"; Layout.preferredWidth: 40; Layout.preferredHeight: 40; sourceSize.width: 160; sourceSize.height: 160 }
                     Column { spacing: 4
                         Copy { text: "WeChat MCP"; font.pixelSize: 18; font.weight: Font.DemiBold }
                         Caption { text: "Desktop"; font.pixelSize: 12 }
@@ -385,7 +390,8 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                         }
                     }
                 }
-                SettingsPage { objectName: "settingsPage"; controller: owner; connected: window.connected; scopeActive: window.scopeActive; systemReady: window.systemReady; independentService: window.independentService; darkMode: window.darkMode; accessLevel: window.accessLevel
+                SettingsPage { id: settingsPage; objectName: "settingsPage"; controller: owner; connected: window.connected; scopeActive: window.scopeActive; systemReady: window.systemReady; independentService: window.independentService; darkMode: window.darkMode; accessLevel: window.accessLevel
+                    onSetupRequested: {setupDialog.step=0;setupDialog.open()}
                     onAccessRequested: function(level){window.openAccess(level)}
                     onStopRequested: stopDialog.open()
                     onRevokeRequested: revokeDialog.open()
@@ -466,10 +472,19 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
     }
 
     AccessDialog { id: accessEditor; objectName: "accessDialog"; anchors.centerIn: parent
-        onApplyRequested: function(targets,minutes,replies,level,overwrite){owner.applyScope(targets,minutes,replies,level,overwrite)}
+        onApplyRequested: function(targets,minutes,replies,level,overwrite,policy,idle){owner.applyScope(targets,minutes,replies,level,overwrite,policy,idle)}
         onStopped: stopDialog.open()
+        onBindingRequested: {if(setupDialog.resumeAfterAccess){setupDialog.resumeAfterAccess=false;setupDialog.step=2;Qt.callLater(function(){setupDialog.open()})}else{window.page=6;settingsPage.section=1}}
+        onClosed: if(setupDialog.resumeAfterAccess){setupDialog.resumeAfterAccess=false;Qt.callLater(function(){setupDialog.step=3;setupDialog.open()})}
+    }
+    Onboarding { id: setupDialog; objectName: "setupDialog"; controller: owner; anchors.centerIn: parent
+        onAccessRequested: function(level){resumeAfterAccess=true;close();Qt.callLater(function(){window.openAccess(level)})}
+        onAssistantRequested: function(preferences){resumeAfterAssistant=true;close();window.assistantDraft=preferences;Qt.callLater(function(){assistantDialog.open()})}
     }
     Dialog { id: riskDialog; objectName: "fullAccessRiskDialog"; anchors.centerIn: parent; width: Math.min(540,window.width-80); modal: true; padding: 28; title: "开启完全访问？"; header: null; closePolicy: Popup.CloseOnEscape
+        property bool continuing: false
+        onOpened: continuing=false
+        onClosed: {if(continuing)Qt.callLater(function(){accessEditor.open()});else if(setupDialog.resumeAfterAccess){setupDialog.resumeAfterAccess=false;Qt.callLater(function(){setupDialog.open()})}}
         enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.motionEnabled ? 160 : 0 } }
         exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: Theme.motionEnabled ? 100 : 0 } }
         background: GlassPanel { radius: 26 }
@@ -488,7 +503,7 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                 Item { Layout.fillWidth: true }
                 ButtonX { text: "取消"; onClicked: riskDialog.close(); Component.onCompleted: forceActiveFocus() }
                 ButtonX { objectName: "fullAccessContinue"; text: "已知风险，继续"; danger: true; background: Rectangle { radius: 11; color: Theme.riskTint; border.color: Theme.riskBorder }
-                    onClicked: {riskDialog.close();accessEditor.open()} }
+                    onClicked: {riskDialog.continuing=true;riskDialog.close()} }
             }
         }
     }
@@ -551,6 +566,7 @@ ButtonX { text: "系统认证并批准"; primary: true; enabled: !window.preview
         onAccepted: window.selfAgentAccess=true
     }
     Dialog { id: assistantDialog; anchors.centerIn: parent; width: Math.min(540,window.width-60); modal: true; title: "保存助理设置？"; standardButtons: Dialog.Cancel | Dialog.Ok
+        onClosed: if(setupDialog.resumeAfterAssistant){setupDialog.resumeAfterAssistant=false;Qt.callLater(function(){setupDialog.open()})}
         background: Rectangle { radius: 20; color: Theme.surface; border.color: Theme.border }
         contentItem: Copy { text: "绑定对话：" + (window.assistantDraft.thread_title || "未选择") + "\n回复署名：" + (window.assistantDraft.attribution ? "显示" : "不显示") + "\n\n人设与回复风格将在下次开启时使用。保存不会授予读取、披露或发送权限。" }
         onAccepted: owner.saveAssistant(window.assistantDraft)

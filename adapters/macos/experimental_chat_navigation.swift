@@ -56,7 +56,7 @@ func run() throws -> [String:Any] {
    return abs(x-origin.x)<0.5 && abs(y-origin.y)<0.5 && abs(width-dimensions.width)<0.5 && abs(height-dimensions.height)<0.5
   }
   guard rows.count==1,let row=rows.first,let id=row[kCGWindowNumber as String] as? Int,let bounds=row[kCGWindowBounds as String] as? [String:Any] else{throw Stop("visible_main_window_missing_or_ambiguous")}
-  return ["binding":["pid":Int(app.processIdentifier),"window_id":id,"title":"微信","bounds":bounds],"send_available":false,"window_metadata_only":true,"title_source":"accessibility","capture_used":false,"ui_actions":false,"send_invoked":false]
+  return ["binding":["pid":Int(app.processIdentifier),"window_id":id,"title":"微信","bounds":bounds],"application_active":app.isActive,"send_available":false,"window_metadata_only":true,"title_source":"accessibility","capture_used":false,"ui_actions":false,"send_invoked":false]
  }
  guard let req=decoded as? [String:Any],let mode=req["mode"] as? String,
        ["navigate","stage_draft","read_draft","send","validate_scope"].contains(mode),
@@ -115,9 +115,31 @@ func run() throws -> [String:Any] {
  while matches.isEmpty && Date()<discoveryDeadline {RunLoop.current.run(until:Date().addingTimeInterval(0.05));matches=windows().filter{label($0)==title}}
  guard matches.count==1 else{throw Stop("main_window_missing_or_ambiguous")}
  let target=matches[0]
+ let backgroundMode=binding["activation_policy"] as? String=="background_when_idle"
+ let previousForeground=NSWorkspace.shared.frontmostApplication?.processIdentifier
+ if backgroundMode && app.isActive {throw Stop("background_requires_inactive_app")}
+ func verifyActivity() throws {
+  if backgroundMode {
+   guard NSWorkspace.shared.frontmostApplication?.processIdentifier==previousForeground,!app.isActive else{throw Stop("foreground_changed")}
+   let idle=CGEventSource.secondsSinceLastEventType(.hidSystemState,eventType:CGEventType(rawValue:UInt32.max)!)
+   guard idle.isFinite,idle>=Double(binding["idle_seconds"] as? Int ?? 15) else{throw Stop("user_active")}
+  }
+ }
  // Only the first navigation step changes focus. Later steps require the
  // expected foreground window/dialog; they never silently move focus back.
- if mode=="navigate" && ["complete","open"].contains(phase) {
+ if mode=="navigate" && ["complete","open"].contains(phase) && !backgroundMode {
+  let activation=binding["activation_policy"] as? String ?? "immediate"
+  let idleGate=binding["idle_gate"] as? String ?? "initial"
+  guard ["initial","continuation"].contains(idleGate) else{throw Stop("idle_gate_invalid")}
+  if activation != "immediate" {
+   // Check idle once at transaction admission, not after our own posted keys.
+   // Continuation is sealed by the authority and still requires foreground.
+   if idleGate=="initial" {
+    let idle=CGEventSource.secondsSinceLastEventType(.hidSystemState,eventType:CGEventType(rawValue:UInt32.max)!)
+    guard idle.isFinite,idle >= Double(binding["idle_seconds"] as? Int ?? 15) else{throw Stop("user_active")}
+   } else {guard app.isActive else{throw Stop("foreground_changed")}}
+   if activation=="foreground_only" && !app.isActive {throw Stop("foreground_required")}
+  }
   try authority(true)
   if attr(target,kAXMinimizedAttribute) as? Bool==true {
    guard AXUIElementSetAttributeValue(target,kAXMinimizedAttribute as CFString,kCFBooleanFalse) == .success else{throw Stop("restore_main_window_failed")}
@@ -135,7 +157,8 @@ func run() throws -> [String:Any] {
   guard app.isActive else{throw Stop("activation_unconfirmed")}
  }
  func verify(_ dialog:Bool=false) throws {
-  guard !app.isTerminated,app.isActive else{throw Stop("foreground_changed")}
+  guard !app.isTerminated,backgroundMode || app.isActive else{throw Stop("foreground_changed")}
+  try verifyActivity()
   let rows=(CGWindowListCopyWindowInfo(.optionOnScreenOnly,kCGNullWindowID) as? [[String:Any]] ?? []).filter{($0[kCGWindowOwnerPID as String] as? Int)==pid && ($0[kCGWindowLayer as String] as? Int)==0}
   guard rows.contains(where:{($0[kCGWindowNumber as String] as? Int)==windowID && ($0[kCGWindowBounds as String] as? NSDictionary)==bounds}) else{throw Stop("window_epoch_or_geometry_changed")}
   guard let focused=attr(root,kAXFocusedWindowAttribute),CFGetTypeID(focused)==AXUIElementGetTypeID() else{throw Stop("focused_window_unavailable")}
@@ -156,7 +179,9 @@ func run() throws -> [String:Any] {
   try verify(dialog)
   if claimedPermit || Date().timeIntervalSince(lastAuthorityCheck)>1 {try proof()}
   for down in [true,false] {
-   guard let event=CGEvent(keyboardEventSource:nil,virtualKey:code,keyDown:down) else{throw Stop("event_unavailable")}
+   // Preserve the device-validated foreground input source. Experimental
+   // background events must not change normal WeChat keyboard semantics.
+   guard let event=CGEvent(keyboardEventSource:backgroundMode ? CGEventSource(stateID:.privateState) : nil,virtualKey:code,keyDown:down) else{throw Stop("event_unavailable")}
    event.flags=flags;event.postToPid(pid_t(pid));usleep(25000)
   }
  }
@@ -198,6 +223,7 @@ func run() throws -> [String:Any] {
   }
  }
  func protectSearchPointer() throws {
+  if backgroundMode {return}
   try verify(true);try proof()
   guard let focused=attr(root,kAXFocusedWindowAttribute),CFGetTypeID(focused)==AXUIElementGetTypeID(),
         let position=attr(focused as! AXUIElement,kAXPositionAttribute),CFGetTypeID(position)==AXValueGetTypeID(),
@@ -219,11 +245,17 @@ func run() throws -> [String:Any] {
   guard let bar=attr(root,kAXMenuBarAttribute),CFGetTypeID(bar)==AXUIElementGetTypeID() else{throw Stop("menu_bar_missing")}
   let parents=children(bar as! AXUIElement).filter{label($0)=="编辑"}
   guard parents.count==1 else{throw Stop("edit_menu_ambiguous")}
-  try proof();try verify();guard AXUIElementPerformAction(parents[0],kAXPressAction as CFString) == .success else{throw Stop("menu_open_failed")}
+  try proof();try verify()
+  if !backgroundMode {guard AXUIElementPerformAction(parents[0],kAXPressAction as CFString) == .success else{throw Stop("menu_open_failed")}}
   let menus=children(parents[0]).filter{attr($0,kAXRoleAttribute) as? String=="AXMenu"}
   let entries=menus.flatMap{children($0)}.filter{label($0)=="搜索"}
   guard entries.count==1,attr(entries[0],kAXEnabledAttribute) as? Bool==true else{throw Stop("search_entry_ambiguous")}
-  try proof();guard AXUIElementPerformAction(entries[0],kAXPressAction as CFString) == .success else{throw Stop("search_open_failed")}
+  try proof()
+  if backgroundMode {
+   guard (attr(entries[0],kAXMenuItemCmdCharAttribute) as? String)?.lowercased()=="f",
+         (attr(entries[0],kAXMenuItemCmdModifiersAttribute) as? Int)==0 else{throw Stop("background_search_shortcut_unconfirmed")}
+   try key(3,.maskCommand)
+  } else {guard AXUIElementPerformAction(entries[0],kAXPressAction as CFString) == .success else{throw Stop("search_open_failed")}}
   let searchDeadline=Date().addingTimeInterval(2)
   while Date()<searchDeadline {RunLoop.current.run(until:Date().addingTimeInterval(0.05));if (try? verify(true)) != nil {break}}
   try verify(true)
@@ -245,7 +277,7 @@ func run() throws -> [String:Any] {
   let settle=Date().addingTimeInterval(0.85)
   while Date()<settle {
    try verify(true);try proof()
-   guard let parked=parkedPointer,samePoint(try pointer(),parked) else{throw Stop("search_pointer_changed")}
+   if !backgroundMode {guard let parked=parkedPointer,samePoint(try pointer(),parked) else{throw Stop("search_pointer_changed")}}
    RunLoop.current.run(until:Date().addingTimeInterval(0.025))
   }
   if phase=="query" {return ["navigation_step_complete":true,"query_input_submitted":true,"send_invoked":false]}
@@ -254,7 +286,7 @@ func run() throws -> [String:Any] {
    try authority(true)
   }
   // This Return is allowed only in the new untitled search dialog, never a chat.
-  try verify(true);guard let parked=parkedPointer,samePoint(try pointer(),parked) else{throw Stop("search_pointer_changed")};navigated=true;try key(36,dialog:true)
+  try verify(true);if !backgroundMode {guard let parked=parkedPointer,samePoint(try pointer(),parked) else{throw Stop("search_pointer_changed")}};navigated=true;try key(36,dialog:true)
   let selectionDeadline=Date().addingTimeInterval(0.8)
   while Date()<selectionDeadline {
    if let focused=attr(root,kAXFocusedWindowAttribute),CFGetTypeID(focused)==AXUIElementGetTypeID() {
@@ -302,7 +334,8 @@ func run() throws -> [String:Any] {
   guard try echo() else{throw Stop("draft_changed_after_commit_claim")}
   submitted=true;try key(36)
  }
- return ["draft_match":exact,"stage_invoked":staged,"send_invoked":submitted,"delivery_confirmed":false,"content_disclosed":false]
+ return ["draft_match":exact,"stage_invoked":staged,"send_invoked":submitted,"delivery_confirmed":false,"content_disclosed":false,
+         "started_background":backgroundMode,"foreground_unchanged":NSWorkspace.shared.frontmostApplication?.processIdentifier==previousForeground]
 }
 // A separate ready frame lets the installed authority enroll the actual helper
 // birth instance BEFORE preparing the sealed final-action proof. No input yet.

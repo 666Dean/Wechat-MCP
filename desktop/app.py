@@ -28,11 +28,14 @@ def call(*args,**kwargs):
 class Controller(QObject):
     assistantChanged=Signal();threadsChanged=Signal();changed=Signal();detailChanged=Signal();manualChanged=Signal();noticeChanged=Signal();completed=Signal(object)
     agentEvent=Signal(object);agentApprovalChanged=Signal();modelsChanged=Signal();streamChanged=Signal();compositionChanged=Signal();preferencesChanged=Signal();chatAccepted=Signal(str)
+    setupChanged=Signal();setupCompleted=Signal()
     def __init__(self,state,helper=None,fixture=False,fixture_case="empty"):
         super().__init__();self.state=state;self.helper=helper;self.fixture=fixture;self.fixture_case=fixture_case
         self._data={'connected':False,'jobs':[],'drafts':[],'conversations':[],'grants':[],'summaries':[]}
         self._assistant={'thread_id':'','thread_title':'','persona':'','style':'简洁、自然、直接；不编造事实。','attribution':True};self._threads=[];self._threads_cursor=None;self._models=[];self._stream={};self._attachment={};self._foreground=True;self._preferences=QSettings('Stellaria','WeChat MCP');self._reduce_motion=self._preferences.value('reduceMotion',False,type=bool)
         self._preview={};self._manual={};self._detail='';self._notice='连接本地服务，开始你的工作台。';self.selected=None;self.config_review=None;self.config_backup=None;self._submitted=None
+        self._setup={};self._setup_package=None
+        self._onboarding_needed=not fixture and self._preferences.value('setupVersion',0,type=int)<1
         self.pool=concurrent.futures.ThreadPoolExecutor(max_workers=2);self.inflight=set();self.broker_process=None;self.worker_process=None;self.worker_job=None
         self.stream_timer=QTimer(self);self.stream_timer.setSingleShot(True);self.stream_timer.timeout.connect(self.streamChanged.emit)
         self.completed.connect(self.accept)
@@ -55,8 +58,8 @@ class Controller(QObject):
         request={'text':text,'request_id':uuid.uuid4().hex,**({'model':model} if model else {}),**({'effort':effort} if effort else {})}
         self._submitted=submitted
         self.run('chat_prompt',lambda:call(self.state,'control.queue_owner_prompt',(request,),owner=True))
-    @Slot('QVariantList',int,int,int,bool)
-    def applyScope(self,targets,minutes,replies,level,overwrite=False):
+    @Slot('QVariantList',int,int,int,bool,str,int)
+    def applyScope(self,targets,minutes,replies,level,overwrite=False,send_policy='when_idle',idle_seconds=15):
         if self.fixture:return
         chosen=list(targets)
         if level not in (0,1,2):return
@@ -74,11 +77,65 @@ class Controller(QObject):
                 if current.get('owner_authorized'):control('stop')
                 return control('start',{'targets':'all' if chosen==['*'] else chosen,
                     **({'reply_targets':[]} if level==0 else {}),'seconds':minutes*60,'max_replies':replies,
-                    'automatic':level>0,'disclose':True,'self_agent':level==2,'overwrite_drafts':bool(overwrite) if level>0 else False},timeout=180)
+                    'automatic':level>0,'disclose':True,'self_agent':level==2,'overwrite_drafts':bool(overwrite) if level>0 else False,
+                    'send_policy':send_policy,'idle_seconds':idle_seconds},timeout=180)
             raise AXRError('independent_authority_control_unavailable')
         self.run('automatic',apply)
     @Property(bool,notify=preferencesChanged)
     def reduceMotion(self):return self._reduce_motion
+    @Property(bool,notify=setupChanged)
+    def onboardingNeeded(self):return self._onboarding_needed
+    @Property('QVariantMap',notify=setupChanged)
+    def setupResult(self):return self._setup
+    @Property(str,notify=setupChanged)
+    def setupPackage(self):return self._setup_package.name if self._setup_package else ''
+    @Slot()
+    def chooseSetupPackage(self):
+        if self.fixture:return
+        path=QFileDialog.getExistingDirectory(None,'选择本地服务安装包')
+        if path:
+            self._setup_package=Path(path);self.setupChanged.emit()
+    @Slot()
+    def installSetupPackage(self):
+        if self.fixture or not self._setup_package:return
+        package=self._setup_package
+        def install_service():
+            if authority_installed():raise AXRError('setup_service_already_installed')
+            from scripts.install_authority_macos import install
+            return install(package)
+        self.run('setup_install',install_service)
+    @Slot()
+    def initializeSetup(self):
+        if self.fixture:return
+        def initialize():
+            if not authority_installed():raise AXRError('setup_service_required')
+            binary='/Library/Application Support/Stellaria AXR/AXR Authority.app/Contents/MacOS/axr-authority'
+            result=subprocess.run([binary,'--initialize-owner'],capture_output=True,timeout=200)
+            if result.returncode:
+                rows=result.stderr[:16384].splitlines();codes=[]
+                for row in rows:
+                    try:codes.append(json.loads(row).get('error_code'))
+                    except (ValueError,AttributeError):pass
+                if 'authority_already_initialized' not in codes:raise AXRError('setup_initialization_incomplete')
+            from scripts.register_authority_service import register
+            return register()
+        self.run('setup_initialize',initialize)
+    @Slot()
+    def verifySetup(self):
+        if self.fixture:return
+        self.run('setup_check',self._setup_assessment)
+    def _setup_assessment(self):
+        from .onboarding import assessment,protocol_check
+        from .authority_client import control
+        try:snapshot=control('snapshot');assistant=control('assistant_settings')
+        except AXRError:return assessment({}, {},False)
+        try:protocol=protocol_check()
+        except Exception:protocol=False
+        return assessment(snapshot,assistant,protocol)
+    @Slot()
+    def finishSetup(self):
+        if not self._setup.get('ready') or self.fixture:return
+        self.run('setup_finish',self._setup_assessment)
     @Slot(bool)
     def setReduceMotion(self,value):
         self._reduce_motion=value
@@ -249,6 +306,8 @@ class Controller(QObject):
                 'authority_missing_expired_revoked_or_exhausted':'当前操作需要授权，或原授权已到期。',
                 'owner_os_authentication_failed':'系统身份认证未完成，本次操作未获准。',
                 'owner_policy_changed_restart_required':'权限配置已更新，请重新连接本地服务。'}.get(result['error'],'操作未完成，请核对授权与本地服务。')
+            if result['error'].startswith('setup_'):
+                self._notice={'setup_service_already_installed':'组件已安装，请连接或初始化现有服务。','setup_service_required':'请先安装本地服务组件。','setup_initialization_incomplete':'本机连接尚未初始化完成。请检查登录与凭据准备状态，再继续配置。'}.get(result['error'],'本机设置未完成，请核对后重试。')
             if result['error'].startswith('owner_os_authentication_failed'):
                 self._notice=('系统取消了身份认证，请保持认证窗口在前台后重试。'
                     if result['error']=='owner_os_authentication_failed:owner_auth_denied:os_error_-4' else
@@ -263,6 +322,12 @@ class Controller(QObject):
             self.changed.emit()
             return
         value=result['value'];name=result['name']
+        if name in ('setup_check','setup_finish'):
+            self._setup=value;self.setupChanged.emit();self.changed.emit()
+            if name=='setup_finish' and value.get('ready'):
+                self._preferences.setValue('setupVersion',1);self._onboarding_needed=False;self.setupChanged.emit();self.setupCompleted.emit()
+            return
+        if name in ('setup_install','setup_initialize'):self.start();self.verifySetup()
         if name=='chat_prompt' and self._submitted:
             submitted=self._submitted;self._submitted=None
             if self._attachment==submitted['attachment']:
@@ -525,6 +590,7 @@ def main():
     if args.capture and not args.fixture:parser.error('Screenshots are supported only for the synthetic fixture')
     QQuickStyle.setStyle('Basic')
     app=QApplication(sys.argv);app.setApplicationName('WeChat MCP Desktop');app.setOrganizationName('Stellaria Studio')
+    app.setWindowIcon(QIcon(str(Path(__file__).with_name('icon.svg'))))
     app.styleHints().setColorScheme(Qt.ColorScheme.Dark if args.theme=='dark' else Qt.ColorScheme.Light)
     controller=Controller(args.state,args.helper,args.fixture,args.fixture_case)
     engine=QQmlApplicationEngine();engine.rootContext().setContextProperty('owner',controller)

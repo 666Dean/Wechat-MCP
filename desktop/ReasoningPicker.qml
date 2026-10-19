@@ -15,30 +15,34 @@ ToolButton {
     property string selectedLabel: label(value || selectedModel.default_effort || "") || "沿用对话强度"
     property string summary: modelId ? selectedModel.title+" · "+selectedLabel : "模型与强度"
     function choose(model){modelId=model.id;value="";choosingModel=false;Qt.callLater(function(){modelButton.forceActiveFocus()})}
-    objectName: "reasoningSelector"; implicitHeight: 32; implicitWidth: Math.min(222,Math.max(132,summaryMetrics.advanceWidth+36)); Accessible.name: summary
+    objectName: "reasoningSelector"; implicitHeight: 32; implicitWidth: Math.min(222,Math.max(132,summaryMetrics.advanceWidth+36)); leftPadding: 12; rightPadding: 10; topPadding: 0; bottomPadding: 0; Accessible.name: summary
     TextMetrics { id: summaryMetrics; text: picker.summary; font.pixelSize: 12 }
     onClicked: {choosingModel=false;sheet.open()}
     background: Rectangle { radius: 16; color: picker.hovered || sheet.visible ? Theme.hover : Theme.tint; border.color: picker.activeFocus ? Theme.focusBorder : "transparent" }
     contentItem: RowLayout { spacing: 6
-        Text { Layout.fillWidth: true; text: picker.summary; textFormat: Text.PlainText; elide: Text.ElideRight; color: Theme.ink; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter }
-        Icon { name: "chevronDown"; width: 12; height: 12; ink: Theme.muted }
+        Text { Layout.fillWidth: true; Layout.fillHeight: true; verticalAlignment: Text.AlignVCenter; text: picker.summary; textFormat: Text.PlainText; elide: Text.ElideRight; color: Theme.ink; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter }
+        Icon { name: "chevronDown"; Layout.preferredWidth: 12; Layout.preferredHeight: 12; Layout.alignment: Qt.AlignVCenter; ink: Theme.muted }
     }
-    AnchoredPopup { id: sheet; objectName: "reasoningPopup"; anchorItem: picker; preferAbove: true; preferredWidth: 264; padding: 16
+    AnchoredPopup { id: sheet; objectName: "reasoningPopup"; anchorItem: picker; preferAbove: true; preferredWidth: 264; padding: 12
         background: GlassPanel { radius: 21 }
         contentItem: ColumnLayout { spacing: 6
-            RowLayout { visible: !picker.choosingModel; Layout.fillWidth: true
-                Icon { name: "sparkle"; width: 17; height: 17; ink: Theme.muted }
-                Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; text: picker.selectedLabel; color: Theme.positive; font.pixelSize: 18; font.weight: Font.Medium }
-                ToolButton { implicitWidth: 24; implicitHeight: 24; Accessible.name: "恢复默认强度"; onClicked: picker.value=""; contentItem: Icon { name: "refresh"; ink: Theme.muted } }
+            RowLayout { visible: !picker.choosingModel; Layout.fillWidth: true; Layout.preferredHeight: 28
+                Icon { name: "sparkle"; Layout.preferredWidth: 22; Layout.preferredHeight: 17; Layout.alignment: Qt.AlignVCenter; ink: Theme.muted }
+                Text { Layout.fillWidth: true; Layout.fillHeight: true; verticalAlignment: Text.AlignVCenter; horizontalAlignment: Text.AlignHCenter; text: picker.selectedLabel; color: Theme.positive; font.pixelSize: 16; font.weight: Font.DemiBold }
+                ToolButton { implicitWidth: 22; implicitHeight: 24; padding: 4; Accessible.name: "恢复默认强度"; onClicked: picker.value=""
+                    background: Rectangle { radius: 8; color: parent.hovered ? Theme.hover : "transparent" }
+                    contentItem: Icon { name: "refresh"; ink: Theme.muted }
+                }
             }
             ToolButton { id: modelButton; objectName: "modelSelector"; visible: !picker.choosingModel; Layout.fillWidth: true; implicitHeight: 28; Accessible.name: "选择模型："+picker.selectedModel.title
                 onClicked: {picker.choosingModel=true;Qt.callLater(function(){modelList.forceActiveFocus()})}
                 background: Rectangle { radius: 9; color: modelButton.hovered ? Theme.hover : "transparent"; border.color: modelButton.activeFocus ? Theme.focusBorder : "transparent" }
-                contentItem: RowLayout { spacing: 5
-                    Item { Layout.fillWidth: true }
-                    Text { Layout.maximumWidth: 196; text: picker.selectedModel.title; textFormat: Text.PlainText; elide: Text.ElideRight; color: Theme.muted; font.pixelSize: 12 }
-                    Icon { name: "chevronDown"; rotation: -90; width: 12; height: 12; ink: Theme.muted }
-                    Item { Layout.fillWidth: true }
+                padding: 0
+                contentItem: Item {
+                    RowLayout { anchors.centerIn: parent; width: Math.min(parent.width,implicitWidth); spacing: 6
+                        Text { Layout.maximumWidth: 190; Layout.fillWidth: true; text: picker.selectedModel.title; textFormat: Text.PlainText; elide: Text.ElideRight; color: Theme.muted; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter }
+                        Icon { name: "chevronDown"; rotation: -90; Layout.preferredWidth: 11; Layout.preferredHeight: 11; Layout.alignment: Qt.AlignVCenter; ink: Theme.muted }
+                    }
                 }
             }
             Slider { id: slider; objectName: "reasoningSlider"; Layout.fillWidth: true; Layout.preferredHeight: 34; visible: !picker.choosingModel && picker.efforts.length>0; enabled: picker.efforts.length>1
@@ -65,12 +69,12 @@ ToolButton {
                 Keys.onEnterPressed: picker.choose(picker.models[currentIndex])
                 Keys.onEscapePressed: {picker.choosingModel=false;modelButton.forceActiveFocus()}
                 ScrollIndicator.vertical: ScrollIndicator {}
-                delegate: ItemDelegate { id: option; required property var modelData; required property int index; width: modelList.width; height: 34
+                delegate: ItemDelegate { id: option; required property var modelData; required property int index; objectName: "modelOption"+index; width: modelList.width; height: 38; padding: 0
                     onClicked: picker.choose(modelData)
-                    background: Rectangle { radius: 9; color: option.hovered || modelList.activeFocus && modelList.currentIndex===index ? Theme.hover : "transparent" }
-                    contentItem: RowLayout {
-                        Text { Layout.fillWidth: true; text: modelData.title; textFormat: Text.PlainText; elide: Text.ElideRight; color: Theme.ink; font.pixelSize: 13 }
-                        Icon { name: "tick"; ink: Theme.positive; width: 15; height: 15; opacity: picker.modelId===modelData.id ? 1 : 0 }
+                    background: Rectangle { radius: 10; color: option.hovered || modelList.activeFocus && modelList.currentIndex===index ? Theme.hover : picker.modelId===modelData.id ? Theme.tint : "transparent" }
+                    contentItem: Item {
+                        Text { objectName: "modelOptionText"+option.index; anchors.left: parent.left; anchors.leftMargin: 12; anchors.right: selected.left; anchors.rightMargin: 10; height: parent.height; verticalAlignment: Text.AlignVCenter; text: modelData.title; textFormat: Text.PlainText; elide: Text.ElideRight; color: Theme.ink; font.pixelSize: 13; font.weight: picker.modelId===modelData.id ? Font.Medium : Font.Normal }
+                        Icon { id: selected; objectName: "modelOptionTick"+option.index; anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter; name: "tick"; ink: Theme.positive; width: 15; height: 15; opacity: picker.modelId===modelData.id ? 1 : 0 }
                     }
                 }
             }

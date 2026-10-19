@@ -23,6 +23,7 @@ Item {
     signal themeRequested(bool dark)
     signal hooksRequested()
     signal assistantRequested(var preferences)
+    signal setupRequested()
     function timeText(){return autoReply.expires ? new Date(autoReply.expires*1000).toLocaleString(Qt.locale(),"MM-dd HH:mm") : "直至停止"}
     component Label: Text { color: Theme.ink; textFormat: Text.PlainText; wrapMode: Text.WordWrap; font.pixelSize: 13 }
     component Detail: Label { color: Theme.muted; font.pixelSize: 12 }
@@ -73,7 +74,7 @@ Item {
                         Rule {}
                         Row { title: "微信访问"; detail: settings.scopeActive ? (settings.controller.data.grants || []).length+" 个私聊" : "选择访问对象和权限"
                             GlassCombo { objectName: "settingsAccessMenu"; model: ["仅生成草稿","自动回复","完全访问"]; currentIndex: settings.accessLevel; menuWidth: 190
-                                onActivated: {settings.accessRequested(currentIndex);currentIndex=Qt.binding(function(){return settings.accessLevel})} }
+                                onActivated: function(index){settings.accessRequested(index);currentIndex=Qt.binding(function(){return settings.accessLevel})} }
                         }
                         Rule {}
                         Row { title: "有效期"; Detail { text: settings.scopeActive ? settings.timeText() : "未授权" } }
@@ -86,13 +87,15 @@ Item {
                         Row { title: "已有草稿"; Detail { text: (settings.status.scope || {}).overwrite_drafts ? "允许覆盖" : "保留"; color: (settings.status.scope || {}).overwrite_drafts ? Theme.warning : Theme.muted } }
                         Rule {}
                         Row { title: "连续消息"; Detail { text: "合并后回复" } }
+                        Rule {}
+                        Row { title: "发送时机"; Detail { text: ({when_idle:"电脑空闲 15 秒后",foreground_only:"仅微信在前台且空闲时",background_when_idle:"后台发送 · 空闲时",immediate:"立即切换微信"})[(settings.status.scope || {}).send_policy || "immediate"] } }
                     }
                     RowLayout { Layout.fillWidth: true; spacing: 8
                         Item { Layout.fillWidth: true }
                         GlassButton { objectName: "autoStop"; text: "停止并撤权"; enabled: settings.connected && (settings.scopeActive || settings.controller.data.automatic_pending===true); onClicked: settings.stopRequested() }
                         GlassButton { objectName: "autoStart"; text: settings.scopeActive ? "管理授权" : "选择范围并授权"; primary: true; enabled: settings.connected && settings.systemReady; onClicked: settings.accessRequested(settings.accessLevel) }
                     }
-                    Detail { Layout.fillWidth: true; text: "发送时微信会置前。权限变更需本机确认。" }
+                    Detail { Layout.fillWidth: true; text: (settings.status.background_send_qualified===true ? "" : "当前不支持可靠的无前台发送。") + ((settings.status.scope || {}).send_policy==="foreground_only" ? "仅微信本已位于前台且空闲时发送，不主动切换应用。" : "空闲发送仍会将微信置前；可在管理授权中选择仅前台时发送。") + "权限变更需本机确认。" }
                     RowLayout { visible: settings.connected && !settings.systemReady
                         GlassButton { text: "数据访问"; onClicked: settings.controller.openSystemPermission("database") }
                         GlassButton { text: "设备控制"; onClicked: settings.controller.openSystemPermission("accessibility") }
@@ -133,6 +136,8 @@ Item {
                         Row { title: "减少动态效果"; Toggle { checked: settings.controller.reduceMotion; onToggled: settings.controller.setReduceMotion(checked); Accessible.name: "减少动态效果" } }
                     }
                     Group { Layout.fillWidth: true
+                        Row { title: "设置向导"; GlassButton { text: "重新检查"; onClicked: settings.setupRequested() } }
+                        Rule {}
                         Row { title: "连接管理"; GlassButton { text: "管理"; onClicked: settings.pageRequested(1) } }
                         Rule {}
                         Row { title: "隐私与权限"; GlassButton { text: "查看"; onClicked: settings.accessRequested(settings.accessLevel) } }

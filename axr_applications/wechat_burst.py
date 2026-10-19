@@ -29,9 +29,11 @@ class BurstBuffer:
         self.context[identity]={'rows':(previous+fresh)[-12:],'at':now}
         if len(self.context)>128:
             oldest=min(self.context,key=lambda k:self.context[k]['at']);self.context.pop(oldest)
-    def ready(self,now=None):
+    def ready(self,now=None,*,limit=None,blocked=()):
         now=time.monotonic() if now is None else now;result=[]
         for identity,b in list(self.pending.items()):
+            if limit is not None and len(result)>=limit:break
+            if identity in blocked:continue
             if now-b['first']>=self.ttl:self.pending.pop(identity);continue
             if b['has_more'] or (now-b['last']<self.quiet_seconds and now-b['first']<self.max_wait):continue
             rows=b['rows'][:6];remaining=b['rows'][6:]

@@ -97,7 +97,7 @@ Item {
                     }
                     Choice { id: permissionChoice; objectName: "quickAccessMenu"; model: ["仅生成草稿", "自动回复", "完全访问"]; currentIndex: workspace.accessLevel; implicitWidth: 135
                         contentItem: RowLayout { spacing: 6; Icon { name: "shield"; ink: workspace.accessLevel===2 ? Theme.warning : Theme.muted; width: 15; height: 15 } Text { Layout.fillWidth: true; text: permissionChoice.displayText; color: workspace.accessLevel===2 ? Theme.warning : Theme.ink; font.pixelSize: 12; elide: Text.ElideRight } }
-                        Accessible.name: "微信访问权限"; onActivated: {workspace.permissionsRequested(currentIndex);currentIndex=Qt.binding(function(){return workspace.accessLevel})}
+                        Accessible.name: "微信访问权限"; onActivated: function(index){workspace.permissionsRequested(index);currentIndex=Qt.binding(function(){return workspace.accessLevel})}
                         GlassTip { visible: permissionChoice.hovered; text: workspace.accessSummary }
                     }
                     Item { Layout.fillWidth: true }

@@ -17,6 +17,39 @@ except ModuleNotFoundError:raise unittest.SkipTest('Desktop optional: install re
 
 
 class DesktopUI(unittest.TestCase):
+    def test_real_access_dropdown_retains_full_level_and_requires_self_scope(self):
+        c,e,w=self.create();c.timer.stop()
+        try:
+            c._assistant['thread_id']='00000000-0000-4000-8000-000000000001';c.assistantChanged.emit()
+            c._data.update(connected=True,scope='work_and_daily_assistance',status={'owner_authorized':True,'automatic_reply':{'active':False}},grants=[{'conversation_id':'peer'}],conversations=[{'conversation_id':'peer','display_name':'Synthetic peer'},{'conversation_id':'self','display_name':'Synthetic owner','is_self':True}]);c.changed.emit()
+            w.setProperty('page',6);QTest.qWait(30)
+            menu=self.visual(w,'settingsAccessMenu');menu.forceActiveFocus();QTest.keyClick(w,Qt.Key_Space);QTest.qWait(30)
+            QTest.keyClick(w,Qt.Key_End);QTest.keyClick(w,Qt.Key_Return);QTest.qWait(200)
+            risk=w.findChild(QObject,'fullAccessRiskDialog');self.assertTrue(risk.property('visible'))
+            button=self.visual(w,'fullAccessContinue');button.forceActiveFocus();QTest.keyClick(w,Qt.Key_Return);QTest.qWait(250)
+            editor=w.findChild(QObject,'accessDialog');self.assertTrue(editor.property('visible'));self.assertEqual(editor.property('level'),2)
+            self.assertEqual(set(editor.property('selectedIds').toVariant()),{'peer','self'})
+            editor.toggleRecipient('self');self.assertIn('self',editor.property('selectedIds').toVariant())
+            editor.setProperty('bindingReady',False);QTest.qWait(20);self.assertFalse(self.visual(w,'applyScope').isEnabled())
+            self.assertTrue(w.property('scopeActive'))
+            self.assertIn('当前不支持可靠的无前台发送',self.visual(w,'sendPolicyExplanation').property('text'))
+            for width,height in [(1024,680),(1280,800),(1440,900)]:
+                w.setWidth(width);w.setHeight(height);QTest.qWait(40)
+                apply=self.visual(w,'applyScope')
+                self.assertLessEqual(apply.mapToScene(QPointF(0,apply.height())).y(),height-20)
+        finally:self.dispose(c,e,w)
+    def test_setup_is_scrollable_and_cannot_finish_without_observed_checks(self):
+        c,e,w=self.create();c.timer.stop()
+        try:
+            setup=w.findChild(QObject,'setupDialog');setup.open()
+            for step in range(5):
+                setup.setProperty('step',step);QTest.qWait(30)
+                self.assertFalse(w.grabWindow().isNull())
+                self.assertTrue(self.visual(w,'setupNext').isVisible())
+            self.assertFalse(self.visual(w,'setupNext').isEnabled())
+            c._setup={'ready':True,'checks':[]};c.setupChanged.emit();QTest.qWait(20)
+            self.assertTrue(self.visual(w,'setupNext').isEnabled())
+        finally:self.dispose(c,e,w)
     @classmethod
     def setUpClass(cls):
         QQuickStyle.setStyle('Basic')
@@ -187,6 +220,11 @@ class DesktopUI(unittest.TestCase):
             self.assertLessEqual(popup.property('width'),264)
             model=self.visual(w,'modelSelector');model.forceActiveFocus();QTest.keyClick(w,Qt.Key_Space);QTest.qWait(20)
             models=self.visual(w,'modelChoiceList');self.assertTrue(models.isVisible())
+            for index in range(2):
+                option=self.visual(w,'modelOption'+str(index));text=self.visual(w,'modelOptionText'+str(index));tick=self.visual(w,'modelOptionTick'+str(index))
+                middle=option.mapToScene(QPointF(0,option.height()/2)).y()
+                self.assertAlmostEqual(text.mapToScene(QPointF(0,text.height()/2)).y(),middle,delta=.5)
+                self.assertAlmostEqual(tick.mapToScene(QPointF(0,tick.height()/2)).y(),middle,delta=.5)
             QTest.keyClick(w,Qt.Key_Down);QTest.keyClick(w,Qt.Key_Return);QTest.qWait(30)
             self.assertEqual(picker.property('modelId'),'synthetic-model')
             self.assertFalse(models.isVisible())

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Effects
 import "."
 Dialog {
     id: dialog
@@ -14,12 +15,23 @@ Dialog {
     property int replies: 20
     property int pageIndex: 0
     property bool activeScope: false
+    property bool bindingReady: false
+    property string sendPolicy: "when_idle"
+    property bool backgroundAvailable: false
+    readonly property var policies: ["when_idle","foreground_only","immediate"].concat(backgroundAvailable ? ["background_when_idle"] : [])
+    readonly property string selfIdentity: {var row=contacts.find(function(c){return c.is_self===true});return row ? row.conversation_id : ""}
+    readonly property bool fullReady: level!==2 || (bindingReady && !!selfIdentity)
     property var filtered: contacts.filter(function(c){var q=search.text.trim().toLowerCase();return (!q || (c.display_name+" "+c.conversation_id).toLowerCase().indexOf(q)>=0) && (filter.currentIndex===0 || filter.currentIndex===1 && authorizedIds.indexOf(c.conversation_id)>=0 || filter.currentIndex===2 && selectedIds.indexOf(c.conversation_id)>=0)})
-    signal applyRequested(var targets,int minutes,int replies,int level,bool overwrite)
+    signal applyRequested(var targets,int minutes,int replies,int level,bool overwrite,string policy,int idle)
     signal stopped()
+    signal bindingRequested()
     header: null; modal: true; title: "管理微信访问"; width: Math.min(720,parent.width-60); height: Math.min(690,parent.height-60); padding: 24
-    background: GlassPanel { radius: 24 }
-    onOpened: {pageIndex=0;search.clear()}
+    background: GlassPanel { radius: 24; tint: Theme.dark ? "#FA2B332E" : "#FCFFFFFF" }
+    Overlay.modal: Item {
+        MultiEffect { anchors.fill: parent; source: Theme.glassSource; blurEnabled: true; blur: 1; blurMax: 32; autoPaddingEnabled: false }
+        Rectangle { anchors.fill: parent; color: Theme.dark ? "#6B000000" : "#3D20352A" }
+    }
+    onOpened: {pageIndex=0;search.clear();if(level===2 && selfIdentity && !allContacts && selectedIds.indexOf(selfIdentity)<0)selectedIds=selectedIds.concat([selfIdentity])}
     component Check: CheckBox {
         id: check; implicitHeight: 34; spacing: 10
         indicator: Rectangle { x: check.leftPadding; y: (check.height-height)/2; width: 20; height: 20; radius: 6; color: check.checked ? Theme.brand : Theme.surface; border.color: check.activeFocus ? Theme.positive : check.checked ? Theme.brand : Theme.border; border.width: check.activeFocus ? 2 : 1
@@ -29,6 +41,7 @@ Dialog {
     }
     component Choice: GlassCombo { menuWidth: 180 }
     function toggleRecipient(identity){
+        if(level===2 && identity===selfIdentity)return
         if(allContacts){selectedIds=contacts.filter(function(c){return c.conversation_id!==identity}).map(function(c){return c.conversation_id});allContacts=false;return}
         var next=selectedIds.slice();var at=next.indexOf(identity);if(at>=0)next.splice(at,1);else next.push(identity);selectedIds=next
     }
@@ -41,9 +54,22 @@ Dialog {
             Choice { id: count; model: ["20 次", "100 次", "不限次数"]; currentIndex: dialog.replies===0 ? 2 : dialog.replies===100 ? 1 : 0; onActivated: dialog.replies=[20,100,0][currentIndex]; Accessible.name: "回复次数" }
         }
         Text { Layout.fillWidth: true; text: dialog.level===0 ? "仅读取所选会话并生成草稿，不授予自动或 MCP 发送权限。" : "新消息可交给 Codex 分析并回复。发送时微信会置前，已有输入会受到保护。"; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 12 }
+        RowLayout { visible: dialog.level>0; Layout.fillWidth: true
+            Text { text: "发送时机"; font.pixelSize: 13; color: Theme.ink }
+            Item { Layout.fillWidth: true }
+            Choice { objectName: "sendPolicySelector"; model: ["空闲 15 秒后发送", "仅微信在前台且空闲时", "立即切换微信发送"].concat(dialog.backgroundAvailable ? ["后台发送 · 空闲时"] : []); menuWidth: 240; currentIndex: Math.max(0,dialog.policies.indexOf(dialog.sendPolicy)); onActivated: function(index){dialog.sendPolicy=dialog.policies[index]} }
+        }
+        Text { objectName: "sendPolicyExplanation"; visible: dialog.level>0; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 12
+            text: (dialog.sendPolicy==="foreground_only" ? "等待你正常切回微信并空闲，不主动切换应用。" : dialog.sendPolicy==="when_idle" ? "电脑空闲后开始发送，届时微信仍会置前。" : dialog.sendPolicy==="background_when_idle" ? "仅使用本机已通过验证的后台路径。" : "立即置前微信，发送期间会占用输入焦点。") + (dialog.backgroundAvailable ? "" : " 当前不支持可靠的无前台发送；仅使用剪贴板不能保证微信后台接收输入。") + "剪贴板仅临时使用，未被你改动时才恢复。" }
+        Rectangle { visible: dialog.level===2; Layout.fillWidth: true; implicitHeight: fullDetails.implicitHeight+20; radius: 12; color: dialog.fullReady ? Theme.tint : Theme.riskTint
+            ColumnLayout { id: fullDetails; anchors.fill: parent; anchors.margins: 10; spacing: 6
+                Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.ink; font.pixelSize: 12; text: !dialog.selfIdentity ? "尚未识别本人私聊，请刷新本地连接。" : !dialog.bindingReady ? "先绑定一个 Codex 对话，才能开启本人任务。当前访问保持不变。" : "本人私聊已纳入范围，用于 /agent 任务；其他联系人仍只可自动回复。" }
+                GlassButton { visible: !dialog.bindingReady; text: "选择 Codex 对话"; onClicked: {dialog.close();dialog.bindingRequested()} }
+            }
+        }
         Check { text: "全部已核验私聊"; checked: dialog.allContacts; onToggled: dialog.allContacts=checked }
         RowLayout { Layout.fillWidth: true
-            TextField { id: search; objectName: "accessSearch"; Layout.fillWidth: true; placeholderText: "搜索联系人名称或微信 ID"; selectByMouse: true; onTextChanged: dialog.pageIndex=0; Accessible.name: placeholderText
+            TextField { id: search; objectName: "accessSearch"; Layout.fillWidth: true; implicitHeight: 34; leftPadding: 12; rightPadding: 12; color: Theme.ink; placeholderTextColor: Theme.muted; font.pixelSize: 13; placeholderText: "搜索联系人名称或微信 ID"; selectByMouse: true; onTextChanged: dialog.pageIndex=0; Accessible.name: placeholderText
                 background: Rectangle { radius: 10; color: Theme.canvas; border.color: Theme.border }
             }
             Choice { id: filter; model: ["全部联系人", "已授权", "本次已选"]; onActivated: dialog.pageIndex=0 }
@@ -66,7 +92,7 @@ Dialog {
         }
         RowLayout { Layout.fillWidth: true
             Text { text: dialog.filtered.length+" 位 · 已选 "+(dialog.allContacts ? dialog.contacts.length : dialog.selectedIds.length)+" 位"; color: Theme.muted; font.pixelSize: 12 }
-            GlassButton { text: "清空选择"; onClicked: {dialog.allContacts=false;dialog.selectedIds=[]} }
+            GlassButton { text: "清空选择"; onClicked: {dialog.allContacts=false;dialog.selectedIds=dialog.level===2 && dialog.selfIdentity ? [dialog.selfIdentity] : []} }
             Item { Layout.fillWidth: true }
             GlassButton { text: "上一页"; enabled: dialog.pageIndex>0; onClicked: {dialog.pageIndex--;list.positionViewAtBeginning()} }
             Text { text: (dialog.pageIndex+1)+" / "+Math.max(1,Math.ceil(dialog.filtered.length/30)); color: Theme.muted }
@@ -78,7 +104,7 @@ Dialog {
             GlassButton { visible: dialog.activeScope; text: "停止并撤权"; onClicked: {dialog.close();dialog.stopped()} }
             Item { Layout.fillWidth: true }
             GlassButton { text: "取消"; onClicked: dialog.close() }
-            GlassButton { objectName: "applyScope"; primary: true; text: "核对并认证"; enabled: dialog.allContacts || dialog.selectedIds.length>=1; onClicked: {dialog.close();dialog.applyRequested(dialog.allContacts ? ["*"] : dialog.selectedIds,dialog.minutes,dialog.replies,dialog.level,dialog.level>0 && dialog.overwriteDrafts)} }
+            GlassButton { objectName: "applyScope"; primary: true; text: "核对并认证"; enabled: dialog.fullReady && (dialog.allContacts || dialog.selectedIds.length>=1); onClicked: {dialog.close();dialog.applyRequested(dialog.allContacts ? ["*"] : dialog.selectedIds,dialog.minutes,dialog.replies,dialog.level,dialog.level>0 && dialog.overwriteDrafts,dialog.sendPolicy,15)} }
         }
     }
 }

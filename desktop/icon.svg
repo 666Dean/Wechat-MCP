@@ -1,1 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect x="2" y="2" width="60" height="60" rx="18" fill="#244e43"/><path d="M16 20h32v23H32l-9 7v-7h-7z" fill="#e8f3ec"/><circle cx="25" cy="31" r="3" fill="#244e43"/><circle cx="39" cy="31" r="3" fill="#244e43"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0.7" y2="1"><stop stop-color="#FBFDFC"/><stop offset="1" stop-color="#E5EEE9"/></linearGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#347562"/><stop offset="1" stop-color="#184D40"/></linearGradient>
+  </defs>
+  <rect x="48" y="56" width="928" height="928" rx="216" fill="#D7E2DC"/>
+  <rect x="48" y="40" width="928" height="928" rx="216" fill="url(#tile)" stroke="#FFFFFF" stroke-width="8"/>
+  <path d="M334 272h356c51 0 92 41 92 92v238c0 51-41 92-92 92H462l-123 98v-98h-5c-51 0-92-41-92-92V364c0-51 41-92 92-92Z" fill="url(#ink)"/>
+  <path d="m504 382 28 72 72 28-72 28-28 72-28-72-72-28 72-28Z" fill="#FFFFFF"/>
+  <circle cx="666" cy="382" r="20" fill="#C4DFD1"/>
+</svg>

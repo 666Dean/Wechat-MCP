@@ -35,6 +35,12 @@ Windows 当前处于[整个项目的代码完成阶段](docs/WINDOWS_CODE_COMPLE
 和“自动回复”：前者不会发送。macOS 自动回复组件固定在受保护安装包内，
 外部 Codex 更新不会直接替换它；更换组件仍走本机签名更新。
 
+首次打开提供本机设置向导，完成前核对七项真实连接条件；也可从设置重新检查。
+完全访问会明确纳入本人任务必需的自身私聊，并检查 Codex 绑定。发送可选择空闲后
+执行，或仅在微信本已位于前台且空闲时执行，减少抢占其他应用；**原号无前台发送
+当前未通过设备验收，不作为可用功能提供**。新增矢量产品图标及原生启动器图标。
+[设置步骤、发送时机和后台能力边界](docs/DESKTOP_SETUP_AND_SEND_TIMING.md)。
+
 ![Qt Desktop light theme — synthetic preview](docs/assets/desktop-light.png)
 
 [深色主题设计预览](docs/assets/desktop-dark.png) · [设置页预览](docs/assets/desktop-settings.png) · 图中仅为合成界面，无真实微信数据。

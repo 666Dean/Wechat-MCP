@@ -96,7 +96,7 @@ class WeChatService:
         self.jobs=self.state.get('jobs',{})
         # Never resume or retry work interrupted by a crash/restart.
         for job in self.jobs.values():
-            if job['state'] in ('Queued','Executing','Verifying','AwaitingAgent','HandedOff'):
+            if job['state'] in ('Queued','WaitingForIdle','Executing','Verifying','AwaitingAgent','HandedOff'):
                 job.update(state='Unknown',retry=False,delivery_confirmed=False)
         self.state.set('jobs',self.jobs)
         self.thread=threading.Thread(target=self.loop,name='wechat-owner-dispatch',daemon=True)
@@ -122,7 +122,7 @@ class WeChatService:
             self.kernel.integrity.persist()
         with self.job_lock:
             for key,job in list(self.jobs.items()):
-                if job['state'] in ('Queued','AwaitingAgent','HandedOff'):self.save_job(key,{**job,'state':'Unknown' if job['state']=='HandedOff' else 'FailedSafe','retry':False})
+                if job['state'] in ('Queued','WaitingForIdle','AwaitingAgent','HandedOff'):self.save_job(key,{**job,'state':'Unknown' if job['state']=='HandedOff' else 'FailedSafe','retry':False})
         self.retire_bridge();self.bursts.clear()
         self.worker_event.set()
         return {'stopped':True,'revoked':True,'retry':False}
@@ -135,12 +135,15 @@ class WeChatService:
         if arguments.get('disclose',True):
             provider=self.provider_readiness()
             if not provider['ready']:raise AXRError(provider['code'])
-        if type(arguments) is not dict or set(arguments)-{'targets','reply_targets','seconds','max_replies','automatic','disclose','style','attribution','overwrite_drafts','self_agent'}:raise AXRError('wechat_owner_scope_invalid')
+        if type(arguments) is not dict or set(arguments)-{'targets','reply_targets','seconds','max_replies','automatic','disclose','style','attribution','overwrite_drafts','self_agent','send_policy','idle_seconds'}:raise AXRError('wechat_owner_scope_invalid')
+        policy=arguments.get('send_policy','immediate');idle=arguments.get('idle_seconds',15)
+        if policy not in ('immediate','when_idle','foreground_only','background_when_idle') or type(idle) is not int or not 5<=idle<=300:raise AXRError('wechat_owner_scope_invalid')
         targets=arguments.get('targets',[])
         if targets=='all':targets=list(self.resources)
         if type(targets) is not list or not targets or len(set(targets))!=len(targets) or set(targets)-set(self.resources):raise AXRError('wechat_owner_scope_invalid')
         seconds=arguments.get('seconds',3600);count=arguments.get('max_replies',4)
         if type(seconds) is not int or not 0<=seconds<=86400 or type(count) is not int or not 0<=count<=100000:raise AXRError('wechat_owner_scope_invalid')
+        if policy=='background_when_idle' and not self.background_qualified() and not (0<seconds<=600 and 0<count<=2):raise AXRError('wechat_background_trial_requires_bounded_scope')
         for key in ('automatic','disclose','attribution','overwrite_drafts','self_agent'):
             if key in arguments and type(arguments[key]) is not bool:raise AXRError('wechat_owner_scope_invalid')
         settings=self.state.get('assistant',{'persona':'','style':'简洁、自然、直接；不编造事实。','attribution':False,'thread_id':'','thread_title':''})
@@ -160,13 +163,14 @@ class WeChatService:
         scope={'targets':targets,'reply_targets':reply_targets,'expires':time.time()+seconds if seconds else 0,'max_replies':count,
                'automatic':arguments.get('automatic',False),'disclose':arguments.get('disclose',True),
                'style':style,'attribution':arguments.get('attribution',settings['attribution']),
-               'overwrite_drafts':arguments.get('overwrite_drafts',False),'self_agent':self_agent,'owner_thread':owner_thread}
+               'overwrite_drafts':arguments.get('overwrite_drafts',False),'self_agent':self_agent,'owner_thread':owner_thread,
+               'send_policy':policy,'idle_seconds':idle}
         challenge={'version':2,'kind':'wechat-standing-scope','root_id':self.kernel.root_id,'epoch':self.kernel.epoch,
                    'owner':peer.principal,'peer':peer.witness,'nonce':secrets.token_hex(32),'expires':time.time()+120,
                    'scope':scope,'policy_version':self.kernel.security.guard.version,
                'operations':list(OPERATIONS),'model_destinations':[CodexSourceProvider.destination,'model:codex-mcp',*([OWNER_DESTINATION] if self_agent else [])],
                    'send_destinations':['wechat:'+self.resources[i].key for i in reply_targets],
-                   'execution':'foreground original-app keyboard; once; Unknown never retries',
+                   'execution':policy+' original-app keyboard; once; Unknown never retries',
                    'restart_restores_authority':False}
         with self.scope_lock:
             self.reviews={k:v for k,v in self.reviews.items() if v['expires']>time.time()}
@@ -418,7 +422,7 @@ class WeChatService:
     def binding(self):
         self.check()
         return self.inspect_binding()
-    def inspect_binding(self):
+    def inspect_binding(self,*,activity=False):
         helper=self.config['navigation_helper']
         p=subprocess.run([helper],input=canonical({'mode':'binding'}),capture_output=True,timeout=6)
         import json
@@ -429,13 +433,35 @@ class WeChatService:
         opened={line[1:] for line in result.stdout.splitlines() if line.startswith('n')}
         expected={s['path'] for s in self.config['shards'] if s['role'] in ('session','contact')}
         if len(expected)!=2 or not expected<=opened:raise AXRError('runtime_account_witness_changed')
-        return binding
-    def navigate(self,identity):
+        return {**binding,'application_active':reply.get('application_active') is True} if activity else binding
+    def send_wait_reason(self):
+        self.check()
+        from .send_schedule import idle_seconds,readiness
+        policy=self.scope.get('send_policy','immediate')
+        if policy=='immediate':return None
+        idle=idle_seconds()
+        foreground=False
+        if policy=='foreground_only' and idle is not None and idle>=self.scope.get('idle_seconds',15):
+            try:foreground=self.inspect_binding(activity=True).get('application_active') is True
+            except Exception:return 'wechat_unavailable'
+        if policy=='background_when_idle' and idle is not None and idle>=self.scope.get('idle_seconds',15):
+            try:
+                if self.inspect_binding(activity=True).get('application_active') is True:return 'wechat_foreground'
+            except Exception:return 'wechat_unavailable'
+        return readiness(policy,self.scope.get('idle_seconds',15),idle=idle,foreground=foreground)
+    def background_qualified(self):
+        record=self.state.get('background-route',{})
+        return bool(record and record.get('helper_sha256')==hashlib.sha256(Path(self.config['navigation_helper']).read_bytes()).hexdigest())
+    def navigate(self,identity,*,idle_admitted=False):
         started=time.time();binding=self.binding();text=self.catalog[identity]['display_name']
+        binding={**binding,'activation_policy':self.scope.get('send_policy','immediate'),'idle_seconds':self.scope.get('idle_seconds',15)}
         # One exact navigation transaction. The native helper validates its
         # five-second permit locally between keys, avoiding per-key RPC stalls.
         for phase in ('complete',):
-            action=self.action(identity,'application.navigate',{'mode':'navigate','text':text,'visual_binding':binding,
+            # Admission belongs to the whole send transaction. Its own keys
+            # reset macOS idle time; continuation still requires the exact
+            # active window, pointer epoch, scope and fresh recipient witness.
+            action=self.action(identity,'application.navigate',{'mode':'navigate','text':text,'visual_binding':{**binding,'idle_gate':'continuation' if idle_admitted else 'initial'},
                 'navigation_binding':{'menu_path':['编辑','搜索'],'main_window_id':binding['window_id'],'query':text,'phase':phase}})
             result=self.navigation.invoke(action,check=self.check)
             if result['receipt']['state']!='Completed':
@@ -477,9 +503,9 @@ class WeChatService:
                 code=(staged.get('native') or {}).get('error','exact_input_required')
                 if not isinstance(code,str) or not re.fullmatch('[a-z][a-z0-9_]{0,63}',code):code='unconfirmed'
                 raise AXRError('wechat_draft_'+code)
-            self.navigate(parking)
+            self.navigate(parking,idle_admitted=True)
             cache=self.nav_state(identity,'unique_draft',text=text);observed=time.time();observed_mono=time.monotonic()
-            binding,started,search=self.navigate(identity)
+            binding,started,search=self.navigate(identity,idle_admitted=True)
             draft=self.nav_state(identity,'draft')
             if (binding!=window or time.monotonic()-observed_mono>60 or not observed<=started or
                 len(draft)!=1 or draft[0]['draft'] not in ('',text)):raise AXRError('wechat_cached_recipient_witness_changed')
@@ -496,6 +522,11 @@ class WeChatService:
                 matches=[r for r in page['messages'] if r['reference'] not in prior and r['outgoing'] is True and r['text']==text and type(r.get('server_id')) is int and r['server_id']>0]
                 if matches:break
                 self.stop_event.wait(.5)
+            native_result=result.get('native') or {}
+            if (self.scope.get('send_policy')=='background_when_idle' and len(matches)==1
+                and native_result.get('send_invoked') is True and native_result.get('started_background') is True
+                and native_result.get('foreground_unchanged') is True):
+                self.state.set('background-route',{'helper_sha256':hashlib.sha256(Path(self.config['navigation_helper']).read_bytes()).hexdigest(),'verified':time.time()})
             return {**result,'exact_database_records':len(matches),'database_record_observed':len(matches)==1,
                 'retry':False,'delivery_confirmed':False}
     def parking_target(self,identity):
@@ -567,7 +598,8 @@ class WeChatService:
             'listener':{'listen':active,'wake_agent':active,'auto_execute':active and self.scope['automatic']},
             'platform':{'mode':'wcdb-native','send_available':active and bool(self.scope['reply_targets']) and permissions['database'] and permissions['accessibility']},'audit_valid':self.kernel.store.journal.verify_audit(),
             'policy_version':self.kernel.store.guard.version,'reply_count':self.reply_count,'retry_unknown':False,
-            'delivery_confirmed':False,'body_disclosed':False,'pause_reason':self.last_error,'inference':self.provider_readiness()}
+            'delivery_confirmed':False,'body_disclosed':False,'pause_reason':self.last_error,'inference':self.provider_readiness(),
+            'background_send_qualified':self.background_qualified()}
     def provider_readiness(self):
         if self.kernel.development_fixture:return {'ready':True,'code':None}
         try:
@@ -652,7 +684,7 @@ class WeChatService:
         if method=='wechat_status':
             value=self.status();scope=value.get('scope')
             if scope:
-                value['scope']={k:scope[k] for k in ('expires','max_replies','automatic','disclose','attribution','overwrite_drafts','self_agent') if k in scope}
+                value['scope']={k:scope[k] for k in ('expires','max_replies','automatic','disclose','attribution','overwrite_drafts','self_agent','send_policy','idle_seconds') if k in scope}
                 value['scope'].update(target_count=len(scope['targets']),reply_target_count=len(scope['reply_targets']))
             return value
         if method=='wechat_job_status':
@@ -680,7 +712,14 @@ class WeChatService:
                 self.context.generation=self.generation
                 self.check()
                 for key,job in list(self.jobs.items()):
-                    if job['state']!='Queued':continue
+                    if job['state'] not in ('Queued','WaitingForIdle'):continue
+                    if job['expires']<=time.time():
+                        self.save_job(key,{**job,'state':'FailedSafe','error':'wechat_queued_reply_expired','retry':False});continue
+                    waiting=self.send_wait_reason()
+                    if waiting:
+                        if job['state']!='WaitingForIdle' or job.get('wait_reason')!=waiting:
+                            self.save_job(key,{**job,'state':'WaitingForIdle','wait_reason':waiting})
+                        continue
                     self.check();self.save_job(key,{**job,'state':'Executing'})
                     try:
                         sources=(Provenance(self.resources[job['conversation_id']],job['source'],'personal'),) if job.get('source') else ()
@@ -700,7 +739,9 @@ class WeChatService:
                             rows.append({**row,'outgoing':False,'text':row['text'][7:]})
                         else:rows.append(row)
                     self.bursts.add(identity,rows,page['has_more'])
-                for identity,context,incoming in self.bursts.ready():
+                waiting=[j for j in self.jobs.values() if j['state'] in ('Queued','WaitingForIdle')]
+                slots=max(0,self.scope['max_replies']-self.reply_count-len(waiting)) if self.scope['max_replies'] else None
+                for identity,context,incoming in self.bursts.ready(limit=slots,blocked={j['conversation_id'] for j in waiting}):
                     self.check()
                     key='inbound-'+digest([identity,[r['reference'] for r in incoming]])
                     if key in self.jobs:continue
@@ -713,8 +754,9 @@ class WeChatService:
                         if text:
                             value={**job,'text':text,'state':'Draft'}
                             if self.scope['automatic']:
-                                result=self.send(identity,text,sources=(Provenance(self.resources[identity],digest(context),'personal'),));value.update(state='Observed' if result['database_record_observed'] else 'Unknown',result=result);self.reply_count+=1
+                                value.update(state='Queued',operation='messages.send',source=digest(context))
                             self.save_job(key,value)
+                            self.worker_event.set()
                     except Exception as exc:self.save_job(key,{**job,'state':'Unknown','error':str(exc) if isinstance(exc,AXRError) else 'wechat_source_failed'})
                 if self.bursts.pending:self.poll_delay=1
             except AXRError as exc:

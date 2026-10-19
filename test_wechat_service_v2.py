@@ -113,6 +113,30 @@ class ServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(AXRError,'send_target_not_authorized'):
             self.call('wechat_send_message',conversation_id='fixture-peer',text='must not send',request_id='blocked')
         self.assertEqual(self.call('wechat_prepare_reply',conversation_id='fixture-peer',text='manual only')['state'],'Draft')
+    def test_activity_wait_never_submits_and_stop_cancels_pending(self):
+        self.activate(send_policy='when_idle')
+        job=self.call('wechat_send_message',conversation_id='fixture-peer',text='Synthetic queued reply',request_id='idle-test')
+        with patch.object(self.service,'send_wait_reason',return_value='user_active'),patch.object(self.service,'scan_targets',return_value=[]),patch.object(self.service,'send') as send,patch.object(self.service.worker_event,'wait',side_effect=lambda *_:self.service.stop_event.set()):
+            self.service.loop()
+        self.assertEqual(self.service.jobs[job['job_id']]['state'],'WaitingForIdle');send.assert_not_called()
+        self.assertEqual(self.service.reply_count,0)
+        self.service.stop();self.assertEqual(self.service.jobs[job['job_id']]['state'],'FailedSafe')
+    def test_background_trial_is_bounded_until_actual_observed_witness(self):
+        self.assertFalse(self.service.background_qualified())
+        with self.assertRaisesRegex(AXRError,'background_trial_requires_bounded_scope'):
+            self.activate(send_policy='background_when_idle',seconds=0,max_replies=0)
+        self.activate(send_policy='background_when_idle',seconds=600,max_replies=2)
+        self.assertEqual(self.service.scope['send_policy'],'background_when_idle')
+    def test_idle_release_submits_once_and_unknown_is_never_requeued(self):
+        self.activate(send_policy='foreground_only')
+        job=self.call('wechat_send_message',conversation_id='fixture-peer',text='Synthetic once',request_id='foreground-test')
+        self.service.jobs[job['job_id']]['state']='WaitingForIdle'
+        with patch.object(self.service,'send_wait_reason',return_value=None),patch.object(self.service,'scan_targets',return_value=[]),patch.object(self.service,'send',return_value={'database_record_observed':False}) as send,patch.object(self.service.worker_event,'wait',side_effect=lambda *_:self.service.stop_event.set()):
+            self.service.loop()
+        self.assertEqual(send.call_count,1);self.assertEqual(self.service.jobs[job['job_id']]['state'],'Unknown')
+        self.service.stop_event.clear()
+        with self.assertRaisesRegex(AXRError,'uncertain_text_never_retry'):
+            self.call('wechat_send_message',conversation_id='fixture-peer',text='Synthetic once',request_id='new-id')
     def test_discovery_has_no_authority_and_read_requires_owner(self):
         self.assertFalse(self.call('wechat_status')['owner_authorized'])
         with self.assertRaisesRegex(AXRError,'scope_stopped'):self.call('wechat_read_messages',conversation_id='fixture-peer')
@@ -183,6 +207,28 @@ class ServiceTests(unittest.TestCase):
              patch.object(self.service.navigation,'invoke',return_value={'receipt':{'state':'Unknown'},'native':{'error':'existing_input_preserved'}}) as ui:
             with self.assertRaisesRegex(AXRError,'existing_draft_preserved'):self.service.send('fixture-peer','new text')
         navigate.assert_called_once();self.assertEqual(ui.call_args.args[0].payload['visual_binding']['draft_policy'],'preserve')
+    def test_idle_admission_survives_own_keys_but_keeps_all_three_recipient_checks(self):
+        self.activate(send_policy='when_idle');actions=[];sent=False
+        def invoke(action,check):
+            nonlocal sent
+            check();actions.append(action)
+            if action.payload['mode']=='send':sent=True
+            return {'receipt':{'state':'Completed'},'native':{'navigation_invoked':True,
+                'query_input_submitted':True,'main_window_verified':True,'draft_match':True,
+                'send_invoked':action.payload['mode']=='send'}}
+        def nav(identity,mode,**kwargs):
+            if mode=='recent':return [{'username':identity,'query':kwargs['query'],'last_click_time':time.time()}]
+            return [{'draft':''}]
+        def read(*args,**kwargs):
+            return {'messages':[{'reference':'new-synthetic','outgoing':True,'text':'synthetic reply','server_id':1}] if sent else [],'has_more':False,'cursor':{}}
+        with patch.object(self.service,'binding',return_value={'window_id':1}),patch.object(self.service,'nav_state',side_effect=nav), \
+             patch.object(self.service,'read',side_effect=read),patch.object(self.service.navigation,'invoke',side_effect=invoke):
+            result=self.service.send('fixture-peer','synthetic reply')
+        self.assertTrue(result['database_record_observed'])
+        navigations=[a for a in actions if a.operation=='application.navigate']
+        self.assertEqual([a.resource.conversation_id for a in navigations],['fixture-peer','fixture-owner','fixture-peer'])
+        self.assertEqual([a.payload['visual_binding']['idle_gate'] for a in navigations],['initial','continuation','continuation'])
+        self.assertEqual(len([a for a in actions if a.operation=='messages.send']),1)
     def test_force_overwrite_is_owner_signed_and_cannot_be_truthy_text(self):
         with self.assertRaisesRegex(AXRError,'scope_invalid'):self.service.review(self.owner,{'targets':'all','overwrite_drafts':'yes'})
         value=self.activate(overwrite_drafts=True)

@@ -6,6 +6,11 @@ from axr_applications.wechat_database import actor_records
 def row(n,outgoing=False):return {'reference':str(n),'text':'Synthetic '+str(n),'outgoing':outgoing,'created':100+n,'local_id':n}
 
 class BurstTests(unittest.TestCase):
+    def test_waiting_sources_and_reserved_budget_do_not_consume_unhandled_messages(self):
+        b=BurstBuffer();b.add('peer',[row(1)],False,0);b.add('other',[row(2)],False,0)
+        self.assertEqual(b.ready(5,limit=0),[]);self.assertEqual(len(b.pending),2)
+        batch=b.ready(5,limit=1,blocked={'peer'});self.assertEqual(batch[0][0],'other')
+        self.assertIn('peer',b.pending);self.assertEqual(b.ready(6)[0][0],'peer')
     def test_waits_for_quiet_then_one_combined_reply_with_source_local_context(self):
         b=BurstBuffer();b.add('peer',[row(1,True)],False,0);b.add('other',[row(9)],False,0)
         b.add('peer',[row(2)],False,1);self.assertEqual(b.ready(2),[])

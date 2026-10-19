@@ -18,7 +18,9 @@ def build(output,python,root,state,helper=None,platform=sys.platform):
         metadata={'CFBundleName':'WeChat MCP Desktop','CFBundleDisplayName':'WeChat MCP Desktop',
             'CFBundleIdentifier':'studio.stellaria.wechat-mcp-desktop','CFBundleVersion':'0.7.0',
             'CFBundleShortVersionString':'0.7.0','CFBundlePackageType':'APPL','CFBundleExecutable':'WeChatMCP',
-            'NSHighResolutionCapable':True}
+            'NSHighResolutionCapable':True,'CFBundleIconFile':'AppIcon.icns'}
+        from desktop.app_icon import mac_icon
+        mac_icon(Path(root)/'desktop/icon.svg',contents/'Resources/AppIcon.icns')
         (contents/'Info.plist').write_bytes(plistlib.dumps(metadata))
         launcher=contents/'MacOS/WeChatMCP'
         launcher.write_text('#!/bin/sh\ncd '+shlex.quote(str(Path(root).resolve()))+' || exit 1\nexec '+shlex.join(args)+'\n')
