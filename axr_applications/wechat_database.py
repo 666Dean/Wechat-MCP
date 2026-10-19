@@ -49,8 +49,17 @@ class NativeDatabase:
 
     def use(self, identity, request, check):
         resource = Resource('wechat', self.account, identity)
-        result = native.CredentialConsumer.use(self.consumer, canonical(asdict(resource)).decode(),
-                    'database.query', canonical(request).decode(), check)
+        try:
+            result = native.CredentialConsumer.use(self.consumer, canonical(asdict(resource)).decode(),
+                        'database.query', canonical(request).decode(), check)
+        except AXRError:raise
+        except RuntimeError as exc:
+            # The pinned consumer emits fixed machine codes. Preserve those
+            # decisions without copying arbitrary exception text or live data.
+            import re
+            code=str(exc)
+            if re.fullmatch(r'wcdb_[a-z0-9_]{1,80}',code):raise AXRError(code) from None
+            raise AXRError('wechat_native_database_failed') from None
         value = json.loads(result)
         for shard in value:
             for row in shard['rows']:
@@ -86,7 +95,9 @@ class NativeDatabase:
                 'complete_history':False,'delivery_confirmed':False}
 
     def navigation(self, identity, kind, check, **parameters):
-        if kind not in ('draft','unique_draft','recent','session_schema'):
+        if kind=='message_state':
+            return self.use(identity, {'kind':kind,**parameters}, check)
+        if kind not in ('draft','unique_draft','recent','session_schema','session_state'):
             raise AXRError('wechat_native_navigation_operation')
         batches=self.use(identity, {'kind':kind,**parameters}, check)
         if len(batches)!=1:raise AXRError('wechat_native_navigation_shard_required')

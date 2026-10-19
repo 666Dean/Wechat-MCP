@@ -63,12 +63,15 @@ revoke every independent owner session. Use Revoke all to stop authority.
 
 ## macOS Developer Preview DMG
 
-The public `WeChat MCP Developer Preview / v0.1.0-dp1` bundle includes its own
+The public `WeChat MCP Developer Preview / v0.1.0-dp2` bundle includes its own
 Python/Qt runtime. This first artifact targets **macOS 27.0+ / arm64** only and is
 ad-hoc signed, not notarized. It contains no account-specific Authority deployment,
-credentials, owner grants, chat data or vendor Codex application. Real WeChat use
-still requires a separately prepared owner deployment; see the
-[release notes](releases/0.1.0-dp1.zh-CN.md) for setup and qualification limits.
+credentials, owner grants, chat data or vendor Codex application. It includes
+generic signed Authority/Owner/MCP components; the first-run wizard prepares the
+local account deployment, installs it with administrator approval, initializes
+with hardware confirmation, and registers the native Codex MCP configuration.
+The user must supply legally held data credentials and install/login to Codex;
+see the [release notes](releases/0.1.0-dp2.zh-CN.md) for prerequisites and limits.
 
 Build in a clean Python 3.14 environment using `requirements.release.txt`.
 Install `./AXR` explicitly with `cmake.define.AXR_SECURITY_RELEASE=ON` and compiler
@@ -78,7 +81,8 @@ native extension and the exact upstream QtForPython/Python notices:
 ```sh
 python -m scripts.package_desktop_preview --output /private/build/new-preview \
   --native /private/build/runtime/axr/_axr_native.cpython-314-darwin.so \
-  --notices /private/build/upstream-notices
+  --notices /private/build/upstream-notices \
+  --authority-payload /private/build/public-authority.tar.gz
 ```
 
 The script requires a clean tracked commit, verifies native signatures and

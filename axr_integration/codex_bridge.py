@@ -11,6 +11,9 @@ def codex_binary():
     # known installed runtime; never launch a login shell or modify Codex data.
     if sys.platform=='darwin':
         for path in (Path('/Library/Application Support/Stellaria AXR/AXR Authority.app/Contents/Resources/CodexCLI.app/Contents/MacOS/codex'),
+                     Path('/Library/Application Support/Stellaria AXR/Codex Provider/codex'),
+                     Path('/Applications/Codex.app/Contents/Resources/codex'),
+                     Path('/opt/homebrew/bin/codex'),Path('/usr/local/bin/codex'),
                      Path('/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex')):
             if path.is_file():return str(path)
     raise AXRError('codex_cli_required')

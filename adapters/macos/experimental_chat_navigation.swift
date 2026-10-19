@@ -9,6 +9,7 @@ import CryptoKit
 
 struct Stop: Error { let code: String; init(_ code: String) { self.code=code } }
 var staged=false, submitted=false, navigated=false
+var submitMethod="none"
 var shell:[String:Any]=[:]
 var authorityContext:[String:String]?=nil
 var authorityMode=""
@@ -168,7 +169,9 @@ func run() throws -> [String:Any] {
    shell=["focused_is_dialog":subrole=="AXDialog","focused_title_empty":label(current).isEmpty,"ax_window_count":windows().count]
    guard subrole=="AXDialog",label(current).isEmpty else{throw Stop("search_dialog_unconfirmed")}
   } else {
-   guard label(current)==title,rows.first?[kCGWindowNumber as String] as? Int==windowID else{throw Stop("main_window_not_foreground")}
+   // CGWindowList can put a tooltip/auxiliary window first. The AX key-window
+   // identity and the pinned CG window/geometry above are the actual witness.
+   guard label(current)==title,CFEqual(current,target) else{throw Stop("main_window_not_foreground")}
   }
  }
  func key(_ code:CGKeyCode,_ flags:CGEventFlags=[],dialog:Bool=false) throws {
@@ -327,15 +330,15 @@ func run() throws -> [String:Any] {
  if mode=="send" && exact {
   guard try echo() else{throw Stop("draft_changed_before_commit")}
   try verify();guard pb.changeCount==owned else{throw Stop("clipboard_changed_before_commit")}
-  try authority(true)
-  // Stop/revocation is checked again at the server, then re-compare the exact
-  // foreground input locally AFTER the claim before the only Return.
-  try authority(false,true)
+  // Keep the previously qualified foreground Return path. Do not add another
+  // discovery/submit route to a send transaction or retry an uncertain action.
+  try authority(true);try authority(false,true)
   guard try echo() else{throw Stop("draft_changed_after_commit_claim")}
-  submitted=true;try key(36)
+  try verify();try proof()
+  submitted=true;submitMethod="keyboard_return";try key(36)
  }
  return ["draft_match":exact,"stage_invoked":staged,"send_invoked":submitted,"delivery_confirmed":false,"content_disclosed":false,
-         "started_background":backgroundMode,"foreground_unchanged":NSWorkspace.shared.frontmostApplication?.processIdentifier==previousForeground]
+         "submit_method":submitMethod,"started_background":backgroundMode,"foreground_unchanged":NSWorkspace.shared.frontmostApplication?.processIdentifier==previousForeground]
 }
 // A separate ready frame lets the installed authority enroll the actual helper
 // birth instance BEFORE preparing the sealed final-action proof. No input yet.

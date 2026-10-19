@@ -14,7 +14,8 @@ def main(runtime_root):
 
 def initialize(runtime_root):
     if not getattr(native,'security_release',False):raise AXRError('authority_formal_build_required')
-    root=Path(runtime_root);path=root/'deployment.json'
+    from .deployment_configuration import path as configuration_path
+    root=Path(runtime_root);path=configuration_path(root)
     if path.is_symlink() or path.stat().st_size>32768:raise AXRError('authority_deployment_configuration_invalid')
     data=path.read_bytes();configuration=json.loads(data)
     if set(configuration)!={'version','application_module','deployment'} or configuration['version']!=2:raise AXRError('authority_deployment_configuration_invalid')

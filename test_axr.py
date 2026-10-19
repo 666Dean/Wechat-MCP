@@ -55,6 +55,24 @@ class Foundation(unittest.TestCase):
         with self.assertRaises(AXRError):self.guard.consume(self.action)
         self.now[0]+=121
         with self.assertRaises(AXRError):self.guard.revalidate(self.action,gid,version)
+    def test_exact_action_grant_is_not_shadowed_by_a_nearly_expired_broad_read(self):
+        self.guard._issue_owner(principal=self.action.principal,resource=self.resource,operations=['messages.read'],
+            purpose=self.action.purpose,expires_at=self.now[0]+1,max_uses=100)
+        exact=self.grant(intent=self.action.seal,max_uses=1)
+        selected,version=self.guard.consume(self.action)
+        self.assertEqual(selected,exact)
+        self.now[0]+=2
+        self.guard.revalidate(self.action,selected,version)
+        with self.assertRaises(AXRError):self.guard.consume(self.action)
+    def test_fresh_broad_source_is_preferred_but_old_proofs_are_never_rebound(self):
+        old=self.guard._issue_owner(principal=self.action.principal,resource=self.resource,operations=['messages.read'],
+            purpose=self.action.purpose,expires_at=self.now[0]+1,max_uses=100)
+        claimed,version=self.guard.consume(self.action);self.assertEqual(claimed,old)
+        fresh=self.grant()
+        self.assertEqual(self.guard.check(self.action),fresh)
+        self.now[0]+=2
+        with self.assertRaises(AXRError):self.guard.revalidate(self.action,old,version)
+        self.assertEqual(self.guard.check(self.action),fresh)
     def test_revocation_before_commit(self):
         gid=self.grant();used,v=self.guard.consume(self.action);self.guard.revoke_owner(gid)
         with self.assertRaises(AXRError):self.guard.revalidate(self.action,used,v)

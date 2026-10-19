@@ -53,7 +53,8 @@ def validate_arguments(name,args):
     return args
 
 def main(runtime_root):
-    configuration=json.loads((Path(runtime_root)/'deployment.json').read_bytes())
+    from axr.deployment_configuration import read
+    configuration=read(runtime_root)
     endpoint=configuration['deployment']['endpoint']
     # Initialization/discovery succeed while the independent authority is off.
     # Operational requests connect lazily and never recover another executor.

@@ -12,6 +12,7 @@ Dialog {
     property bool resumeAfterAssistant: false
     property string chosenThread: ""
     property var status: controller.data.status || ({})
+    property var environment: controller.setupEnvironment || ({})
     signal accessRequested(int level)
     signal assistantRequested(var preferences)
     modal: true; header: null; padding: 28; closePolicy: Popup.CloseOnEscape
@@ -21,7 +22,8 @@ Dialog {
         MultiEffect { anchors.fill: parent; source: Theme.glassSource; blurEnabled: true; blur: 1; blurMax: 32; autoPaddingEnabled: false }
         Rectangle { anchors.fill: parent; color: Theme.dark ? "#6B000000" : "#3D20352A" }
     }
-    onStepChanged: if(step===4)controller.verifySetup()
+    onOpened: controller.inspectSetupEnvironment()
+    onStepChanged: {if(step===4)controller.verifySetup();if(step===1 || step===2)controller.inspectSetupEnvironment()}
     component Copy: Text { color: Theme.ink; font.pixelSize: 14; textFormat: Text.PlainText; wrapMode: Text.WordWrap }
     component Detail: Copy { color: Theme.muted; font.pixelSize: 12 }
     component Card: Rectangle {
@@ -65,14 +67,14 @@ Dialog {
                     Card { Layout.fillWidth: true
                         FeatureRow { title: "指定会话与访问范围"; symbol: "shield" }
                         FeatureRow { title: "保留已有输入，不重发不确定消息"; symbol: "message" }
-                        FeatureRow { title: "电脑空闲后再发送，减少打扰"; symbol: "clock" }
+                        FeatureRow { title: "经授权后切换微信发送，结果持续核对"; symbol: "clock" }
                     }
                     Detail { Layout.fillWidth: true; text: "本向导不会自动读取聊天正文或发送测试消息。敏感操作仍需单独确认。" }
                 }
                 ColumnLayout { visible: setup.step===1; Layout.fillWidth: true; spacing: 12
                     Card { Layout.fillWidth: true
                         StateRow { title: "本地服务"; ready: setup.controller.data.connected===true }
-                        RowLayout { Layout.fillWidth: true
+                        RowLayout { visible: setup.environment.installed===true; Layout.fillWidth: true
                             GlassButton { text: "连接服务"; onClicked: setup.controller.start() }
                             GlassButton { text: "初始化连接"; onClicked: initializeConfirm.open() }
                         }
@@ -83,13 +85,39 @@ Dialog {
                         StateRow { title: "设备控制"; ready: (setup.status.permissions || {}).accessibility===true }
                         RowLayout { GlassButton { text: "数据访问设置"; onClicked: setup.controller.openSystemPermission("database") } GlassButton { text: "设备控制设置"; onClicked: setup.controller.openSystemPermission("accessibility") } }
                     }
-                    Card { Layout.fillWidth: true; visible: setup.controller.data.connected!==true
-                        Copy { text: "尚未安装本地组件？"; font.weight: Font.Medium }
-                        Detail { Layout.fillWidth: true; text: setup.controller.setupPackage ? "所选安装包："+setup.controller.setupPackage+"。安装需要管理员确认，不授予聊天访问。" : "选择为本机账号准备的服务安装包，再确认安装。" }
-                        RowLayout { GlassButton { text: "选择安装包"; onClicked: setup.controller.chooseSetupPackage() } GlassButton { text: "确认安装"; enabled: !!setup.controller.setupPackage; onClicked: setup.controller.installSetupPackage() } }
+                    Card { Layout.fillWidth: true; visible: setup.environment.installed!==true
+                        Copy { text: "安装本机安全服务"; font.weight: Font.Medium }
+                        StateRow { title: "随 App 提供的组件"; ready: setup.environment.components===true }
+                        RowLayout { Layout.fillWidth: true
+                            GlassButton { objectName: "chooseWechatData"; text: "选择微信数据"; onClicked: setup.controller.chooseWechatData() }
+                            Detail { Layout.fillWidth: true; text: setup.environment.folder ? "已选择数据文件夹" : "选择本人账号的 db_storage 文件夹" }
+                        }
+                        TextField { objectName: "setupAccountId"; Layout.fillWidth: true; placeholderText: "确认本人微信稳定 ID"; text: setup.environment.account || ""; onTextEdited: setup.controller.setSetupAccount(text)
+                            background: Rectangle { radius: 10; color: Theme.canvas; border.color: Theme.border }
+                            color: Theme.ink; padding: 12; selectByMouse: true
+                        }
+                        GlassCombo { id: credentialMode; Layout.fillWidth: true; model: ["导入本人已有的数据凭据","迁移已有 AXR 凭据索引"] }
+                        RowLayout { Layout.fillWidth: true
+                            GlassButton { text: "选择凭据"; onClicked: setup.controller.chooseWechatCredential(credentialMode.currentIndex===1) }
+                            Detail { Layout.fillWidth: true; text: setup.environment.credential || "仅本机导入，不上传到模型"; elide: Text.ElideMiddle }
+                        }
+                        Detail { Layout.fillWidth: true; text: "微信数据已加密，需你合法持有的原始数据密钥缓存，或已有 AXR 索引。App 不提取进程密钥、不改变微信保护；不需要在聊天中提供密码。" }
+                        GlassButton { objectName: "installBundledService"; text: "安装安全服务"; primary: true
+                            enabled: setup.environment.components===true && !!setup.environment.folder && !!setup.environment.credential && setup.environment.login===true && !setup.controller.data.loading
+                            onClicked: installConfirm.open() }
+                    }
+                    Card { Layout.fillWidth: true
+                        StateRow { title: "Codex 已安装"; ready: setup.environment.codex===true }
+                        StateRow { title: "Codex 已登录"; ready: setup.environment.login===true }
+                        RowLayout { Layout.fillWidth: true
+                            GlassButton { text: "获取 Codex"; onClicked: setup.controller.openCodexDownload() }
+                            GlassButton { text: "登录 Codex"; enabled: setup.environment.codex===true && setup.environment.login!==true && !setup.controller.data.loading; onClicked: setup.controller.loginCodex() }
+                            GlassButton { text: "重新检查"; enabled: !setup.controller.data.loading; onClicked: setup.controller.inspectSetupEnvironment() }
+                        }
                     }
                 }
                 Card { visible: setup.step===2; Layout.fillWidth: true
+                    GlassButton { text: "连接到 Codex"; enabled: setup.environment.installed===true && !setup.controller.data.loading; onClicked: codexConfirm.open() }
                     Copy { Layout.fillWidth: true; text: (setup.controller.assistant || {}).thread_title || "尚未绑定对话"; font.weight: Font.Medium }
                     GlassButton { text: setup.controller.threadsLoading ? "载入中…" : "载入 Codex 对话"; enabled: !setup.controller.threadsLoading; onClicked: setup.controller.loadThreads() }
                     GlassCombo { id: threads; Layout.fillWidth: true; model: setup.controller.codexThreads; textRole: "title"; valueRole: "id"; enabled: count>0; onActivated: setup.chosenThread=currentValue }
@@ -120,6 +148,30 @@ Dialog {
             Item { Layout.fillWidth: true }
             GlassButton { objectName: "setupNext"; primary: true; text: setup.step===0 ? "开始设置" : setup.step===4 ? "完成设置" : "下一步"; enabled: setup.step!==4 || (setup.controller.setupResult.ready===true && !setup.controller.data.loading)
                 onClicked: {if(setup.step===4)setup.controller.finishSetup();else {setup.step++;scroll.contentItem.contentY=0}} }
+        }
+    }
+    Dialog {
+        id: installConfirm; anchors.centerIn: parent; modal: true; header: null; padding: 24; width: Math.min(440,setup.width-32)
+        background: GlassPanel { radius: 22; tint: Theme.dark ? "#FA2B332E" : "#FCFFFFFF" }
+        contentItem: ColumnLayout { spacing: 18
+            Copy { text: "安装本机安全服务？"; font.pixelSize: 20; font.weight: Font.DemiBold }
+            Detail { Layout.fillWidth: true; text: "将安装已校验的 AXR 组件，并核对你选择的数据文件夹与 Codex。需要一次管理员确认，随后初始化还需本人身份确认。此步骤不读取聊天正文、不授予发送权限；已有部署和数据不会被替换。" }
+            RowLayout { Layout.alignment: Qt.AlignRight
+                GlassButton { text: "取消"; onClicked: installConfirm.close() }
+                GlassButton { text: "确认安装"; primary: true; onClicked: {installConfirm.close();setup.controller.installBundledService()} }
+            }
+        }
+    }
+    Dialog {
+        id: codexConfirm; anchors.centerIn: parent; modal: true; header: null; padding: 24; width: Math.min(420,setup.width-32)
+        background: GlassPanel { radius: 22; tint: Theme.dark ? "#FA2B332E" : "#FCFFFFFF" }
+        contentItem: ColumnLayout { spacing: 18
+            Copy { text: "连接到 Codex？"; font.pixelSize: 20; font.weight: Font.DemiBold }
+            Detail { Layout.fillWidth: true; text: "仅添加或更新 wechat_axr 连接，保留其他设置并保存本地备份。随后执行真实 MCP 连接检查；已打开的 Codex 可能需要刷新此连接。" }
+            RowLayout { Layout.alignment: Qt.AlignRight
+                GlassButton { text: "取消"; onClicked: codexConfirm.close() }
+                GlassButton { text: "确认连接"; primary: true; onClicked: {codexConfirm.close();setup.controller.connectSetupCodex()} }
+            }
         }
     }
     Dialog {

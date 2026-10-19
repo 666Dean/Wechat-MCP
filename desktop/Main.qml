@@ -39,7 +39,7 @@ ApplicationWindow {
         accessEditor.activeScope=scopeActive;accessEditor.minutes=scopeActive && !autoReply.expires ? 0 : 30;
         accessEditor.replies=scopeActive && (autoReply.remaining===null || autoReply.remaining===undefined) ? 0 : 20;
         accessEditor.bindingReady=!!(owner.assistant || {}).thread_id;
-        accessEditor.sendPolicy=(status.scope || {}).send_policy || "when_idle";
+        accessEditor.sendPolicy=(status.scope || {}).send_policy || "immediate";
         accessEditor.backgroundAvailable=status.background_send_qualified===true;
         if(accessEditor.sendPolicy==="background_when_idle" && !accessEditor.backgroundAvailable)accessEditor.sendPolicy="when_idle";
         if(level===2)Qt.callLater(function(){riskDialog.open()});else Qt.callLater(function(){accessEditor.open()})

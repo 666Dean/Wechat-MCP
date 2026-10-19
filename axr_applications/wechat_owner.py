@@ -30,7 +30,8 @@ def control(runtime_root,request):
     from .wechat_frontend import connect
     if set(request)!={'operation','method','arguments'} or type(request['arguments']) is not dict:
         raise AXRError('wechat_owner_request_invalid')
-    configuration=json.loads((Path(runtime_root)/'deployment.json').read_bytes())
+    from axr.deployment_configuration import read
+    configuration=read(runtime_root)
     client=connect(configuration['deployment']['endpoint'])
     try:
         method=request['method'];args=request['arguments']

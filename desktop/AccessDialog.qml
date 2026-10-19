@@ -16,7 +16,7 @@ Dialog {
     property int pageIndex: 0
     property bool activeScope: false
     property bool bindingReady: false
-    property string sendPolicy: "when_idle"
+    property string sendPolicy: "immediate"
     property bool backgroundAvailable: false
     readonly property var policies: ["when_idle","foreground_only","immediate"].concat(backgroundAvailable ? ["background_when_idle"] : [])
     readonly property string selfIdentity: {var row=contacts.find(function(c){return c.is_self===true});return row ? row.conversation_id : ""}

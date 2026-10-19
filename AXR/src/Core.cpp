@@ -151,7 +151,8 @@ struct Guard::Impl {
         if(save.Step()!=SQLITE_DONE)Fail("policy_version_store_failed");
     }
     std::string Find(const Json& a,double now,bool quota,const std::string& id="",const std::string& requiredClass="") const {
-        Statement q(db,id.empty()?"SELECT id,body,signature,used,revoked,state_signature FROM grants WHERE revoked=0":"SELECT id,body,signature,used,revoked,state_signature FROM grants WHERE id=?");
+        std::string candidate;double candidateExpires=0;
+        Statement q(db,id.empty()?"SELECT id,body,signature,used,revoked,state_signature FROM grants WHERE revoked=0 ORDER BY rowid DESC":"SELECT id,body,signature,used,revoked,state_signature FROM grants WHERE id=?");
         if(!id.empty())q.Text(1,id);
         while(q.Step()==SQLITE_ROW) {
             auto b=ParseBounded(q.Text(1));
@@ -169,8 +170,17 @@ struct Guard::Impl {
                (Risk(a)==4&&b.at("intent")!=IntentSeal(a))||
                (!requiredClass.empty()&&!Contains(b.at("classes"),requiredClass))) continue;
             bool valid=true;for(const auto& p:a.at("sources"))valid=valid&&Contains(b.at("classes"),p.at("data_class"));
-            if(valid)return q.Text(0);
+            if(valid){
+                // A newly issued exact action grant must not be shadowed by an
+                // older broad read grant nearing expiry. All predicates and
+                // MAC/quota checks above still apply; this only selects among
+                // already valid grants. Exact-ID revalidation never substitutes.
+                if(!id.empty()||!b.at("intent").is_null())return q.Text(0);
+                const auto expiry=b.at("expires_at").get<double>();
+                if(candidate.empty()||expiry>candidateExpires){candidate=q.Text(0);candidateExpires=expiry;}
+            }
         }
+        if(!candidate.empty())return candidate;
         Fail("authority_missing_expired_revoked_or_exhausted");
     }
     std::vector<std::string> Sources(const Json& a,double now) const {

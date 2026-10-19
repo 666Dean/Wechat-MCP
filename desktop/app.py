@@ -35,7 +35,7 @@ class Controller(QObject):
         self._data={'connected':False,'jobs':[],'drafts':[],'conversations':[],'grants':[],'summaries':[]}
         self._assistant={'thread_id':'','thread_title':'','persona':'','style':'简洁、自然、直接；不编造事实。','attribution':True};self._threads=[];self._threads_cursor=None;self._models=[];self._stream={};self._attachment={};self._foreground=True;self._preferences=QSettings('Stellaria','WeChat MCP');self._reduce_motion=self._preferences.value('reduceMotion',False,type=bool)
         self._preview={};self._manual={};self._detail='';self._notice='连接本地服务，开始你的工作台。';self.selected=None;self.config_review=None;self.config_backup=None;self._submitted=None
-        self._setup={};self._setup_package=None
+        self._setup={};self._setup_package=None;self._setup_inputs={};self._setup_environment={}
         self._onboarding_needed=not fixture and self._preferences.value('setupVersion',0,type=int)<1
         self.pool=concurrent.futures.ThreadPoolExecutor(max_workers=2);self.inflight=set();self.broker_process=None;self.worker_process=None;self.worker_job=None
         self.stream_timer=QTimer(self);self.stream_timer.setSingleShot(True);self.stream_timer.timeout.connect(self.streamChanged.emit)
@@ -60,7 +60,7 @@ class Controller(QObject):
         self._submitted=submitted
         self.run('chat_prompt',lambda:call(self.state,'control.queue_owner_prompt',(request,),owner=True))
     @Slot('QVariantList',int,int,int,bool,str,int)
-    def applyScope(self,targets,minutes,replies,level,overwrite=False,send_policy='when_idle',idle_seconds=15):
+    def applyScope(self,targets,minutes,replies,level,overwrite=False,send_policy='immediate',idle_seconds=15):
         if self.fixture:return
         chosen=list(targets)
         if level not in (0,1,2):return
@@ -90,6 +90,87 @@ class Controller(QObject):
     def setupResult(self):return self._setup
     @Property(str,notify=setupChanged)
     def setupPackage(self):return self._setup_package.name if self._setup_package else ''
+    @Property('QVariantMap',notify=setupChanged)
+    def setupEnvironment(self):return self._setup_environment
+    @Slot()
+    def inspectSetupEnvironment(self):
+        if self.fixture:return
+        def inspect():
+            from axr_integration.codex_bridge import codex_binary
+            from .provisioning import payload_location
+            value={'installed':authority_installed(),'account':self._setup_inputs.get('account',''),
+                   'folder':Path(self._setup_inputs['root']).name if self._setup_inputs.get('root') else '',
+                   'credential':Path(self._setup_inputs['credential']).name if self._setup_inputs.get('credential') else '',
+                   'index':self._setup_inputs.get('index',False)}
+            try:payload_location();value['components']=True
+            except Exception:value['components']=False
+            try:
+                binary=codex_binary();value['codex']=True
+                result=subprocess.run([binary,'login','status'],capture_output=True,timeout=15)
+                value['login']=result.returncode==0 and (Path.home()/'.codex/auth.json').is_file()
+            except Exception:value.update(codex=False,login=False)
+            return value
+        self.run('setup_environment',inspect)
+    @Slot()
+    def chooseWechatData(self):
+        if self.fixture:return
+        start=Path.home()/'Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files'
+        path=QFileDialog.getExistingDirectory(None,'选择本人微信的 db_storage 文件夹',str(start if start.is_dir() else Path.home()))
+        if path:
+            root=Path(path)
+            if root.name!='db_storage' and (root/'db_storage').is_dir():root=root/'db_storage'
+            self._setup_inputs['root']=str(root)
+            name=root.parent.name
+            self._setup_inputs['account']=name.rsplit('_',1)[0] if name.startswith('wxid_') and name.count('_')>1 else name
+            self.inspectSetupEnvironment()
+    @Slot(bool)
+    def chooseWechatCredential(self,index=False):
+        if self.fixture:return
+        path,_=QFileDialog.getOpenFileName(None,'选择已有 AXR 凭据索引' if index else '选择本人合法持有的微信数据凭据',filter='凭据文件 (*.json *.txt *.key);;所有文件 (*)')
+        if path:self._setup_inputs.update(credential=path,index=index);self.inspectSetupEnvironment()
+    @Slot(str)
+    def setSetupAccount(self,value):self._setup_inputs['account']=value.strip()
+    @Slot()
+    def installBundledService(self):
+        if self.fixture:return
+        inputs=dict(self._setup_inputs)
+        def deploy():
+            if authority_installed():raise AXRError('setup_service_already_installed')
+            if not {'root','account','credential'}<=set(inputs):raise AXRError('setup_account_and_credential_required')
+            import tempfile
+            from axr.storage import private_directory
+            from .provisioning import configuration,payload_location,unpack_payload
+            from axr_integration.codex_bridge import codex_binary
+            from scripts.install_authority_macos import install
+            temporary_root=private_directory(Path.home()/'.stellaria-axr/setup')
+            with tempfile.TemporaryDirectory(prefix='install-',dir=temporary_root) as temporary:
+                temporary=Path(temporary)
+                archive,_=payload_location();package=unpack_payload(archive,temporary/'components')
+                config,assets=configuration(inputs['root'],inputs['account'],inputs['credential'],codex_binary(),temporary/'local',index=inputs.get('index',False))
+                return install(package,configuration=config,local_assets=assets)
+        self.run('setup_install',deploy)
+    @Slot()
+    def openCodexDownload(self):
+        if not self.fixture:QDesktopServices.openUrl(QUrl('https://developers.openai.com/codex/app/'))
+    @Slot()
+    def loginCodex(self):
+        if self.fixture:return
+        def login():
+            from axr_integration.codex_bridge import codex_binary
+            binary=codex_binary()
+            # Official browser login; no password/token is requested by AXR.
+            result=subprocess.run([binary,'login'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=240)
+            if result.returncode:raise AXRError('setup_codex_login_required')
+            return {'login':True}
+        self.run('setup_login',login)
+    @Slot()
+    def connectSetupCodex(self):
+        if self.fixture:return
+        def connect():
+            if not authority_installed():raise AXRError('setup_service_required')
+            path=Path.home()/'.codex/config.toml';raw=path.read_bytes() if path.exists() else b''
+            return install(path,native_snippet(),hashlib.sha256(raw).hexdigest(),Path(self.state)/'desktop/backups')
+        self.run('setup_connect_codex',connect)
     @Slot()
     def chooseSetupPackage(self):
         if self.fixture:return
@@ -130,7 +211,8 @@ class Controller(QObject):
         from .authority_client import control
         try:snapshot=control('snapshot');assistant=control('assistant_settings')
         except AXRError:return assessment({}, {},False)
-        try:protocol=protocol_check()
+        from .codex_config import native_registered
+        try:protocol=native_registered() and protocol_check()
         except Exception:protocol=False
         return assessment(snapshot,assistant,protocol)
     @Slot()
@@ -308,7 +390,13 @@ class Controller(QObject):
                 'owner_os_authentication_failed':'系统身份认证未完成，本次操作未获准。',
                 'owner_policy_changed_restart_required':'权限配置已更新，请重新连接本地服务。'}.get(result['error'],'操作未完成，请核对授权与本地服务。')
             if result['error'].startswith('setup_'):
-                self._notice={'setup_service_already_installed':'组件已安装，请连接或初始化现有服务。','setup_service_required':'请先安装本地服务组件。','setup_initialization_incomplete':'本机连接尚未初始化完成。请检查登录与凭据准备状态，再继续配置。'}.get(result['error'],'本机设置未完成，请核对后重试。')
+                self._notice={'setup_service_already_installed':'组件已安装，请连接或初始化现有服务。','setup_service_required':'请先安装本地服务组件。','setup_initialization_incomplete':'本机连接尚未初始化完成，请核对数据凭据与系统权限后重试。',
+                    'setup_account_and_credential_required':'请选择本人数据文件夹与凭据，并确认微信 ID。',
+                    'setup_account_id_required':'请填写本人微信的稳定 ID。','setup_account_folder_required':'请选择本人账号下的 db_storage 文件夹。',
+                    'setup_account_folder_mismatch':'微信 ID 与所选账号文件夹不匹配，请核对。','setup_components_missing':'安装组件不完整，请重新下载完整 App。',
+                    'setup_components_changed':'安装组件校验未通过，请重新下载。','setup_credential_index_mismatch':'凭据索引不属于此账号或分库已变化，请重新核对。',
+                    'setup_codex_login_required':'请先通过 Codex 官方窗口完成登录，再检查连接。',
+                    'setup_codex_runtime_not_self_contained':'未找到可独立部署的签名 Codex 组件，请通过「获取 Codex」安装官方 App 后重试。'}.get(result['error'],'本机设置未完成，请核对所选文件、系统权限与 Codex 登录后重试。')
             if result['error'].startswith('owner_os_authentication_failed'):
                 self._notice=('系统取消了身份认证，请保持认证窗口在前台后重试。'
                     if result['error']=='owner_os_authentication_failed:owner_auth_denied:os_error_-4' else
@@ -328,7 +416,10 @@ class Controller(QObject):
             if name=='setup_finish' and value.get('ready'):
                 self._preferences.setValue('setupVersion',1);self._onboarding_needed=False;self.setupChanged.emit();self.setupCompleted.emit()
             return
-        if name in ('setup_install','setup_initialize'):self.start();self.verifySetup()
+        if name=='setup_environment':self._setup_environment=value;self.setupChanged.emit();return
+        if name in ('setup_install','setup_login','setup_connect_codex'):self.inspectSetupEnvironment()
+        if name in ('setup_initialize','setup_connect_codex'):self.start();self.verifySetup()
+        if name=='setup_install':self._notice='组件安装完成。请继续初始化，再授予系统权限。';self.noticeChanged.emit()
         if name=='chat_prompt' and self._submitted:
             submitted=self._submitted;self._submitted=None
             if self._attachment==submitted['attachment']:

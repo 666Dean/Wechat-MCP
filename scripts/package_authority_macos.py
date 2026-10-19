@@ -89,8 +89,8 @@ def stage_codex_provider(application,resources):
     command(['/usr/bin/codesign','--verify','--deep','--strict',target_bundle])
     return {**application,'codex_provider':{**provider,'binary':'@resources/CodexCLI.app/Contents/MacOS/'+source.name}}
 
-def stage(root,build,output,deployment,*,identity='-'):
-    if sys.platform!='darwin' or sys.version_info[:2]!=(3,12):raise ValueError('macOS Python 3.12 packaging required')
+def stage(root,build,output,deployment,*,identity='-',public=False):
+    if sys.platform!='darwin' or sys.version_info[:2]<(3,12):raise ValueError('macOS Python 3.12 or later packaging required')
     verify_optimized_runtime(build)
     if not identity or identity=='-':raise ValueError('dynamic embedded runtime requires one local signing team; ad-hoc needs a fully static host')
     if deployment.get('application',{}).get('navigation_helper'):verify_navigation_build(root,build)
@@ -104,7 +104,7 @@ def stage(root,build,output,deployment,*,identity='-'):
     for package,source in [('axr',root/'AXR/axr'),('axr_applications',root/'axr_applications'),('adapters',root/'adapters'),('axr_integration',root/'axr_integration')]:
         shutil.copytree(source,resources/'packages'/package,ignore=lambda directory,names:[n for n in names if n=='__pycache__' or (Path(directory,n).is_file() and not n.endswith('.py')) or n=='bin'])
     shutil.copy2(native,resources/'packages/axr'/native.name);shutil.copy2(consumer,resources/'packages/axr_applications'/consumer.name)
-    stdlib=Path(sysconfig.get_path('stdlib'));stdlib_archive(stdlib,resources/'python312.zip')
+    stdlib=Path(sysconfig.get_path('stdlib'));stdlib_archive(stdlib,resources/'python-runtime.zip')
     # Only standard extension modules needed by this fixed runtime. Missing ones
     # are errors, not a fallback to the developer's Python installation.
     extensions=('_asyncio','_bisect','_blake2','_bz2','_contextvars','_csv','_ctypes','_datetime','_decimal','_elementtree','_hashlib','_heapq','_json','_lzma','_md5','_multiprocessing','_opcode','_pickle','_posixshmem','_posixsubprocess','_queue','_random','_sha1','_sha2','_sha3','_socket','_sqlite3','_ssl','_struct','_typing','array','binascii','fcntl','grp','math','mmap','pyexpat','resource','select','termios','unicodedata','zlib')
@@ -147,9 +147,10 @@ def stage(root,build,output,deployment,*,identity='-'):
     index=0
     while index<len(pending):
         dest=pending[index];source=origins[dest];index+=1
+        identifiers=command(['/usr/bin/otool','-D',source]).splitlines()[1:]
         for dependency in dependencies(source):
             if dependency.startswith(SYSTEM):continue
-            if source.suffix=='.dylib' and dependency==dependencies(source)[0]:continue # LC_ID_DYLIB, not a dependency
+            if dependency in identifiers:continue # LC_ID_DYLIB (also Python frameworks)
             candidates=[]
             expanded=dependency.replace('@loader_path',str(source.parent)).replace('@executable_path',str((build/'AXR').resolve()))
             if expanded.startswith('@rpath/'):
@@ -167,14 +168,17 @@ def stage(root,build,output,deployment,*,identity='-'):
             command(['/usr/bin/install_name_tool','-change',dependency,replacement,dest])
         # No inherited developer rpath may remain as an alternate load source.
         for rp in rpaths(dest):command(['/usr/bin/install_name_tool','-delete_rpath',rp,dest])
-        if dest.suffix=='.dylib':command(['/usr/bin/install_name_tool','-id','@loader_path/'+dest.name,dest])
-    configuration={'version':2,'application_module':'axr_applications.wechat','deployment':deployment}
+        if identifiers:command(['/usr/bin/install_name_tool','-id','@loader_path/'+dest.name,dest])
+    configuration=({'version':2,'application_module':'axr_applications.wechat','deployment_source':'installation'} if public
+                   else {'version':2,'application_module':'axr_applications.wechat','deployment':deployment})
     (resources/'deployment.json').write_text(json.dumps(configuration,ensure_ascii=False,separators=(',',':')))
     for name,source in [('AXR',root/'AXR/LICENSE'),('Application',root/'LICENSE')]:shutil.copy2(source,resources/(name+'-LICENSE.txt'))
     license_root=resources/'licenses';license_root.mkdir()
     shutil.copy2(stdlib/'LICENSE.txt',license_root/'Python.txt')
     shutil.copy2(root/'THIRD_PARTY_NOTICES.md',license_root/'Application-notices.md')
     shutil.copy2(root/'AXR/THIRD_PARTY_NOTICES.md',license_root/'AXR-notices.md')
+    for name,source in [('SQLCipher',Path('/opt/homebrew/opt/sqlcipher/LICENSE.txt')),('OpenSSL',Path('/opt/homebrew/opt/openssl@4/LICENSE.txt'))]:
+        if source.is_file():shutil.copy2(source,license_root/(name+'.txt'))
     distribution=importlib.metadata.distribution('zstandard')
     for source in distribution.files or []:
         if '.dist-info/licenses/' in str(source):
@@ -185,7 +189,7 @@ def stage(root,build,output,deployment,*,identity='-'):
     command(['/usr/bin/codesign','--force','--sign',identity,'--options','runtime','--timestamp=none','--identifier','org.stellaria.axr.authority',app])
     command(['/usr/bin/codesign','--verify','--deep','--strict',app])
     for dest in pending:
-        if any(not d.startswith(SYSTEM+('@loader_path/',)) for d in dependencies(dest)[1 if dest.suffix=='.dylib' else 0:]):raise ValueError('external dependency remains')
+        if any(not d.startswith(SYSTEM+('@loader_path/',)) for d in dependencies(dest)):raise ValueError('external dependency remains')
     # A separate signing identity is required for the user-presence key. Keep
     # the same self-contained runtime, never a symlink into the checkout.
     owner=output/'AXR Owner.app';shutil.copytree(app,owner)

@@ -592,11 +592,15 @@ class WeChatService:
     def status(self):
         active=bool(self.scope and (not self.scope['expires'] or self.scope['expires']>time.time()))
         permissions=self.readiness()
+        # Verify the chain and independent checkpoint against one serialized
+        # journal view. Concurrent append/anchor must not produce a false alarm;
+        # a real invalid chain is still returned unchanged as False.
+        with self.kernel.lock:audit_valid=self.kernel.store.journal.verify_audit()
         return {'axr':True,'operational':True,'authority':'independent-native-v2','owner_authorized':active,
             'automatic_reply':bool(active and self.scope['automatic']),'scope':self.scope if active else None,
             'permissions':permissions,'send_available':active and bool(self.scope['reply_targets']) and permissions['database'] and permissions['accessibility'],
             'listener':{'listen':active,'wake_agent':active,'auto_execute':active and self.scope['automatic']},
-            'platform':{'mode':'wcdb-native','send_available':active and bool(self.scope['reply_targets']) and permissions['database'] and permissions['accessibility']},'audit_valid':self.kernel.store.journal.verify_audit(),
+            'platform':{'mode':'wcdb-native','send_available':active and bool(self.scope['reply_targets']) and permissions['database'] and permissions['accessibility']},'audit_valid':audit_valid,
             'policy_version':self.kernel.store.guard.version,'reply_count':self.reply_count,'retry_unknown':False,
             'delivery_confirmed':False,'body_disclosed':False,'pause_reason':self.last_error,'inference':self.provider_readiness(),
             'background_send_qualified':self.background_qualified()}
@@ -656,8 +660,10 @@ class WeChatService:
                     'owner_messages':self.owner_messages()}
             if method=='check_target':
                 self.check();identity=args.get('conversation_id')
-                if (set(args)-{'conversation_id','metadata_only'} or 'conversation_id' not in args
+                if (set(args)-{'conversation_id','metadata_only','isolated_snapshot'} or 'conversation_id' not in args
                     or type(args.get('metadata_only',False)) is not bool
+                    or type(args.get('isolated_snapshot',False)) is not bool
+                    or (args.get('isolated_snapshot',False) and not args.get('metadata_only',False))
                     or identity not in self.scope['reply_targets']):raise AXRError('wechat_owner_scope_invalid')
                 started=time.monotonic()
                 try:
@@ -666,6 +672,8 @@ class WeChatService:
                     return {'navigation_verified':not args.get('metadata_only',False),'draft_present':len(rows)!=1 or rows[0]['draft']!='',
                         'cached_draft_metadata':saved_draft_metadata(rows[0]) if len(rows)==1 else {},
                         'session_schema':self.nav_state(identity,'session_schema') if args.get('metadata_only',False) else [],
+                        'session_state':self.nav_state(identity,'session_state') if args.get('metadata_only',False) else [],
+                        'message_state':self.nav_state(identity,'message_state',isolated_snapshot=args.get('isolated_snapshot',False)) if args.get('metadata_only',False) else [],
                         'elapsed_ms':round((time.monotonic()-started)*1000),'send_invoked':False}
                 except AXRError as error:
                     code=str(error)
@@ -763,6 +771,11 @@ class WeChatService:
                 if self.scope and str(exc) in ('wechat_scope_stopped_or_expired','wechat_reply_budget_exhausted'):self.stop()
                 elif self.scope and str(exc)=='wechat_burst_capacity':
                     self.last_error={'code':'wechat_burst_capacity'}
+                    self.stop()
+                    try:self.state.set('worker-error',self.last_error)
+                    except Exception:pass
+                elif self.scope and (str(exc).startswith('wcdb_') or str(exc)=='wechat_native_database_failed'):
+                    self.last_error={'code':str(exc)}
                     self.stop()
                     try:self.state.set('worker-error',self.last_error)
                     except Exception:pass

@@ -141,6 +141,18 @@ class ServiceTests(unittest.TestCase):
         self.assertFalse(self.call('wechat_status')['owner_authorized'])
         with self.assertRaisesRegex(AXRError,'scope_stopped'):self.call('wechat_read_messages',conversation_id='fixture-peer')
         with self.assertRaisesRegex(AXRError,'owner_channel'):self.service.review(self.client,{'targets':'all'})
+    def test_status_verifies_the_audit_under_the_writer_lock_and_reports_failure(self):
+        def verify():
+            self.assertTrue(self.kernel.lock._is_owned())
+            return False
+        with patch.object(self.store.journal,'verify_audit',side_effect=verify):
+            self.assertFalse(self.service.status()['audit_valid'])
+    def test_native_database_failure_stops_scope_and_keeps_only_its_fixed_code(self):
+        self.activate(automatic=True)
+        with patch.object(self.service,'scan_targets',side_effect=AXRError('wcdb_native_sender_identity_mismatch')),patch.object(self.service.worker_event,'wait',side_effect=lambda *_:self.service.stop_event.set()):
+            self.service.loop()
+        self.assertIsNone(self.service.scope)
+        self.assertEqual(self.service.state.get('worker-error'),{'code':'wcdb_native_sender_identity_mismatch'})
     def test_exact_owner_signature_and_replay(self):
         review=self.service.review(self.owner,{'targets':'all'})
         with self.assertRaisesRegex(AXRError,'signature'):self.service.activate(self.owner,review['challenge']['nonce'],'00')

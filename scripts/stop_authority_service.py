@@ -12,7 +12,8 @@ def stop():
     sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
     from axr.ipc import process_identity
     from desktop.authority_client import control
-    config=json.loads((BASE/'AXR Authority.app/Contents/Resources/deployment.json').read_bytes())['deployment']
+    from axr.deployment_configuration import read
+    config=read(BASE/'AXR Authority.app/Contents/Resources')['deployment']
     label='gui/'+str(os.getuid())+'/'+LABEL
     info=subprocess.run(['/bin/launchctl','print',label],capture_output=True,text=True,check=True).stdout
     match=re.search(r'^\s*pid = ([0-9]+)$',info,re.M)

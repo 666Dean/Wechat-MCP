@@ -5,6 +5,8 @@ from pathlib import Path
 from .aet import AXRError
 
 def registration(runtime_root):
+    # Registration is selected by signed code resources even before a local
+    # configuration exists (the non-authority runtime validator needs this).
     path=Path(runtime_root)/'deployment.json'
     if path.is_symlink() or path.stat().st_size>32768:raise AXRError('authority_deployment_configuration_invalid')
     config=json.loads(path.read_bytes());module=config.get('application_module')

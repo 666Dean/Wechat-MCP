@@ -34,7 +34,12 @@ def resources_root():
     return image.parent/'runtime' if os.name=='nt' else image.parent.parent/'Resources'
 
 def _configuration(value):
-    if type(value) is not dict or set(value)-{'state','endpoint','application','legacy_namespace','owner_public_key'} or not {'state','endpoint','application'}<=set(value):raise AXRError('wechat_deployment_configuration_invalid')
+    if type(value) is not dict or set(value)-{'state','endpoint','application','legacy_namespace','credential_import','owner_public_key'} or not {'state','endpoint','application'}<=set(value):raise AXRError('wechat_deployment_configuration_invalid')
+    if value.get('legacy_namespace') and value.get('credential_import'):raise AXRError('wechat_deployment_configuration_invalid')
+    if 'credential_import' in value:
+        source=value['credential_import']
+        if (type(source) is not dict or set(source)!={'path','sha256'} or not Path(source['path']).is_absolute()
+            or re.fullmatch('[0-9a-f]{64}',source['sha256']) is None):raise AXRError('wechat_deployment_configuration_invalid')
     root=resources_root();application=dict(value['application'])
     if type(application.get('manual_approval_required',True)) is not bool:raise AXRError('wechat_approval_setting_invalid')
     def asset(value):
@@ -207,6 +212,8 @@ def initialize_owner(value, signer, enrollment=None):
         from . import _wechat_credentials
         if config.get('legacy_namespace'):
             _wechat_credentials.import_legacy_credentials(canonical(application).decode(),config['legacy_namespace'])
+        if config.get('credential_import'):
+            _wechat_credentials.import_owner_credentials(canonical(application).decode(),canonical(config['credential_import']).decode())
         # This first-setup metadata read is part of the authenticated setup
         # review. No message body or prior permission is imported.
         consumer=_wechat_credentials.WeChatConsumer('owner-initialization',canonical(application).decode())
@@ -411,7 +418,8 @@ def validate_runtime():
     # No live file, credential lookup, service, GUI or model call is used.
     return {'formal_native':native.security_release is True,
         'utf8_runtime':__import__('sys').getfilesystemencoding()=='utf-8' and __import__('sys').stdout.encoding.lower().replace('-','')=='utf8',
-        'no_fixture_key_constructor':not hasattr(_wechat_credentials,'fixture_consumer'),
+        'no_fixture_key_constructor':not hasattr(_wechat_credentials,'fixture_consumer') and not hasattr(_wechat_credentials,'fixture_verify_owner_file'),
+        'owner_credential_import':hasattr(_wechat_credentials,'import_owner_credentials'),
         'native_wcdb':hasattr(_wechat_credentials,'WeChatConsumer'),
         'compressed_text':zstandard.ZstdDecompressor().decompress(zstandard.ZstdCompressor().compress(b'AXR runtime fixture'))==b'AXR runtime fixture',
         'journal_runtime':bool(sqlite3.sqlite_version)}

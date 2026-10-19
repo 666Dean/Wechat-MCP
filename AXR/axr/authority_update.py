@@ -11,7 +11,8 @@ def main(runtime_root):
     if not getattr(native,'security_release',False):raise AXRError('authority_formal_build_required')
     root=Path(runtime_root)
     with Lease(Path.home()/'.stellaria-axr'/'leases',['owner-setup',str(root.resolve())]):
-        path=root/'deployment.json'
+        from .deployment_configuration import path as configuration_path
+        path=configuration_path(root)
         if path.is_symlink() or path.stat().st_size>32768:raise AXRError('authority_deployment_configuration_invalid')
         config=json.loads(path.read_bytes())
         backend=AuthoritySecretStore('Stellaria.AXR.Bootstrap')

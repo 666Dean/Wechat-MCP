@@ -74,7 +74,9 @@ void Configure(PyConfig& config,const std::filesystem::path& root){
     if(PyStatus_Exception(PyConfig_SetString(&config,&config.stdio_encoding,L"utf-8"))||
        PyStatus_Exception(PyConfig_SetString(&config,&config.stdio_errors,L"strict")))throw std::runtime_error("authority_runtime_encoding_failed");
     config.write_bytecode=0;config.install_signal_handlers=1;config.module_search_paths_set=1;
-    for(const auto& path:{root/"python312.zip",root/"lib-dynload",root/"packages"}){
+    auto standard=root/"python-runtime.zip";
+    if(!std::filesystem::exists(standard))standard=root/"python312.zip";
+    for(const auto& path:{standard,root/"lib-dynload",root/"packages"}){
         if(!std::filesystem::exists(path))throw std::runtime_error("authority_bundled_runtime_missing");
         auto value=path.wstring();if(PyStatus_Exception(PyWideStringList_Append(&config.module_search_paths,value.c_str())))throw std::runtime_error("authority_runtime_configuration_failed");
     }
@@ -118,6 +120,19 @@ int Serve(bool initialize=false,bool ownerControl=false,bool refresh=false){
     // Applied before importing any Python or reading any MCP request. The
     // fixed installed executable has no alternative unsandboxed entry point.
     auto frontendConfig=Json::parse(std::ifstream(root/"deployment.json"));
+    if(frontendConfig.contains("deployment_source")){
+        if(frontendConfig!=Json{{"version",2},{"application_module","axr_applications.wechat"},{"deployment_source","installation"}})
+            throw std::runtime_error("authority_deployment_configuration_invalid");
+        auto file=root.parent_path().parent_path().parent_path()/"deployment.json";
+        for(auto node=file;!node.empty();node=node.parent_path()){
+            struct stat info{};
+            if(lstat(node.c_str(),&info)||S_ISLNK(info.st_mode)||info.st_uid!=0||(info.st_mode&0022))
+                throw std::runtime_error("authority_installation_not_protected");
+            if(node==node.root_path())break;
+        }
+        if(std::filesystem::file_size(file)>32768)throw std::runtime_error("authority_deployment_configuration_invalid");
+        frontendConfig=Json::parse(std::ifstream(file));
+    }
     auto endpoint=frontendConfig.at("deployment").at("endpoint").get<std::string>();
     if(endpoint.empty()||endpoint[0]!='/'||endpoint.size()>100)throw std::runtime_error("frontend_endpoint_invalid");
     auto quote=[](const std::string& s){return Json(s).dump();};
@@ -125,6 +140,7 @@ int Serve(bool initialize=false,bool ownerControl=false,bool refresh=false){
       "(allow file-read* (subpath \"/System/Library\") (subpath \"/usr/lib\") (literal \"/dev/urandom\") (literal \"/dev/null\"))"
       "(allow file-read* (subpath "+quote(exe.parent_path().parent_path().string())+"))"
       "(allow file-read* (subpath \"/Library/Application Support/Stellaria AXR/AXR Authority.app\"))"
+      "(allow file-read* (literal \"/Library/Application Support/Stellaria AXR/deployment.json\"))"
       "(allow file-read-metadata (literal \"/\") (subpath \"/Library\") (subpath \"/Users\") (subpath \"/private/var\"))"
       "(allow file-read* file-write* (literal "+quote(endpoint)+"))"
       "(allow network-outbound (remote unix-socket (literal "+quote(endpoint)+")))";

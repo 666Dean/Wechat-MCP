@@ -12,6 +12,15 @@ from axr import _axr_native as native
 
 NAME='wechat_axr'
 
+def native_registered(config=None):
+    path=Path(config or Path.home()/'.codex/config.toml')
+    try:
+        if path.is_symlink():return False
+        value=tomllib.loads(path.read_text()).get('mcp_servers',{}).get(NAME,{})
+        return (value.get('command')=='/Library/Application Support/Stellaria AXR/AXR MCP.app/Contents/MacOS/axr-frontend'
+                and value.get('args')==['--mcp'] and value.get('enabled',True) is True and value.get('required',False) is False)
+    except (OSError,ValueError,AttributeError):return False
+
 def native_snippet():
     return '\n'.join(['[mcp_servers.wechat_axr]',
         'command = '+json.dumps('/Library/Application Support/Stellaria AXR/AXR MCP.app/Contents/MacOS/axr-frontend'),

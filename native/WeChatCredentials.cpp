@@ -12,8 +12,12 @@
 extern "C" int sqlite3_key(sqlite3*,const void*,int);
 #include <chrono>
 #include <map>
+#include <optional>
+#include <regex>
 #include <set>
 #include <fstream>
+#include <fcntl.h>
+#include <sys/stat.h>
 #if defined(__APPLE__)
 #include <Security/Security.h>
 #endif
@@ -21,6 +25,7 @@ extern "C" int sqlite3_key(sqlite3*,const void*,int);
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <unistd.h>
 #endif
 namespace py=pybind11;
 using namespace Stellaria::AXR;
@@ -110,7 +115,9 @@ struct Database {
                 else if(type==SQLITE_INTEGER)row[name]=api.column_int64(stmt,c);
                 else {int n=api.column_bytes(stmt,c);if(n<0||n>1024*1024||bytes+size_t(n)>480000)throw std::runtime_error("wcdb_native_byte_budget");bytes+=n;
                     auto data=static_cast<const char*>(api.column_blob(stmt,c));std::string value(data?data:"",n);
-                    if(type==SQLITE_BLOB)row[name]=Json{{"blob_hex",Hex(value)}};else row[name]=value;}
+                    // WCDB may retain SQLite's TEXT affinity for compressed
+                    // message bytes. Never serialize those bytes as UTF-8.
+                    if(type==SQLITE_BLOB||name=="body")row[name]=Json{{"blob_hex",Hex(value)}};else row[name]=value;}
             }rows.push_back(row);
         }return rows;
     }
@@ -119,6 +126,43 @@ struct Database {
 std::string Table(const std::string& id){unsigned char hash[16];unsigned n=0;if(!EVP_Digest(id.data(),id.size(),hash,&n,EVP_md5(),nullptr)||n!=16)throw std::runtime_error("wcdb_table_digest_failed");return "Msg_"+Database::Hex({reinterpret_cast<char*>(hash),16});}
 std::vector<std::string> ResourceKeys(const Json& config){std::vector<std::string> keys;for(auto& r:config.at("resources"))keys.push_back(Digest(r.dump()));return keys;}
 std::string NativeKeyName(const std::string& reference){return "wcdb-"+Digest(reference);}
+#if defined(__APPLE__)
+struct EncryptedSnapshot {
+    std::filesystem::path directory,path;
+    struct Stamp {dev_t device;ino_t inode;off_t size;timespec modified,changed;};
+    static Stamp stamp(const struct stat& s){return {s.st_dev,s.st_ino,s.st_size,s.st_mtimespec,s.st_ctimespec};}
+    static bool same(const Stamp& a,const Stamp& b){return a.device==b.device&&a.inode==b.inode&&a.size==b.size&&a.modified.tv_sec==b.modified.tv_sec&&a.modified.tv_nsec==b.modified.tv_nsec&&a.changed.tv_sec==b.changed.tv_sec&&a.changed.tv_nsec==b.changed.tv_nsec;}
+    static Stamp copy(const std::filesystem::path& source,const std::filesystem::path& target,size_t maximum){
+        int input=open(source.c_str(),O_RDONLY|O_NOFOLLOW|O_NONBLOCK);
+        if(input<0)throw std::runtime_error("wcdb_snapshot_source_unavailable");
+        struct Close {int fd;~Close(){close(fd);}} closeInput{input};
+        struct stat first{};if(fstat(input,&first)||!S_ISREG(first.st_mode)||first.st_size<0||uint64_t(first.st_size)>maximum)throw std::runtime_error("wcdb_snapshot_budget_or_type");
+        int output=open(target.c_str(),O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0600);
+        if(output<0)throw std::runtime_error("wcdb_snapshot_create_failed");
+        Close closeOutput{output};char buffer[65536];size_t total=0;
+        for(;;){auto n=read(input,buffer,sizeof buffer);if(n<0)throw std::runtime_error("wcdb_snapshot_read_failed");if(!n)break;
+            total+=size_t(n);if(total>maximum)throw std::runtime_error("wcdb_snapshot_budget_or_type");
+            size_t offset=0;while(offset<size_t(n)){auto written=write(output,buffer+offset,size_t(n)-offset);if(written<=0)throw std::runtime_error("wcdb_snapshot_write_failed");offset+=size_t(written);}}
+        struct stat after{},named{};if(fstat(input,&after)||lstat(source.c_str(),&named)||!same(stamp(first),stamp(after))||!same(stamp(first),stamp(named))||total!=size_t(first.st_size))throw std::runtime_error("wcdb_snapshot_source_changed");
+        return stamp(first);
+    }
+    explicit EncryptedSnapshot(const std::filesystem::path& source){
+        char pattern[]="/private/tmp/axr-encrypted-wcdb-XXXXXX";auto created=mkdtemp(pattern);
+        if(!created)throw std::runtime_error("wcdb_snapshot_create_failed");directory=created;path=directory/"source.db";
+        try {
+            auto before=copy(source,path,128*1024*1024);auto wal=source;wal+="-wal";struct stat info{};
+            const bool hasWal=lstat(wal.c_str(),&info)==0;std::optional<Stamp> walStamp;
+            if(hasWal)walStamp=copy(wal,path.string()+"-wal",64*1024*1024);
+            struct stat after{};if(lstat(source.c_str(),&after)||!same(before,stamp(after)))throw std::runtime_error("wcdb_snapshot_source_changed");
+            if(hasWal){if(lstat(wal.c_str(),&after)||!same(*walStamp,stamp(after)))throw std::runtime_error("wcdb_snapshot_source_changed");}
+            else if(lstat(wal.c_str(),&after)==0)throw std::runtime_error("wcdb_snapshot_source_changed");
+            // Deliberately do not copy shared-memory indexes. SQLCipher builds
+            // its own index from committed frames in this encrypted local copy.
+        }catch(...){std::error_code error;std::filesystem::remove_all(directory,error);throw;}
+    }
+    ~EncryptedSnapshot(){std::error_code error;std::filesystem::remove_all(directory,error);}
+};
+#endif
 class WeChatConsumer final:public CredentialConsumer {
     Json config;Cipher api;
 #ifndef AXR_SECURITY_RELEASE
@@ -136,7 +180,8 @@ protected:
         if(id.find('@')!=std::string::npos&&id!=config.at("account_id").get<std::string>())throw std::runtime_error("wcdb_native_private_chat_required");
         const std::map<std::string,std::set<std::string>> fields={
             {"messages",{"kind","since","until","after","cursors","limit"}},
-            {"recent",{"kind","query","since"}},{"draft",{"kind"}},{"session_schema",{"kind"}},
+            {"recent",{"kind","query","since"}},{"draft",{"kind"}},{"session_schema",{"kind"}},{"session_state",{"kind"}},
+            {"message_state",{"kind","isolated_snapshot"}},
             {"activity",{"kind","since","after","limit"}},
             {"catalog",{"kind","offset","limit"}},
             {"unique_draft",{"kind","text"}}};
@@ -171,19 +216,79 @@ protected:
             auto purpose=shard.at("role").get<std::string>();
             if(kind=="catalog"&&purpose!="contact")continue;
             if(kind!="catalog"&&purpose=="contact")continue;
-            if((kind=="messages"&&purpose!="message")||(kind=="recent"&&purpose!="general")||((kind=="draft"||kind=="unique_draft"||kind=="session_schema"||kind=="activity")&&purpose!="session"))continue;
+            if(((kind=="messages"||kind=="message_state")&&purpose!="message")||(kind=="recent"&&purpose!="general")||((kind=="draft"||kind=="unique_draft"||kind=="session_schema"||kind=="session_state"||kind=="activity")&&purpose!="session"))continue;
+            auto selected=shard;
+#if defined(__APPLE__)
+            std::unique_ptr<EncryptedSnapshot> snapshot;
+            if(kind=="message_state"&&request.value("isolated_snapshot",false)){
+                snapshot=std::make_unique<EncryptedSnapshot>(Utf8Path(shard.at("path").get<std::string>()));selected["path"]=snapshot->path.string();
+            }
+#else
+            if(kind=="message_state"&&request.value("isolated_snapshot",false))throw std::runtime_error("wcdb_snapshot_platform_unqualified");
+#endif
             std::string key;
 #ifndef AXR_SECURITY_RELEASE
             if(!fixtureKeys.empty())key=fixtureKeys.at(shard.at("key_reference"));else
 #endif
             key=ProtectedStore(config.at("credential_namespace")).Get(NativeKeyName(shard.at("key_reference")));
-            Database db(api,shard,key);Json rows;
+            Database db(api,selected,key);Json rows;
             if(kind=="catalog"){
                 auto offset=request.value("offset",0),limit=request.value("limit",1000);
                 if(offset<0||offset>10000||limit<1||limit>1000)throw std::runtime_error("wcdb_native_catalog_budget");
                 auto self=db.run("SELECT username FROM contact WHERE username=? LIMIT 2",Json::array({config.at("account_id")}));
                 if(self.size()!=1)throw std::runtime_error("wcdb_native_self_identity_missing");
                 rows=db.run("SELECT username,nick_name,remark FROM contact WHERE delete_flag=0 ORDER BY username LIMIT ? OFFSET ?",Json::array({limit,offset}));
+            }else if(kind=="message_state"){
+                // Fixed owner-only readback diagnostics. Never enumerate other
+                // recipients, return content, or accept SQL/table parameters.
+                auto table=Table(id);db.run("BEGIN");
+                auto present=db.run("SELECT name FROM sqlite_master WHERE type='table' AND name=?",Json::array({table}));
+                if(present.empty())rows=Json::array({Json{{"table_present",false}}});
+                else {
+                    rows=db.run("SELECT 1 AS table_present,count(*) AS records,max(create_time) AS latest_created,max(rowid) AS latest_local_id FROM \""+table+"\"");
+                    auto latest=db.run("SELECT m.create_time AS created,m.local_type AS type,m.server_id,m.real_sender_id AS sender_index,n.user_name=? AS sender_is_self,n.user_name=? AS sender_is_peer FROM \""+table+"\" m LEFT JOIN Name2Id n ON n.rowid=m.real_sender_id ORDER BY m.create_time DESC,m.rowid DESC LIMIT 3",Json::array({config.at("account_id"),id}));
+                    rows[0]["latest_metadata"]=latest;
+                }
+                // Inspect only tables belonging to this exact recipient hash.
+                // Schema names are diagnostic metadata, never caller-selected
+                // SQL or a license to read another recipient's records.
+                auto candidates=db.run("SELECT name FROM sqlite_master WHERE type='table' AND instr(lower(name),?)>0 ORDER BY name LIMIT 17",Json::array({table.substr(4)}));
+                if(candidates.size()>16)throw std::runtime_error("wcdb_native_target_schema_budget");
+                Json schemas=Json::array();
+                for(auto& candidate:candidates){
+                    auto name=candidate.at("name").get<std::string>();
+                    if(name.empty()||name.size()>128||name.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_")!=std::string::npos)throw std::runtime_error("wcdb_native_target_schema_unqualified");
+                    schemas.push_back(Json{{"name",name},{"columns",db.run("SELECT name,type FROM pragma_table_info(?) LIMIT 64",Json::array({name}))}});
+                }
+                rows[0]["target_schemas"]=schemas;
+                rows[0]["journal_mode"]=db.run("PRAGMA journal_mode");
+                rows[0]["name_index_schema"]=db.run("SELECT name,type FROM pragma_table_info('Name2Id') LIMIT 32");
+                rows[0]["target_name_index"]=db.run("SELECT rowid AS name_id FROM Name2Id WHERE user_name=? LIMIT 2",Json::array({id}));
+                rows[0]["send_index_schema"]=db.run("SELECT name,type FROM pragma_table_info('SendInfo') LIMIT 32");
+                rows[0]["full_scan"]=present.empty()?Json::array():db.run("SELECT count(*) AS records,max(create_time) AS latest_created,max(rowid) AS latest_local_id FROM \""+table+"\" NOT INDEXED");
+                rows[0]["source_path_fingerprint"]=Digest(shard.at("path").get<std::string>());
+                auto auxiliary=db.run("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'Msg_%' ORDER BY name LIMIT 65");
+                if(auxiliary.size()>64)throw std::runtime_error("wcdb_native_auxiliary_schema_budget");
+                Json auxiliarySchemas=Json::array();
+                for(auto& entry:auxiliary){
+                    auto name=entry.at("name").get<std::string>();
+                    if(name.empty()||name.size()>80||name.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_")!=std::string::npos||name.find("wxid_")!=std::string::npos||std::regex_search(name,std::regex("[a-fA-F0-9]{32}")))continue;
+                    auxiliarySchemas.push_back(Json{{"name",name},{"columns",db.run("SELECT name,type FROM pragma_table_info(?) LIMIT 64",Json::array({name}))}});
+                }
+                rows[0]["auxiliary_schemas"]=auxiliarySchemas;
+                if(!db.run("SELECT name FROM sqlite_master WHERE type='table' AND name='MessageGroupTimeInfo'").empty()){
+                    // An empty exact join cannot distinguish an unused feature
+                    // from a namespace mismatch. Return only the table's size;
+                    // never enumerate another conversation's group values.
+                    rows[0]["group_index_size"]=db.run("SELECT count(*) AS records FROM MessageGroupTimeInfo");
+                    rows[0]["target_groups"]=db.run("SELECT group_id,create_time,initial_sort_seq,birth_time FROM MessageGroupTimeInfo WHERE chatname_id=(SELECT rowid FROM Name2Id WHERE user_name=?) ORDER BY create_time LIMIT 65",Json::array({id}));
+                    if(rows[0]["target_groups"].size()>64)throw std::runtime_error("wcdb_native_target_group_budget");
+                }
+#if defined(__APPLE__)
+                struct stat sourceInfo{};
+                if(lstat(Utf8Path(shard.at("path").get<std::string>()).c_str(),&sourceInfo))throw std::runtime_error("wcdb_native_source_unavailable");
+                rows[0]["source_identity"]=Json{{"device",sourceInfo.st_dev},{"inode",sourceInfo.st_ino},{"size",sourceInfo.st_size}};
+#endif
             }else if(kind=="messages"){
                 auto table=Table(id);db.run("BEGIN");auto present=db.run("SELECT name FROM sqlite_master WHERE type='table' AND name=?",Json::array({table}));if(present.empty())continue;
                 auto columns=db.run("PRAGMA table_info(\""+table+"\")");std::set<std::string> names;for(auto& c:columns)names.insert(c.at("name"));
@@ -196,6 +301,7 @@ protected:
                 for(auto& row:rows)if(!row["body"].is_null()&&(row["sender"].is_null()||(row["sender"]!=id&&row["sender"]!=config.at("account_id"))))throw std::runtime_error("wcdb_native_sender_identity_mismatch");
             }else if(kind=="recent")rows=db.run("SELECT username,query,last_click_time FROM SearchRecent WHERE query=? AND last_click_time>=? LIMIT 3",Json::array({request.at("query"),request.at("since")}));
             else if(kind=="session_schema")rows=db.run("SELECT name,type FROM pragma_table_info('SessionTable') LIMIT 64");
+            else if(kind=="session_state")rows=db.run("SELECT last_timestamp AS updated,last_msg_locald_id AS local_id,last_msg_type AS type,last_msg_sub_type AS subtype FROM SessionTable WHERE username=? LIMIT 2",Json::array({id}));
             else if(kind=="activity")rows=db.run(activitySql,activityParams);
             else if(kind=="draft")rows=db.run("SELECT CASE WHEN length(CAST(draft AS BLOB))<=16000 THEN draft ELSE NULL END AS draft,length(CAST(draft AS BLOB)) AS size FROM SessionTable WHERE username=? LIMIT 2",Json::array({id}));
             else {auto text=request.at("text").get<std::string>();if(text.empty()||text.size()>16000)throw std::runtime_error("wcdb_native_draft_budget");rows=db.run("SELECT username,CASE WHEN length(CAST(draft AS BLOB))<=16000 THEN draft ELSE NULL END AS draft FROM SessionTable WHERE instr(draft,?)>0 LIMIT 3",Json::array({text}));if(rows.size()!=1||rows[0]["username"]!=id||rows[0]["draft"]!=text)throw std::runtime_error("wcdb_native_unique_draft_mismatch");}
@@ -206,6 +312,66 @@ protected:
 };
 #if defined(__APPLE__)
 CFStringRef Text(const std::string& text){return CFStringCreateWithBytes(nullptr,reinterpret_cast<const UInt8*>(text.data()),text.size(),kCFStringEncodingUTF8,false);}
+template<bool Fixture=false> Json ImportOwnerFile(const Json& configuration,const Json& source){
+    std::unique_ptr<ProtectedStore> destination;
+    if constexpr(!Fixture)destination=std::make_unique<ProtectedStore>(configuration.at("credential_namespace"));
+    Cipher api(configuration.at("sqlcipher_library"));unsigned count=0;
+    // Authenticate the native store identity before touching the selected file.
+    try{if constexpr(!Fixture){auto existing=destination->Get(NativeKeyName(configuration.at("shards").at(0).at("key_reference")));OPENSSL_cleanse(existing.data(),existing.size());}}
+    catch(const std::runtime_error& error){if(std::string_view(error.what())!="owner_secret_not_provisioned")throw;}
+    auto path=Utf8Path(source.at("path").get<std::string>());
+    if(!path.is_absolute())throw std::runtime_error("wcdb_import_path_invalid");
+    for(auto node=path;!node.empty();node=node.parent_path()){
+        struct stat info{};if(lstat(node.c_str(),&info)||S_ISLNK(info.st_mode))throw std::runtime_error("wcdb_import_path_invalid");
+        if(node==node.root_path())break;
+    }
+    int fd=open(path.c_str(),O_RDONLY|O_NOFOLLOW|O_NONBLOCK);
+    if(fd<0)throw std::runtime_error("wcdb_import_file_unavailable");
+    struct Close{int fd;~Close(){close(fd);}} closeFile{fd};
+    struct stat info{};if(fstat(fd,&info)||!S_ISREG(info.st_mode)||info.st_nlink!=1||info.st_size<1||info.st_size>65536)
+        throw std::runtime_error("wcdb_import_file_invalid");
+    std::string raw(size_t(info.st_size),'\0');
+    struct Erase{std::string& value;~Erase(){OPENSSL_cleanse(value.data(),value.size());}} erase{raw};
+    if(read(fd,raw.data(),raw.size())!=ssize_t(raw.size())||Digest(raw)!=source.at("sha256").get<std::string>())
+        throw std::runtime_error("wcdb_import_file_changed");
+    // Either one owner-supplied raw key, or {"keys": {salt_hex: key_hex}}.
+    // No executable format, process inspection, key export or caller SQL.
+    std::map<std::string,std::string> values;
+    struct EraseValues{std::map<std::string,std::string>& values;~EraseValues(){for(auto& [_,v]:values)OPENSSL_cleanse(v.data(),v.size());}} eraseValues{values};
+    if(raw.find_first_not_of("0123456789abcdefABCDEF\r\n \t")==std::string::npos){
+        auto start=raw.find_first_not_of("\r\n \t"),end=raw.find_last_not_of("\r\n \t");
+        if(start!=std::string::npos)values["*"]=raw.substr(start,end-start+1);
+    }else{
+        auto decoded=Json::parse(raw);
+        struct EraseDecoded {
+            Json& value;
+            static void erase(Json& v){
+                if(v.is_string()){auto& text=v.get_ref<std::string&>();OPENSSL_cleanse(text.data(),text.size());}
+                else if(v.is_object()||v.is_array())for(auto& child:v)erase(child);
+            }
+            ~EraseDecoded(){erase(value);}
+        } eraseDecoded{decoded};
+        if(!decoded.is_object()||decoded.size()!=1||!decoded.contains("keys")||!decoded["keys"].is_object()||decoded["keys"].size()>128)
+            throw std::runtime_error("wcdb_import_format_invalid");
+        for(auto it=decoded["keys"].begin();it!=decoded["keys"].end();++it){
+            if(it.key().size()!=32||!it.value().is_string())throw std::runtime_error("wcdb_import_format_invalid");
+            values[it.key()]=it.value().get<std::string>();
+        }
+    }
+    for(auto& shard:configuration.at("shards")){
+        auto item=values.find(shard.at("salt").get<std::string>());if(item==values.end())item=values.find("*");
+        if(item==values.end()||item->second.size()!=64||item->second.find_first_not_of("0123456789abcdefABCDEF")!=std::string::npos)
+            throw std::runtime_error("wcdb_import_key_missing_or_invalid");
+        std::string key(32,'\0');for(size_t i=0;i<32;++i)key[i]=char(std::stoul(item->second.substr(i*2,2),nullptr,16));
+        Erase eraseKey{key};auto verifyKey=key;Database verify(api,shard,verifyKey);
+        if constexpr(!Fixture){
+            try{auto existing=destination->Get(NativeKeyName(shard.at("key_reference")));Erase eraseExisting{existing};if(existing!=key)throw std::runtime_error("wcdb_import_existing_key_conflict");}
+            catch(const std::runtime_error& error){if(std::string_view(error.what())!="owner_secret_not_provisioned")throw;destination->Put(NativeKeyName(shard.at("key_reference")),key);}
+        }
+        ++count;
+    }
+    return Json{{"verified_credentials",count},{"raw_keys_exported",false},{"legacy_permissions_restored",false}};
+}
 Json ImportLegacy(const Json& configuration,const std::string& legacyNamespace){
     // Calling this is possible only inside the protected authority identity.
     // The owner setup review names the old service and exact enrolled files.
@@ -244,8 +410,13 @@ PYBIND11_MODULE(_wechat_credentials,m){
     py::class_<WeChatConsumer,CredentialConsumer>(m,"WeChatConsumer").def(py::init([](const std::string& witness,const std::string& config){return std::make_unique<WeChatConsumer>(witness,ParseBounded(config));}));
 #if defined(__APPLE__)
     m.def("import_legacy_credentials",[](const std::string& config,const std::string& legacyNamespace){return ImportLegacy(ParseBounded(config),legacyNamespace).dump();});
+    m.def("import_owner_credentials",[](const std::string& config,const std::string& source){return ImportOwnerFile(ParseBounded(config),ParseBounded(source)).dump();});
 #endif
 #ifndef AXR_SECURITY_RELEASE
+#if defined(__APPLE__)
+    // Synthetic encrypted-file tests only; never compiled into release code.
+    m.def("fixture_verify_owner_file",[](const std::string& config,const std::string& source){return ImportOwnerFile<true>(ParseBounded(config),ParseBounded(source)).dump();});
+#endif
     m.def("fixture_consumer",[](const std::string& witness,const std::string& config,const py::dict& values){std::map<std::string,std::string> keys;for(auto item:values)keys.emplace(py::cast<std::string>(item.first),py::cast<std::string>(item.second));return std::make_unique<WeChatConsumer>(witness,ParseBounded(config),std::move(keys));});
 #endif
 }
