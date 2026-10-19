@@ -15,6 +15,7 @@ import plistlib
 import shutil
 import subprocess
 import sys
+import zipfile
 
 NAME='WeChat MCP Developer Preview'
 VERSION='0.1.0-dp1'
@@ -84,6 +85,10 @@ def inspect_bundle(app):
         if not path.is_file():continue
         data=path.read_bytes()
         if any(value in data for value in forbidden):raise RuntimeError('private path in artifact: '+str(path.relative_to(app)))
+        if path.suffix=='.zip':
+            with zipfile.ZipFile(path) as archive:
+                for name in archive.namelist():
+                    if any(value in archive.read(name) for value in forbidden):raise RuntimeError('private path in zip entry: '+name)
         if data[:4] not in (b'\xcf\xfa\xed\xfe',b'\xca\xfe\xba\xbe',b'\xfe\xed\xfa\xcf',b'\xbe\xba\xfe\xca'):continue
         binaries+=1
         dependencies=text(['/usr/bin/otool','-L',path]).splitlines()[1:]
@@ -170,6 +175,9 @@ def build(output,native,notices):
 a=Analysis([{str(ROOT/'desktop/release_entry.py')!r}],pathex={[str(runtime),str(ROOT)]!r},binaries=[],datas={datas!r},
  hiddenimports=['PySide6.QtQuick','PySide6.QtQuickControls2','PySide6.QtSvg','PySide6.QtNetwork','PySide6.QtOpenGL','scripts.install_authority_macos','scripts.register_authority_service'],
  excludes=['pytest','numpy','scipy','torch','pandas','matplotlib','tkinter','PyQt5','PyQt6','wx','wxauto4','win32com','apsw'])
+# Pip's PEP 610 install-origin metadata is not needed by the application and can
+# contain the builder's private checkout URI. Keep runtime version/license data.
+a.datas=[entry for entry in a.datas if not entry[0].endswith('.dist-info/direct_url.json')]
 pyz=PYZ(a.pure)
 exe=EXE(pyz,a.scripts,[],exclude_binaries=True,name='WeChatMCP',debug=False,strip=True,upx=False,console=False,target_arch='arm64',codesign_identity=None)
 coll=COLLECT(exe,a.binaries,a.datas,strip=True,upx=False,name='WeChatMCP')
