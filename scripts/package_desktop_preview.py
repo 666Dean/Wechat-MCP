@@ -149,6 +149,10 @@ def disk_image(output,app):
         run([mounted/'Contents/MacOS/WeChatMCP','--fixture','--capture',output/'mounted-fixture.png','--exit-after','5'],cwd=output/'smoke-home',env=env,timeout=45)
         if not (output/'mounted-fixture.png').is_file():raise RuntimeError('mounted Qt render missing')
     finally:run(['/usr/bin/hdiutil','detach',mount],capture_output=True)
+    buildinfo=json.loads((output/'BUILDINFO.json').read_text())
+    buildinfo['checks'].update(dmg_verified=True,readonly_mount_runtime=json.loads(report.read_text()),
+                              mounted_fixture_render=True)
+    (output/'BUILDINFO.json').write_text(json.dumps(buildinfo,indent=2)+'\n')
     shutil.copy2(ROOT/'docs/releases/0.1.0-dp1.zh-CN.md',output/'RELEASE-NOTES.zh-CN.md')
     assets=[dmg,output/('WeChat-MCP-'+VERSION+'-source.tar.gz'),output/'BUILDINFO.json',output/'RELEASE-NOTES.zh-CN.md']
     (output/'SHA256SUMS.txt').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in assets))
