@@ -92,6 +92,7 @@ class WeChatService:
         self.bursts=BurstBuffer()
         self.lifecycle={'thread_id':'','state':'awaiting_lifecycle','turn_id':None};self.bridge_token=None;self.retired_tokens={}
         self.last_error=self.state.get('worker-error',None)
+        self.provider_cache=None
         self.jobs=self.state.get('jobs',{})
         # Never resume or retry work interrupted by a crash/restart.
         for job in self.jobs.values():
@@ -131,6 +132,9 @@ class WeChatService:
         readiness=self.readiness()
         if not readiness['database']:raise AXRError('wechat_full_disk_access_required')
         if arguments.get('automatic',False) and not readiness['accessibility']:raise AXRError('wechat_accessibility_required')
+        if arguments.get('disclose',True):
+            provider=self.provider_readiness()
+            if not provider['ready']:raise AXRError(provider['code'])
         if type(arguments) is not dict or set(arguments)-{'targets','reply_targets','seconds','max_replies','automatic','disclose','style','attribution','overwrite_drafts','self_agent'}:raise AXRError('wechat_owner_scope_invalid')
         targets=arguments.get('targets',[])
         if targets=='all':targets=list(self.resources)
@@ -563,7 +567,20 @@ class WeChatService:
             'listener':{'listen':active,'wake_agent':active,'auto_execute':active and self.scope['automatic']},
             'platform':{'mode':'wcdb-native','send_available':active and bool(self.scope['reply_targets']) and permissions['database'] and permissions['accessibility']},'audit_valid':self.kernel.store.journal.verify_audit(),
             'policy_version':self.kernel.store.guard.version,'reply_count':self.reply_count,'retry_unknown':False,
-            'delivery_confirmed':False,'body_disclosed':False,'pause_reason':self.last_error}
+            'delivery_confirmed':False,'body_disclosed':False,'pause_reason':self.last_error,'inference':self.provider_readiness()}
+    def provider_readiness(self):
+        if self.kernel.development_fixture:return {'ready':True,'code':None}
+        try:
+            provider=self.config['codex_provider']
+            paths=[Path(provider[key]) for key in ('binary','auth_file','tls_bundle')]
+            stamp=tuple((p.stat().st_dev,p.stat().st_ino,p.stat().st_size,p.stat().st_mtime_ns,p.stat().st_ctime_ns) for p in paths)
+            if self.provider_cache and self.provider_cache[0]==stamp:return self.provider_cache[1]
+            code=None
+            if hashlib.sha256(paths[0].read_bytes()).hexdigest()!=provider['sha256']:code='codex_provider_build_changed'
+            elif not 0<paths[1].stat().st_size<=1024*1024:code='codex_provider_login_required'
+            elif hashlib.sha256(paths[2].read_bytes()).hexdigest()!=provider['tls_sha256']:code='codex_provider_trust_bundle_changed'
+            result={'ready':code is None,'code':code};self.provider_cache=(stamp,result);return result
+        except (OSError,KeyError,ValueError):return {'ready':False,'code':'codex_provider_unavailable'}
     def readiness(self):
         if self.kernel.development_fixture:return {'database':True,'accessibility':True,'synthetic':True}
         readable=True

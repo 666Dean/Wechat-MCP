@@ -7,10 +7,10 @@ first consume one exact, live self-task disclosure. No retry after handoff.
 import json
 import os
 import select
-import shutil
 import subprocess
 import threading
 import time
+from axr_integration.codex_bridge import codex_binary
 
 class OwnerAgentBridge:
     def __init__(self,emit):
@@ -46,8 +46,7 @@ class OwnerAgentBridge:
     def run(self):
         result={'job_id':self.task['job_id'],'failed':True};turn=None
         try:
-            binary=shutil.which('codex')
-            if not binary:raise RuntimeError('codex_cli_required')
+            binary=codex_binary()
             env={**os.environ,'AXR_CODEX_WORKER_HOOK_TOKEN':self.task['worker_token']}
             self.process=subprocess.Popen([binary,'app-server','--listen','stdio://'],stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,bufsize=0,env=env,start_new_session=True)

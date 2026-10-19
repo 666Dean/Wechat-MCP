@@ -58,6 +58,10 @@ def _configuration(value):
         return str(path)
     for field in ('sqlcipher_library','navigation_helper'):
         if field in application:application[field]=asset(application[field])
+    if 'codex_provider' in application:
+        provider=dict(application['codex_provider'])
+        if 'binary' in provider:provider['binary']=asset(provider['binary'])
+        application['codex_provider']=provider
     state=Path(value['state'])
     if not state.is_absolute() or str(state)==str(Path.home()) or state.is_symlink():raise AXRError('wechat_deployment_state_invalid')
     endpoint=value['endpoint']
@@ -120,6 +124,21 @@ def _hardware_enrollment(configuration_digest):
         if process.poll() is None:process.kill();process.wait()
     return {'challenge':challenge,'public_key':response['public_key'],'signature':response['signature'],'identity':actual}
 
+def provider_build_update(original,current,*,bundled_path):
+    """Only a CLI image/path change, never credentials, sources or authority.
+
+    Accepted solely inside a stopped install plus exact hardware-signed build
+    update. Does not itself approve or write anything.
+    """
+    if original==current:return True
+    old=original.get('codex_provider');new=current.get('codex_provider')
+    if type(old) is not dict or type(new) is not dict:return False
+    without=lambda value,keys:{k:v for k,v in value.items() if k not in keys}
+    return (without(original,{'codex_provider'})==without(current,{'codex_provider'})
+        and set(old)==set(new) and without(old,{'binary','sha256'})==without(new,{'binary','sha256'})
+        and new.get('binary')==str(bundled_path) and isinstance(new.get('sha256'),str)
+        and re.fullmatch('[0-9a-f]{64}',new['sha256']) is not None)
+
 def refresh_owner_build(value,bootstrap):
     """Revoke old contracts, authenticate this exact build, retain the ledger.
 
@@ -135,9 +154,14 @@ def refresh_owner_build(value,bootstrap):
         approved=store.config()
         current={k:v for k,v in config['application'].items() if k not in ('resources','conversations')}
         original={k:v for k,v in approved['application'].items() if k not in ('resources','conversations')}
-        if (current!=original or approved['owner_user']!=process_identity(os.getpid())['user'] or
+        bundled=BASE/'AXR Authority.app/Contents/Resources/CodexCLI.app/Contents/MacOS/codex'
+        if (not provider_build_update(original,current,bundled_path=bundled) or approved['owner_user']!=process_identity(os.getpid())['user'] or
             approved['owner_public_key']!=bootstrap.get('owner_public_key')):
             raise AXRError('wechat_build_update_configuration_changed')
+        if current!=original:
+            if (bundled.is_symlink() or not bundled.is_file() or
+                hashlib.sha256(bundled.read_bytes()).hexdigest()!=current['codex_provider']['sha256']):
+                raise AXRError('codex_provider_build_changed')
         signer=native.HardwareSigningKey('Stellaria.AXR.Root.v2')
         kernel,registry=_kernel(store,signer,approved['owner_public_key'])
         try:
@@ -156,6 +180,8 @@ def refresh_owner_build(value,bootstrap):
                     enrollment['challenge']['expires']>time.time() and
                     pins.review(BASE,assets)==reviewed)
             result=pins.enroll(BASE,assets,authenticated)
+            if current!=original:
+                store.seal_config({**approved,'application':{**approved['application'],'codex_provider':current['codex_provider']}})
             store.journal.security_event('owner-build-update',{'build':result['build'],'authority_restored':False})
             kernel.integrity.persist()
             return {**result,'updated':True,'credentials_retained':True,'ledger_retained':True}

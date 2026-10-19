@@ -161,6 +161,22 @@ class DesktopUI(unittest.TestCase):
                 search.setProperty('text','no matching contact');QTest.qWait(20);self.assertEqual(contacts.property('count'),0)
         finally:self.dispose(c,e,w)
 
+    def test_thread_list_is_readable_during_scope_but_cannot_rebind(self):
+        c,e,w=self.create();c.timer.stop()
+        try:
+            c._data.update(connected=True,scope='work_and_daily_assistance',status={'owner_authorized':True,'automatic_reply':{'active':False}})
+            c.changed.emit();w.setProperty('page',6);QTest.qWait(30)
+            mode=self.visual(w,'replyModeStatus');self.assertIn('不自动发送',mode.property('text'))
+            self.visual(w,'settingsPage').setProperty('section',1);QTest.qWait(30)
+            self.assertTrue(self.visual(w,'loadThreads').isEnabled())
+            c.accept({'name':'threads','value':{'threads':[{'id':'fixture-thread','title':'Synthetic task'}],'next_cursor':'more'},'error':None})
+            QTest.qWait(20)
+            self.assertTrue(self.visual(w,'threadSelector').isEnabled());self.assertTrue(self.visual(w,'moreThreads').isVisible())
+            self.assertTrue(c.threadsHasMore)
+            c.inflight.add('threads_more');c.changed.emit();QTest.qWait(20)
+            self.assertFalse(self.visual(w,'loadThreads').isEnabled())
+        finally:self.dispose(c,e,w)
+
     def test_model_reasoning_keyboard_and_rapid_project_navigation(self):
         c,e,w=self.create();c.timer.stop()
         try:

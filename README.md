@@ -30,6 +30,11 @@ Windows 当前处于[整个项目的代码完成阶段](docs/WINDOWS_CODE_COMPLE
 
 工作台现以对话为中心：左侧内容/授权入口，右侧合并的模型/思考强度入口与发送；联系人可搜索分页管理，完全访问先风险确认再本机签署。连续消息合并后再回复。[设计、使用和边界](docs/DESKTOP_CONVERSATION_EXPERIENCE.md)。
 
+设置 → 助理偏好可在授权生效时载入和浏览 Codex 对话；载入包含桌面来源，并支持
+继续翻页。修改绑定需先停止访问并确认。设置 → 消息助理明确区分“仅生成草稿”
+和“自动回复”：前者不会发送。macOS 自动回复组件固定在受保护安装包内，
+外部 Codex 更新不会直接替换它；更换组件仍走本机签名更新。
+
 ![Qt Desktop light theme — synthetic preview](docs/assets/desktop-light.png)
 
 [深色主题设计预览](docs/assets/desktop-dark.png) · [设置页预览](docs/assets/desktop-settings.png) · 图中仅为合成界面，无真实微信数据。

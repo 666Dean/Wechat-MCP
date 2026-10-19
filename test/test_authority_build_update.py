@@ -11,6 +11,16 @@ from axr_applications import wechat
 from test.test_security_authority import ProtectedStore
 
 class BuildUpdate(unittest.TestCase):
+    def test_only_fixed_provider_code_can_migrate_not_login_or_sources(self):
+        provider={'binary':'old-external','sha256':'a'*64,'auth_file':'fixture-login','workspace':'fixture-work','tls_bundle':'fixture-trust','tls_sha256':'b'*64}
+        original={'account_id':'fixture','resources':[],'codex_provider':provider}
+        current={**original,'codex_provider':{**provider,'binary':'@resources/bin/codex-source','sha256':'c'*64}}
+        check=lambda value:wechat.provider_build_update(original,value,bundled_path='@resources/bin/codex-source')
+        self.assertTrue(check(current))
+        for key,value in [('binary','unprotected'),('sha256','invalid'),('auth_file','other-login'),('workspace','other-work'),('tls_bundle','other-trust')]:
+            self.assertFalse(check({**current,'codex_provider':{**current['codex_provider'],key:value}}))
+        self.assertFalse(check({**current,'resources':['expanded']}))
+        self.assertFalse(check({**current,'account_id':'other'}))
     def test_public_build_review_is_read_only_and_changed_assets_need_new_review(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);(root/'host').write_bytes(b'old')

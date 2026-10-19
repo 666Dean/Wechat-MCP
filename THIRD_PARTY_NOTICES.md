@@ -50,6 +50,12 @@ SOFTWARE.
 
 ## Other dependencies
 
+The macOS local deployment tool can snapshot an owner-supplied, signed Codex CLI
+application into the protected runtime. Its original signature and terms remain
+in force; no CLI executable, login file or token is committed to this repository.
+This local packaging mechanism does not establish a complete redistribution
+license inventory or authorize redistribution of a vendor application bundle.
+
 MCP Python SDK: MIT. zstandard: BSD. wxauto4 and its dependencies retain their
 upstream licensing; used only by the legacy Windows path. No WCDB decryption
 binary, private keys, messages, or third-party executable is bundled here.

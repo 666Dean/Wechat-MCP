@@ -132,6 +132,24 @@ class ServiceTests(unittest.TestCase):
         with patch.object(self.service,'inspect_binding') as binding:
             self.service.review(self.owner,{'targets':'all','automatic':False})
             binding.assert_not_called()
+    def test_provider_failure_is_detected_before_hardware_or_window_request(self):
+        with patch.object(self.service,'provider_readiness',return_value={'ready':False,'code':'codex_provider_build_changed'}),patch.object(self.service,'inspect_binding') as window:
+            with self.assertRaisesRegex(AXRError,'^codex_provider_build_changed$'):
+                self.service.review(self.owner,{'targets':'all','automatic':True})
+        self.assertEqual(self.service.reviews,{});window.assert_not_called();self.assertIsNone(self.service.scope)
+    def test_provider_hash_cache_invalidates_on_program_update_without_reading_auth(self):
+        root=Path(self.temp.name);binary=root/'codex';auth=root/'auth';tls=root/'tls'
+        binary.write_bytes(b'synthetic image');auth.write_bytes(b'synthetic login');tls.write_bytes(b'synthetic trust')
+        self.service.config['codex_provider']={'binary':str(binary),'sha256':digest('wrong'),'auth_file':str(auth),'tls_bundle':str(tls),'tls_sha256':__import__('hashlib').sha256(tls.read_bytes()).hexdigest()}
+        self.kernel.development_fixture=False
+        try:
+            self.assertEqual(self.service.provider_readiness()['code'],'codex_provider_build_changed')
+            self.service.provider_cache=None
+            self.service.config['codex_provider']['sha256']=__import__('hashlib').sha256(binary.read_bytes()).hexdigest()
+            self.assertTrue(self.service.provider_readiness()['ready'])
+            binary.write_bytes(b'changed program')
+            self.assertEqual(self.service.provider_readiness()['code'],'codex_provider_build_changed')
+        finally:self.kernel.development_fixture=True
     def test_navigation_failure_keeps_only_a_bounded_native_reason(self):
         self.activate()
         for reason,expected in [('authority_or_scope_changed','authority_or_scope_changed'),('private text/path','unconfirmed')]:

@@ -69,6 +69,8 @@ Item {
                 Label { Layout.fillWidth: true; Layout.preferredHeight: 44; verticalAlignment: Text.AlignVCenter; text: ["消息助理","助理偏好","连接与外观"][settings.section]; font.pixelSize: 20; font.weight: Font.DemiBold }
                 ColumnLayout { visible: settings.section===0; Layout.fillWidth: true; spacing: 14
                     Group { Layout.fillWidth: true
+                        Row { title: "当前模式"; Detail { objectName: "replyModeStatus"; text: !settings.scopeActive ? "未开启" : settings.autoReply.active ? "自动回复已开启" : "仅生成草稿 · 不自动发送" } }
+                        Rule {}
                         Row { title: "微信访问"; detail: settings.scopeActive ? (settings.controller.data.grants || []).length+" 个私聊" : "选择访问对象和权限"
                             GlassCombo { objectName: "settingsAccessMenu"; model: ["仅生成草稿","自动回复","完全访问"]; currentIndex: settings.accessLevel; menuWidth: 190
                                 onActivated: {settings.accessRequested(currentIndex);currentIndex=Qt.binding(function(){return settings.accessLevel})} }
@@ -99,10 +101,11 @@ Item {
                 ColumnLayout { visible: settings.section===1; Layout.fillWidth: true; spacing: 14
                     Group { Layout.fillWidth: true
                         Row { title: "Codex 对话"; detail: (settings.controller.assistant || {}).thread_title || "尚未绑定"
-                            GlassButton { text: "载入对话"; enabled: settings.connected && !settings.scopeActive; onClicked: settings.controller.loadThreads() }
-                            GlassButton { text: "更多"; enabled: settings.connected && !settings.scopeActive; onClicked: settings.controller.loadMoreThreads() }
+                            GlassButton { objectName: "loadThreads"; text: settings.controller.threadsLoading ? "载入中…" : "载入对话"; enabled: settings.connected && !settings.controller.threadsLoading; onClicked: settings.controller.loadThreads() }
+                            GlassButton { objectName: "moreThreads"; text: "更多"; visible: settings.controller.threadsHasMore; enabled: settings.connected && !settings.controller.threadsLoading; onClicked: settings.controller.loadMoreThreads() }
                         }
-                        GlassCombo { id: threads; objectName: "threadSelector"; Layout.fillWidth: true; Layout.margins: 10; enabled: !settings.scopeActive; model: settings.controller.codexThreads; textRole: "title"; valueRole: "id"; Accessible.name: "绑定的 Codex 对话"; onActivated: settings.chosenThread=currentValue }
+                        GlassCombo { id: threads; objectName: "threadSelector"; Layout.fillWidth: true; Layout.margins: 10; enabled: count>0; model: settings.controller.codexThreads; textRole: "title"; valueRole: "id"; Accessible.name: "绑定的 Codex 对话"; onActivated: settings.chosenThread=currentValue }
+                        Detail { Layout.fillWidth: true; Layout.margins: 10; text: settings.controller.codexThreads.length ? "已载入 "+settings.controller.codexThreads.length+" 个对话"+(settings.controller.threadsHasMore ? " · 可继续载入" : "") : "载入后选择对话；保存前不会改变绑定。" }
                         Row { title: "任务状态"; Detail { text: (settings.controller.data.thread_binding || {}).state==="busy" ? "忙碌时排队" : "等待连接事件" } }
                         Row { visible: !settings.independentService; title: "生命周期连接"; GlassButton { text: "配置连接"; onClicked: settings.hooksRequested() } }
                     }

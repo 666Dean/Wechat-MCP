@@ -48,7 +48,7 @@ send({'method':'turn/completed','params':{'threadId':'synthetic-thread','turn':{
             if event['kind']=='finished':finished.set()
         bridge=OwnerAgentBridge(emit);real_popen=subprocess.Popen
         def fixture(args,**kwargs):return real_popen([sys.executable,'-u','-c',script],**kwargs)
-        with patch('desktop.owner_agent.shutil.which',return_value='/fixture/codex'),patch('desktop.owner_agent.subprocess.Popen',side_effect=fixture):
+        with patch('desktop.owner_agent.codex_binary',return_value='/fixture/codex'),patch('desktop.owner_agent.subprocess.Popen',side_effect=fixture):
             bridge.start({'job_id':'synthetic-job','thread_id':'synthetic-thread','worker_token':'synthetic-token','text':'synthetic task','model':'synthetic-model','effort':'high','expires':time.time()+10})
             self.assertTrue(finished.wait(5));bridge.thread.join(2)
         self.assertEqual(events[-1],{'kind':'finished','job_id':'synthetic-job','failed':False,'text':'Synthetic command declined'})

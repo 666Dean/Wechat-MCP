@@ -49,7 +49,10 @@ def _install(package,*,replace_uninitialized=False,replace_stopped=False):
         proposed=json.loads((package/'AXR Authority.app/Contents/Resources/deployment.json').read_bytes())['deployment']
         from axr.initialization import empty_initialization
         endpoint=Path(current['endpoint'])
-        if current!=proposed or endpoint.exists() or endpoint.is_symlink():
+        from axr_applications.wechat import provider_build_update
+        same={k:v for k,v in current.items() if k!='application'}=={k:v for k,v in proposed.items() if k!='application'}
+        same=same and provider_build_update(current['application'],proposed['application'],bundled_path='@resources/CodexCLI.app/Contents/MacOS/codex')
+        if (current!=proposed and (not replace_stopped or not same)) or endpoint.exists() or endpoint.is_symlink():
             raise RuntimeError('initialized deployment requires stop and authenticated re-enrollment')
         if replace_uninitialized and not empty_initialization(current['state']):
             raise RuntimeError('initialized deployment requires stop and authenticated re-enrollment')

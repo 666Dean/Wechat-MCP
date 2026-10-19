@@ -64,6 +64,31 @@ def verify_optimized_runtime(build):
         if len(values)!=1 or values[0] not in ('Release','RelWithDebInfo'):raise ValueError()
     except (OSError,ValueError):raise ValueError('deployment requires an optimized Release or RelWithDebInfo build') from None
 
+def stage_codex_provider(application,resources):
+    """Snapshot an explicitly reviewed CLI; never follow another app's updates.
+
+    This is a local deployment asset, not a repository dependency. Keep its
+    vendor signature and refuse non-system dynamic dependencies.
+    """
+    provider=application.get('codex_provider')
+    if not provider:return application
+    source=Path(provider['binary']).resolve(strict=True)
+    if hashlib.sha256(source.read_bytes()).hexdigest()!=provider['sha256']:
+        raise ValueError('reviewed Codex provider changed before packaging')
+    if any(not dep.startswith(SYSTEM) for dep in dependencies(source)):
+        raise ValueError('Codex provider must be self-contained')
+    command(['/usr/bin/codesign','--verify','--strict',source])
+    bundle=source.parent.parent.parent
+    if source.parent.name!='MacOS' or not bundle.name.endswith('.app') or not (bundle/'Contents/Info.plist').is_file():
+        raise ValueError('Codex provider requires its complete signed application bundle')
+    if any(p.is_symlink() for p in bundle.rglob('*')):raise ValueError('Codex runtime links denied')
+    target_bundle=resources/'CodexCLI.app';shutil.copytree(bundle,target_bundle)
+    target=target_bundle/'Contents/MacOS'/source.name
+    if hashlib.sha256(target.read_bytes()).hexdigest()!=provider['sha256']:
+        raise ValueError('Codex provider changed while packaging')
+    command(['/usr/bin/codesign','--verify','--deep','--strict',target_bundle])
+    return {**application,'codex_provider':{**provider,'binary':'@resources/CodexCLI.app/Contents/MacOS/'+source.name}}
+
 def stage(root,build,output,deployment,*,identity='-'):
     if sys.platform!='darwin' or sys.version_info[:2]!=(3,12):raise ValueError('macOS Python 3.12 packaging required')
     verify_optimized_runtime(build)
@@ -112,6 +137,8 @@ def stage(root,build,output,deployment,*,identity='-'):
     if navigation.is_file():
         (resources/'bin').mkdir();helper=resources/'bin/wechat-navigation';shutil.copy2(navigation,helper);origins[helper]=navigation.resolve()
         if 'application' in deployment:deployment={**deployment,'application':{**deployment['application'],'navigation_helper':'@resources/bin/wechat-navigation'}}
+    if 'application' in deployment:
+        deployment={**deployment,'application':stage_codex_provider(deployment['application'],resources)}
     owner_auth=build/'AXR/axr-helper'
     if not owner_auth.is_file():raise ValueError('native owner authentication helper required')
     (resources/'bin').mkdir(exist_ok=True)

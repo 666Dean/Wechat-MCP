@@ -64,6 +64,8 @@ class Controller(QObject):
             if authority_installed():
                 from .authority_client import control
                 snapshot=control('snapshot');current=snapshot['status']
+                if current.get('inference',{}).get('ready') is False:
+                    raise AXRError(current['inference'].get('code') or 'codex_provider_unavailable')
                 if level==2:
                     from axr_integration.assistant_settings import valid_thread
                     assistant=control('assistant_settings')
@@ -116,6 +118,10 @@ class Controller(QObject):
     def assistant(self):return self._assistant
     @Property('QVariantList',notify=threadsChanged)
     def codexThreads(self):return self._threads
+    @Property(bool,notify=changed)
+    def threadsLoading(self):return bool(self.inflight & {'threads','threads_more'})
+    @Property(bool,notify=threadsChanged)
+    def threadsHasMore(self):return bool(self._threads_cursor)
     @Property('QVariantMap',notify=agentApprovalChanged)
     def agentApproval(self):return self._agent_approval
     @Slot(bool)
@@ -232,6 +238,14 @@ class Controller(QObject):
                 'independent_authority_control_unavailable':'本地安全服务未连接，请先启动服务；无需重新登录微信。',
                 'unlimited_requires_bound_codex_thread':'请先选择并保存固定 Codex 对话，再开启不限模式。',
                 'stop_automatic_before_settings_change':'请先停止自动回复，再更改助理偏好。',
+                'codex_cli_required':'找不到 Codex 程序，请检查 Codex 的安装和应用启动环境。',
+                'codex_metadata_timeout':'载入 Codex 对话超时，请稍后重试；当前授权未改变。',
+                'codex_metadata_unavailable':'Codex 未能返回对话列表，请检查 Codex 是否可正常使用。',
+                'codex_metadata_disconnected':'Codex 对话连接中断，请重新载入。',
+                'codex_provider_build_changed':'Codex 已更新，需要先更新本地助理组件，再开启自动回复。',
+                'codex_provider_login_required':'请先在 Codex 完成登录，再开启自动回复。',
+                'codex_provider_unavailable':'本地助理组件不可用，请更新服务后重试。',
+                'codex_provider_trust_bundle_changed':'本地助理的网络信任配置已变化，请更新服务后重试。',
                 'authority_missing_expired_revoked_or_exhausted':'当前操作需要授权，或原授权已到期。',
                 'owner_os_authentication_failed':'系统身份认证未完成，本次操作未获准。',
                 'owner_policy_changed_restart_required':'权限配置已更新，请重新连接本地服务。'}.get(result['error'],'操作未完成，请核对授权与本地服务。')
@@ -258,7 +272,11 @@ class Controller(QObject):
         if name=='assistant_load':
             self._assistant=value;self.assistantChanged.emit();return
         if name in ('threads','threads_more'):
-            self._threads=(self._threads if name=='threads_more' else [])+value['threads'];self._threads_cursor=value.get('next_cursor');self.threadsChanged.emit();return
+            rows=(self._threads if name=='threads_more' else [])+value['threads']
+            self._threads=list({row['id']:row for row in rows}.values());self._threads_cursor=value.get('next_cursor')
+            self.threadsChanged.emit();self.changed.emit()
+            self._notice='已载入 '+str(len(self._threads))+' 个 Codex 对话。'+('可继续载入更多。' if self._threads_cursor else '')
+            self.noticeChanged.emit();return
         if name=='assistant_save':self.loadAssistant()
         if name in ('chat_prompt','chat_cancel','owner_finish','automatic','automatic_stop'):self.refresh()
         if name=='owner_claim':
@@ -302,7 +320,7 @@ class Controller(QObject):
         self._notice={'refresh':'已同步。','approve':'已批准这一次操作。',
             'stop':'已撤销授权并停止监听。','install':'Codex MCP 配置已安装；权限仍由你单独授予。',
             'restore':'已恢复安装前的 Codex 设置。','start':'本地服务已启动。','execute':'请查看处理结果。','agent':'助理已启动，等待授权范围内的新任务。','grant':'已授权此会话的本地读取，有效期 15 分钟。','cache':'文件目录已更新，请重新授权。',
-            'automatic':'自动回复已开启。微信需要保持登录且可见。','automatic_stop':'自动回复已停止，当前发送权限已撤销。',
+            'automatic':('自动回复已开启。微信需要保持登录且可见。' if isinstance(value,dict) and value.get('automatic_reply') else '草稿模式已开启，消息不会自动发送。'),'automatic_stop':'自动回复已停止，当前发送权限已撤销。',
             'assistant_save':'助理偏好已保存，下次开启服务时生效。','hooks':'连接事件已配置，请在 Codex 的 /hooks 审核并信任。',
             'authorization':'目标授权已更新，可以继续原任务。','chat_prompt':'任务已排队；Codex 空闲后会继续处理。',
             'copy_draft':'已复制，请核对微信目标后由你发送。','manual_draft':'请核对收件人与回复内容。'}.get(name,'操作已完成。')
