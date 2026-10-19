@@ -49,7 +49,8 @@ class DesktopUI(unittest.TestCase):
                         footer=w.findChild(QObject,'statusBar')
                         viewport=w.findChild(QObject,'contentViewport')
                         self.assertIsNotNone(footer);self.assertIsNotNone(viewport)
-                        self.assertEqual(round(footer.property('height')),32)
+                        self.assertEqual(round(footer.property('height')),0)
+                        self.assertIsNotNone(self.visual(w,'connectionStatus'))
                         self.assertLessEqual(viewport.property('y')+viewport.property('height'),footer.property('y')+1)
                         self.assertFalse(w.property('connected'));self.assertFalse(w.property('sendAvailable'))
                         card=self.visual(w,'sidebarCard');self.assertIsNotNone(card)
@@ -118,18 +119,12 @@ class DesktopUI(unittest.TestCase):
                 conversations=[{'conversation_id':'peer','display_name':'项目讨论 · Product & Design'},
                                {'conversation_id':'self','display_name':'本人'}])
             c.changed.emit();w.setProperty('page',6);QTest.qWait(40)
-            self.assertIsNotNone(self.visual(w,'autoDuration'))
+            menu=self.visual(w,'settingsAccessMenu');self.assertIsNotNone(menu)
             start=self.visual(w,'autoStart');stop=self.visual(w,'autoStop')
-            self.assertFalse(start.isEnabled());self.assertFalse(stop.isEnabled())
-            w.setProperty('autoTargets',['peer','self']);QTest.qWait(20)
-            self.assertEqual(start.isEnabled(),os.sys.platform=='darwin')
+            self.assertTrue(start.isEnabled());self.assertFalse(stop.isEnabled())
             c._data['status']['permissions']={'database':False,'accessibility':True}
             c.changed.emit();QTest.qWait(20);self.assertFalse(start.isEnabled())
-            c._data['status']['permissions']={'database':True,'accessibility':False}
-            c.changed.emit();QTest.qWait(20);self.assertFalse(start.isEnabled())
             c._data['status']['permissions']={'database':True,'accessibility':True}
-            c.changed.emit();QTest.qWait(20)
-            self.assertEqual(start.isEnabled(),os.sys.platform=='darwin')
             c._data['automatic_pending']=True;c.changed.emit();QTest.qWait(20)
             self.assertTrue(stop.isEnabled());c.fixture=False
             with patch.object(c,'run') as run:
@@ -140,9 +135,79 @@ class DesktopUI(unittest.TestCase):
                 QMetaObject.invokeMethod(dialog,'accept');QTest.qWait(20)
                 self.assertEqual(run.call_args.args[0],'automatic_stop')
             c.fixture=True
-            c._data['status']={'automatic_reply':{'active':True,'targets':['peer','self'],'expires':None,'remaining':None}}
+            c._data['status']={'owner_authorized':True,'automatic_reply':{'active':True,'targets':['peer','self'],'expires':None}}
             c.changed.emit();QTest.qWait(20)
-            self.assertFalse(self.visual(w,'autoDuration').isVisible())
-            self.assertFalse(self.visual(w,'autoReplyLimit').isVisible())
-            self.assertTrue(stop.isEnabled());self.assertFalse(start.isEnabled())
+            self.assertTrue(menu.isVisible());self.assertTrue(start.isEnabled());self.assertTrue(stop.isEnabled())
+            self.assertEqual(w.allowance(None),'不限次数')
+        finally:self.dispose(c,e,w)
+
+    def test_full_access_requires_risk_confirmation_and_contact_search_is_paged(self):
+        from unittest.mock import patch
+        from PySide6.QtCore import QMetaObject
+        c,e,w=self.create();c.timer.stop()
+        try:
+            c._data['conversations']=[{'conversation_id':'fixture-'+str(i),'display_name':'Contact '+str(i)} for i in range(3402)]
+            c.changed.emit()
+            with patch.object(c,'applyScope') as apply:
+                w.openAccess(2);QTest.qWait(40)
+                risk=w.findChild(QObject,'fullAccessRiskDialog');editor=w.findChild(QObject,'accessDialog')
+                self.assertTrue(risk.property('visible'));self.assertFalse(editor.property('visible'));apply.assert_not_called()
+                QMetaObject.invokeMethod(risk,'close');QTest.qWait(10);apply.assert_not_called()
+                w.openAccess(1);QTest.qWait(40)
+                self.assertTrue(editor.property('visible'))
+                contacts=self.visual(w,'accessContactList');self.assertEqual(contacts.property('count'),30)
+                search=self.visual(w,'accessSearch');search.setProperty('text','Contact 3401');QTest.qWait(40)
+                self.assertEqual(contacts.property('count'),1)
+                search.setProperty('text','no matching contact');QTest.qWait(20);self.assertEqual(contacts.property('count'),0)
+        finally:self.dispose(c,e,w)
+
+    def test_model_reasoning_keyboard_and_rapid_project_navigation(self):
+        c,e,w=self.create();c.timer.stop()
+        try:
+            c._models=[{'id':'synthetic-model','title':'Synthetic model','efforts':['low','medium','high'],'default_effort':'medium'}]
+            c.modelsChanged.emit();QTest.qWait(30)
+            model=self.visual(w,'modelSelector');model.forceActiveFocus()
+            QTest.keyClick(w,Qt.Key_Space);QTest.keyClick(w,Qt.Key_Down);QTest.keyClick(w,Qt.Key_Return);QTest.qWait(30)
+            self.assertEqual(model.property('currentValue'),'synthetic-model')
+            picker=self.visual(w,'reasoningSelector');picker.forceActiveFocus();QTest.keyClick(w,Qt.Key_Space);QTest.qWait(30)
+            popup=w.findChild(QObject,'reasoningPopup');self.assertTrue(popup.property('visible'))
+            slider=self.visual(w,'reasoningSlider');slider.forceActiveFocus();QTest.keyClick(w,Qt.Key_Right);QTest.qWait(20)
+            self.assertEqual(picker.property('value'),'high')
+            QTest.keyClick(w,Qt.Key_Escape);QTest.qWait(20);self.assertFalse(popup.property('visible'))
+            for page in [8,2,9,8,0,7,2,0]:
+                nav=self.visual(w,'nav'+str(page));nav.forceActiveFocus();QTest.keyClick(w,Qt.Key_Return)
+                QTest.qWait(12);self.assertEqual(w.property('page'),page)
+            self.assertFalse(w.grabWindow().isNull())
+        finally:self.dispose(c,e,w)
+
+    def test_all_contacts_can_exclude_one_without_granting_or_losing_search(self):
+        c,e,w=self.create();c.timer.stop()
+        try:
+            c._data['conversations']=[{'conversation_id':'fixture-'+str(i),'display_name':'Contact '+str(i)} for i in range(3402)]
+            c.changed.emit();w.openAccess(1);QTest.qWait(30)
+            editor=w.findChild(QObject,'accessDialog');editor.setProperty('allContacts',True)
+            editor.toggleRecipient('fixture-8');QTest.qWait(20)
+            self.assertFalse(editor.property('allContacts'))
+            selected=editor.property('selectedIds').toVariant();self.assertEqual(len(selected),3401);self.assertNotIn('fixture-8',selected)
+            self.visual(w,'accessSearch').setProperty('text','Contact 8');QTest.qWait(20)
+            self.assertGreater(self.visual(w,'accessContactList').property('count'),0)
+            editor.close();self.assertFalse(w.property('scopeActive'))
+        finally:self.dispose(c,e,w)
+
+    def test_composer_keeps_input_on_queue_failure_and_preserves_new_edits(self):
+        from unittest.mock import patch
+        c,e,w=self.create();c.timer.stop();c.fixture=False
+        try:
+            composer=self.visual(w,'chatComposer');composer.setProperty('text','Synthetic task')
+            c._attachment={'name':'fixture.txt','text':'Synthetic reference'}
+            with patch.object(c,'run'),patch.object(c,'refresh'):
+                c.submitChat('Synthetic task','','')
+                c.accept({'name':'chat_prompt','error':'local_broker_unavailable','value':None})
+                self.assertEqual(composer.property('text'),'Synthetic task');self.assertTrue(c._attachment)
+                c.submitChat('Synthetic task','','');composer.setProperty('text','New unsent edit')
+                c.accept({'name':'chat_prompt','error':None,'value':{'job_id':'synthetic','state':'AwaitingAgent'}})
+                self.assertEqual(composer.property('text'),'New unsent edit');self.assertFalse(c._attachment)
+                c.submitChat('New unsent edit','','')
+                c.accept({'name':'chat_prompt','error':None,'value':{'job_id':'synthetic-2','state':'AwaitingAgent'}})
+                self.assertEqual(composer.property('text'),'')
         finally:self.dispose(c,e,w)

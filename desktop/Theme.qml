@@ -2,7 +2,9 @@ pragma Singleton
 import QtQuick
 QtObject {
     property bool dark: false
-    readonly property color canvas: dark ? "#141917" : "#F6F7F5"
+    property bool motionEnabled: true
+    property var glassSource: null
+    readonly property color canvas: dark ? "#131816" : "#EEF1EF"
     readonly property color surface: dark ? "#1D2420" : "#FFFFFF"
     readonly property color sidebar: canvas
     readonly property color glass: dark ? "#C8242D28" : "#B8FFFFFF"
@@ -16,6 +18,10 @@ QtObject {
     readonly property color hover: dark ? "#29342D" : "#F0F3EF"
     readonly property color warning: dark ? "#D9B980" : "#8D6E35"
     readonly property color danger: dark ? "#DF9894" : "#A34843"
+    readonly property color messageSurface: dark ? "#27332D" : "#E4EBE6"
+    readonly property color focusBorder: dark ? "#6F9D88" : "#9DBBAD"
+    readonly property color riskTint: dark ? "#4B302F" : "#FBE9E7"
+    readonly property color riskBorder: dark ? "#754541" : "#F0C9C4"
     readonly property int sidebarWidth: 238
     readonly property int margin: 32
     readonly property int gap: 20

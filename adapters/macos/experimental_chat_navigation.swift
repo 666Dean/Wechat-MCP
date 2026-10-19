@@ -185,9 +185,33 @@ func run() throws -> [String:Any] {
    }
    RunLoop.current.run(until:Date().addingTimeInterval(0.025))
   }
-  throw Stop("copy_result_timeout")
   // Unknown clipboard data is never disclosed or assumed to be our epoch.
-  return false
+  throw Stop("copy_result_timeout")
+ }
+ var originalPointer:CGPoint?=nil,parkedPointer:CGPoint?=nil
+ func pointer() throws -> CGPoint {guard let event=CGEvent(source:nil) else{throw Stop("pointer_unavailable")};return event.location}
+ func samePoint(_ a:CGPoint,_ b:CGPoint)->Bool {abs(a.x-b.x)<1.5 && abs(a.y-b.y)<1.5}
+ defer {
+  // Do not move a pointer that the owner has since used. No click is posted.
+  if let before=originalPointer,let ownedPoint=parkedPointer,let current=try? pointer(),samePoint(current,ownedPoint) {
+   CGWarpMouseCursorPosition(before)
+  }
+ }
+ func protectSearchPointer() throws {
+  try verify(true);try proof()
+  guard let focused=attr(root,kAXFocusedWindowAttribute),CFGetTypeID(focused)==AXUIElementGetTypeID(),
+        let position=attr(focused as! AXUIElement,kAXPositionAttribute),CFGetTypeID(position)==AXValueGetTypeID(),
+        let size=attr(focused as! AXUIElement,kAXSizeAttribute),CFGetTypeID(size)==AXValueGetTypeID() else{throw Stop("search_geometry_required")}
+  var origin=CGPoint.zero;var dimensions=CGSize.zero
+  guard AXValueGetValue(position as! AXValue,.cgPoint,&origin),AXValueGetValue(size as! AXValue,.cgSize,&dimensions),dimensions.width>0,dimensions.height>0 else{throw Stop("search_geometry_required")}
+  let rect=CGRect(origin:origin,size:dimensions);let current=try pointer();originalPointer=current
+  if !rect.contains(current) {parkedPointer=current;return}
+  guard let x=bounds["X"] as? Double,let y=bounds["Y"] as? Double,let width=bounds["Width"] as? Double,let height=bounds["Height"] as? Double else{throw Stop("main_geometry_required")}
+  let candidates=[CGPoint(x:x+16,y:y+16),CGPoint(x:x+16,y:y+height-16),CGPoint(x:x+width-16,y:y+16)]
+  guard let safe=candidates.first(where:{!rect.insetBy(dx:-8,dy:-8).contains($0)}) else{throw Stop("search_pointer_parking_unavailable")}
+  guard CGWarpMouseCursorPosition(safe) == .success else{throw Stop("search_pointer_parking_failed")}
+  parkedPointer=safe
+  if let move=CGEvent(mouseEventSource:nil,mouseType:.mouseMoved,mouseCursorPosition:safe,mouseButton:.left) {move.postToPid(pid_t(pid))}
  }
  if mode=="navigate" {
   guard text.utf8.count<=512,!text.contains("\n"),!text.contains("\r") else{throw Stop("query_budget")}
@@ -205,6 +229,7 @@ func run() throws -> [String:Any] {
   try verify(true)
   if phase=="open" {return ["navigation_step_complete":true,"send_invoked":false]}
   }
+  try protectSearchPointer()
   if ["complete","query"].contains(phase) {
   try key(0,.maskCommand,dialog:true);try put(text)
   if phase=="query" {try authority(true)}
@@ -214,15 +239,32 @@ func run() throws -> [String:Any] {
   // Check the exact clipboard epoch instead. The controller MUST independently
   // verify the fresh SearchRecent stable recipient before touching chat input.
   guard pb.changeCount==owned,pb.string(forType:.string)==text else{throw Stop("search_clipboard_changed")}
-  RunLoop.current.run(until:Date().addingTimeInterval(0.3))
+  // Search results are asynchronous. A mouse hovering the results can switch
+  // the active row to chat-history search while they appear. Keep it outside,
+  // wait for the ordinary search UI, and cancel if the owner moves it.
+  let settle=Date().addingTimeInterval(0.85)
+  while Date()<settle {
+   try verify(true);try proof()
+   guard let parked=parkedPointer,samePoint(try pointer(),parked) else{throw Stop("search_pointer_changed")}
+   RunLoop.current.run(until:Date().addingTimeInterval(0.025))
+  }
   if phase=="query" {return ["navigation_step_complete":true,"query_input_submitted":true,"send_invoked":false]}
   }
   if phase=="select" {
    try authority(true)
   }
   // This Return is allowed only in the new untitled search dialog, never a chat.
-  try verify(true);navigated=true;try key(36,dialog:true)
-  RunLoop.current.run(until:Date().addingTimeInterval(0.3));try verify()
+  try verify(true);guard let parked=parkedPointer,samePoint(try pointer(),parked) else{throw Stop("search_pointer_changed")};navigated=true;try key(36,dialog:true)
+  let selectionDeadline=Date().addingTimeInterval(0.8)
+  while Date()<selectionDeadline {
+   if let focused=attr(root,kAXFocusedWindowAttribute),CFGetTypeID(focused)==AXUIElementGetTypeID() {
+    let selectedTitle=label(focused as! AXUIElement)
+    if selectedTitle=="搜索聊天记录" {throw Stop("history_search_selected_no_input")}
+    if selectedTitle==title {break}
+   }
+   RunLoop.current.run(until:Date().addingTimeInterval(0.025))
+  }
+  try verify()
   return ["navigation_invoked":true,"query_input_submitted":true,"main_window_verified":true,"recipient_verified":false,"send_invoked":false]
  }
  if mode=="stage_draft" {

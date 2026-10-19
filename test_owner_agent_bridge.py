@@ -33,10 +33,11 @@ assert read()['method']=='initialize';send({'id':1,'result':{}})
 assert read()['method']=='initialized'
 r=read();assert r['method']=='thread/resume';assert r['params']['approvalPolicy']=='untrusted';assert r['params']['sandbox']=='workspace-write'
 send({'id':2,'result':{'thread':{'id':'synthetic-thread'}}})
-r=read();assert r['method']=='turn/start';assert r['params']['threadId']=='synthetic-thread'
+r=read();assert r['method']=='turn/start';assert r['params']['threadId']=='synthetic-thread';assert r['params']['model']=='synthetic-model';assert r['params']['effort']=='high'
 send({'id':3,'result':{'turn':{'id':'synthetic-turn'}}})
 send({'id':31,'method':'item/commandExecution/requestApproval','params':{'threadId':'synthetic-thread','turnId':'synthetic-turn','command':'echo synthetic'}})
 r=read();assert r=={'id':31,'result':{'decision':'decline'}}
+send({'method':'item/agentMessage/delta','params':{'threadId':'synthetic-thread','turnId':'synthetic-turn','itemId':'answer','delta':'Synthetic'}})
 send({'method':'item/completed','params':{'threadId':'synthetic-thread','turnId':'synthetic-turn','item':{'type':'agentMessage','id':'answer','text':'Synthetic command declined'}}})
 send({'method':'turn/completed','params':{'threadId':'synthetic-thread','turn':{'id':'synthetic-turn','status':'completed'}}})
 '''
@@ -48,7 +49,8 @@ send({'method':'turn/completed','params':{'threadId':'synthetic-thread','turn':{
         bridge=OwnerAgentBridge(emit);real_popen=subprocess.Popen
         def fixture(args,**kwargs):return real_popen([sys.executable,'-u','-c',script],**kwargs)
         with patch('desktop.owner_agent.shutil.which',return_value='/fixture/codex'),patch('desktop.owner_agent.subprocess.Popen',side_effect=fixture):
-            bridge.start({'job_id':'synthetic-job','thread_id':'synthetic-thread','worker_token':'synthetic-token','text':'synthetic task','expires':time.time()+10})
+            bridge.start({'job_id':'synthetic-job','thread_id':'synthetic-thread','worker_token':'synthetic-token','text':'synthetic task','model':'synthetic-model','effort':'high','expires':time.time()+10})
             self.assertTrue(finished.wait(5));bridge.thread.join(2)
         self.assertEqual(events[-1],{'kind':'finished','job_id':'synthetic-job','failed':False,'text':'Synthetic command declined'})
         self.assertEqual(len([e for e in events if e['kind']=='approval']),1)
+        self.assertEqual([e for e in events if e['kind']=='delta'][0]['text'],'Synthetic')

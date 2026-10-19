@@ -34,6 +34,8 @@ PYBIND11_MODULE(_axr_native,m) {
       .def("get",[](const ProtectedStore& s,const std::string& name){return py::bytes(s.Get(name));})
       .def("provision",[](const ProtectedStore& s,const std::string& name,py::bytes value){s.Put(name,std::string(value));});
     m.def("digest",&Digest);
+    // One representation shared by Python signing/MAC and native consumers.
+    m.def("wire_canonical",[](const std::string& value){return ParseBounded(value).dump();});
     m.def("constant_equal",&ConstantEqual);
     m.def("verify_root_signature",[](py::bytes key,py::bytes message,py::bytes signature){return VerifyRootSignature(std::string(key),std::string(message),std::string(signature));});
     m.def("verify_owner_signature",[](py::bytes key,py::bytes message,py::bytes signature){return VerifyOwnerSignature(std::string(key),std::string(message),std::string(signature));});

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Effects
 import "."
 
 ApplicationWindow {
@@ -27,6 +28,18 @@ ApplicationWindow {
     property bool connected: window.backend.connected === true && !previewMode
     property bool independentService: window.status.authority === "independent-native-v2"
     property var autoReply: status.automatic_reply || ({active:false})
+    property bool scopeActive: status.owner_authorized === true || autoReply.active === true
+    property int accessLevel: scopeActive ? ((status.scope || {}).self_agent===true ? 2 : autoReply.active ? 1 : 0) : 0
+    function allowance(value){return value===null || value===undefined || !isFinite(value) ? "不限次数" : "剩余 " + value + " 次"}
+    function openAccess(level){
+        accessEditor.level=level;accessEditor.contacts=backend.conversations || [];
+        accessEditor.authorizedIds=(backend.grants || []).map(function(g){return g.conversation_id});
+        accessEditor.selectedIds=accessEditor.authorizedIds.slice();accessEditor.overwriteDrafts=(status.scope || {}).overwrite_drafts===true;
+        accessEditor.allContacts=scopeActive && accessEditor.authorizedIds.length===accessEditor.contacts.length && accessEditor.contacts.length>0;
+        accessEditor.activeScope=scopeActive;accessEditor.minutes=scopeActive && !autoReply.expires ? 0 : 30;
+        accessEditor.replies=scopeActive && (autoReply.remaining===null || autoReply.remaining===undefined) ? 0 : 20;
+        if(level===2)riskDialog.open();else accessEditor.open()
+    }
     property bool systemReady: !status.permissions || (status.permissions.database === true && status.permissions.accessibility === true)
     property var autoTargets: []
     property bool autoAll: false
@@ -50,7 +63,9 @@ ApplicationWindow {
     property var intent: (owner.preview || {}).intent || ({})
     property var exactDisclosure: (owner.preview || {}).exact_disclosure || ({})
     property bool sendAvailable: !previewMode && platform.send_available === true
+    Binding { target: Theme; property: "motionEnabled"; value: !owner.reduceMotion }
     Binding { target: Theme; property: "dark"; value: window.darkMode }
+    Binding { target: Theme; property: "glassSource"; value: appContent }
     function operation(op){return ({"owner.command":"本人任务","messages.read":"读取消息","messages.search":"搜索消息","files.read":"解析本地附件","reply.prepare":"生成回复草稿","disclosure.send":"内容披露审批","messages.send":"提交微信回复","workspace.write":"保存工作文档","application.navigate":"应用导航","expired":"已过期任务"})[op] || "处理任务"}
     function stateLabel(state){return ({"AwaitingAgent":"等待 Codex 当前任务结束","HandedOff":"Codex 正在处理本人任务","AwaitingApproval":"等待你的批准","Ready":"等待执行","Queued":"等待处理","Draft":"等待人工回复","Observed":"已核对本机发出记录","Executing":"正在处理","Prepared":"已准备","Verifying":"核验结果","Completed":"已完成","Unknown":"结果待核对","FailedSafe":"已安全停止","Expired":"已过期","Cancelled":"已取消","Denied":"已拒绝","Proposed":"待检查","PolicyChecked":"已检查权限"})[state] || "待验证"}
     function destinationLabel(value){return value === "local" ? "仅本机" : value === "model:codex" ? "Codex" : value && value.indexOf("wechat:")===0 ? "指定微信会话" : value && value.indexOf("model:")===0 ? "模型：" + value.slice(6) : value || "—"}
@@ -72,7 +87,7 @@ ApplicationWindow {
         indicator: Rectangle { x: check.leftPadding; y: (check.height-height)/2; width: 20; height: 20; radius: 6
             color: check.checked ? Theme.brand : Theme.surface; border.color: check.activeFocus ? Theme.positive : check.checked ? Theme.brand : Theme.border
             border.width: check.activeFocus ? 2 : 1
-            Icon { anchors.centerIn: parent; width: 15; height: 15; name: "check"; ink: "white"; visible: check.checked }
+            Icon { anchors.centerIn: parent; width: 15; height: 15; name: "tick"; ink: "white"; visible: check.checked }
         }
         contentItem: Text { text: check.text; font: check.font; color: check.enabled ? Theme.ink : Theme.muted
             leftPadding: check.indicator.width+check.spacing; verticalAlignment: Text.AlignVCenter; textFormat: Text.PlainText
@@ -80,6 +95,8 @@ ApplicationWindow {
     }
     component ButtonX: Button {
         id: control
+        scale: down ? .98 : 1
+        Behavior on scale { NumberAnimation { duration: Theme.motionEnabled ? 100 : 0 } }
         property bool primary: false
         property bool danger: false
         implicitHeight: 36; leftPadding: 14; rightPadding: 14
@@ -92,7 +109,7 @@ ApplicationWindow {
         contentItem: Text { text: control.text; color: !control.enabled ? Theme.muted : control.primary ? "white" : control.danger ? Theme.danger : Theme.ink
             textFormat: Text.PlainText; font: control.font; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
     }
-    component Panel: Rectangle { color: Theme.surface; radius: Theme.radius; border.color: Theme.border }
+    component Panel: Rectangle { color: Theme.surface; radius: Theme.radius; border.color: Theme.border; border.width: 1 }
     component Badge: Row {
         property string text: ""
         property string symbol: "info"
@@ -145,6 +162,7 @@ ApplicationWindow {
     }
 
     RowLayout {
+        id: appContent
         anchors.fill: parent; spacing: 0
         Item {
             objectName: "sidebar"; Layout.preferredWidth: Theme.sidebarWidth; Layout.fillHeight: true
@@ -158,7 +176,8 @@ ApplicationWindow {
                         Caption { text: "Desktop"; font.pixelSize: 12 }
                     }
                 }
-                Repeater { model: [0,8,2,9,7]
+                Caption { text: "对话"; Layout.leftMargin: 12; Layout.bottomMargin: 4 }
+                Repeater { model: [0,7]
                     delegate: Button {
                         id: nav
                         objectName: "nav" + modelData
@@ -176,6 +195,19 @@ ApplicationWindow {
                         onClicked: window.page=modelData
                     }
                 }
+                Caption { text: "项目"; Layout.leftMargin: 12; Layout.topMargin: 22; Layout.bottomMargin: 4 }
+                Repeater { model: [8,2,9]
+                    Button { id: projectNav; required property int modelData; objectName: "nav"+modelData; Layout.fillWidth: true; Layout.preferredHeight: 41; focusPolicy: Qt.StrongFocus; Accessible.name: window.tabs[modelData]
+                        Keys.onReturnPressed: projectNav.clicked(); Keys.onEnterPressed: projectNav.clicked()
+                        background: Rectangle { radius: 9; color: window.page===projectNav.modelData ? Theme.tint : projectNav.hovered ? Theme.hover : "transparent"; border.color: projectNav.activeFocus ? Theme.positive : "transparent"; border.width: projectNav.activeFocus ? 2 : 0
+                        }
+                        contentItem: RowLayout { spacing: 11
+                            Icon { name: window.glyphs[projectNav.modelData]; ink: window.page===projectNav.modelData ? Theme.positive : Theme.muted; width: 19; height: 19; Layout.leftMargin: 12 }
+                            Copy { Layout.fillWidth: true; text: window.tabs[projectNav.modelData]; color: window.page===projectNav.modelData ? Theme.ink : Theme.muted; font.weight: window.page===projectNav.modelData ? Font.DemiBold : Font.Normal }
+                        }
+                        onClicked: window.page=modelData
+                    }
+                }
                 Item { Layout.fillHeight: true }
                 ButtonX { objectName: "nav6"; Layout.fillWidth: true; text: "设置"; onClicked: window.page=6
                     background: Rectangle { radius: 9; color: window.inSettings ? Theme.tint : "transparent"; border.color: parent.activeFocus ? Theme.positive : "transparent"; border.width: parent.activeFocus ? 2 : 0 }
@@ -188,77 +220,32 @@ ApplicationWindow {
         }
         ColumnLayout { Layout.fillWidth: true; Layout.fillHeight: true; Layout.topMargin: Qt.platform.os === "windows" ? 30 : 0; spacing: 0
             RowLayout { Layout.fillWidth: true; Layout.preferredHeight: 88; Layout.leftMargin: Theme.margin; Layout.rightMargin: Theme.margin
-                Column { spacing: 5
+                ColumnLayout { Layout.fillWidth: true; Layout.minimumWidth: 0; spacing: 5
                     WindowDrag { }
-                    Copy { text: window.tabs[window.page]; font.pixelSize: Theme.heading; font.weight: Font.DemiBold }
-                    Caption { text: ["今天需要关注的事情", "让助理处理你的消息", "回复与待处理事项", "掌握会话与内容的访问范围", "查看任务进展与结果", "查阅会话中的本地文件", "按你的习惯使用", "由你核对并提交回复", "会话重点与工作摘要", "由你决定哪些操作可以继续"][window.page] }
+                    Copy { Layout.fillWidth: true; maximumLineCount: 1; elide: Text.ElideRight; text: window.page===0 ? ((owner.assistant || {}).thread_title || "你的助理") : window.tabs[window.page]; font.pixelSize: Theme.heading; font.weight: Font.DemiBold }
+                    Caption { visible: window.page!==0; text: ["在桌面与微信之间继续任务", "让助理处理你的消息", "回复与待处理事项", "掌握会话与内容的访问范围", "查看任务进展与结果", "查阅会话中的本地文件", "按你的习惯使用", "由你核对并提交回复", "会话重点与工作摘要", "由你决定哪些操作可以继续"][window.page] }
                 }
-                Item { Layout.fillWidth: true; Layout.fillHeight: true; WindowDrag { } }
+                Item { Layout.preferredWidth: 12; Layout.fillHeight: true; WindowDrag { } }
                 ButtonX { visible: window.inSettings && window.page!==6; text: "返回设置"; onClicked: window.page=6 }
                 BusyIndicator { running: window.backend.loading === true; visible: running; implicitWidth: 22; implicitHeight: 22 }
-                ButtonX { text: "刷新"; enabled: window.backend.loading !== true; onClicked: owner.refresh() }
+                Badge { objectName: "connectionStatus"; text: window.previewMode ? "演示 · 无真实微信" : window.scopeActive ? "微信访问已授权" : window.connected ? "服务已连接 · 待授权" : "服务未连接"; symbol: window.scopeActive ? "shield" : "plug"; ink: window.scopeActive ? Theme.positive : Theme.muted }
+                ButtonX { visible: window.page!==0; text: "刷新"; enabled: window.backend.loading !== true; onClicked: owner.refresh() }
+            }
+            Rectangle { Layout.fillWidth: true; Layout.leftMargin: Theme.margin; Layout.rightMargin: Theme.margin
+                visible: owner.notice!=="已同步。" && owner.notice!=="操作已完成。" && owner.notice!=="连接本地服务，开始你的工作台。"; Layout.preferredHeight: visible ? noticeText.implicitHeight+24 : 0; radius: 12; color: Theme.tint
+                Text { id: noticeText; anchors.fill: parent; anchors.margins: 12; text: owner.notice; textFormat: Text.PlainText; color: Theme.ink; wrapMode: Text.WordWrap; font.pixelSize: 12 }
+            }
+            Rectangle { Layout.fillWidth: true; Layout.leftMargin: Theme.margin; Layout.rightMargin: Theme.margin; visible: !!window.status.pause_reason; Layout.preferredHeight: visible ? 48 : 0; radius: 12; color: Theme.riskTint
+                RowLayout { anchors.fill: parent; anchors.margins: 12
+                    Copy { Layout.fillWidth: true; text: (window.status.pause_reason || {}).code==="wechat_burst_capacity" ? "连续消息过多，已暂停访问。请核对后重新授权。" : "服务遇到问题，已停止访问。请核对后重新授权。" }
+                    ButtonX { text: "查看授权"; onClicked: window.openAccess(window.accessLevel) }
+                }
             }
             StackLayout { id: pages; objectName: "contentViewport"; Layout.fillWidth: true; Layout.fillHeight: true; Layout.leftMargin: Theme.margin; Layout.rightMargin: Theme.margin; currentIndex: window.page
-                PageScroll {
-                    contentHeight: overview.implicitHeight
-                    ColumnLayout { id: overview; width: parent.width; height: implicitHeight; spacing: Theme.gap
-                        Panel { Layout.fillWidth: true; implicitHeight: 106
-                            RowLayout { anchors.fill: parent; anchors.margins: 22; spacing: 14
-                                Icon { name: window.previewMode ? "info" : window.connected ? "check" : "plug"; ink: window.previewMode ? Theme.warning : window.connected ? Theme.positive : Theme.muted; width: 24; height: 24 }
-                                ColumnLayout { Layout.fillWidth: true; spacing: 9
-                                    Copy { Layout.fillWidth: true; text: window.previewMode ? "演示模式 · 未连接真实微信数据" : window.connected ? "本地服务已连接" : "连接你的本地工作台"; font.pixelSize: 17; font.weight: Font.DemiBold }
-                                    Caption { Layout.fillWidth: true; text: window.previewMode ? "以下仅为界面预览，真实数据与授权操作已停用。" : (window.listener.listen ? "消息监听已请求" : "消息监听已关闭") + " · " + (window.autoReply.active ? "自动回复已开启" : window.autoReply.supported ? "自动回复未开启" : "当前平台暂不支持自动发送") }
-                                }
-                                ButtonX { text: window.connected ? "连接设置" : "启动本地服务"; primary: true; enabled: !window.previewMode; onClicked: window.connected ? window.page=6 : owner.start() }
-                            }
-                        }
-                        RowLayout { Layout.fillWidth: true; spacing: Theme.gap
-                            Panel { Layout.fillWidth: true; implicitHeight: 156
-                                ColumnLayout { anchors.fill: parent; anchors.margins: 22; spacing: 14
-                                    RowLayout { Layout.fillWidth: true; Copy { text: "待处理事项"; font.pixelSize: Theme.section; font.weight: Font.DemiBold }
- Item { Layout.fillWidth: true }
- Caption { text: String(window.pending.length+window.drafts.length) + " 项" } }
-                                    Empty { Layout.fillWidth: true; visible: !window.pending.length && !window.drafts.length }
-                                    RowLayout { visible: window.pending.length || window.drafts.length; Layout.fillWidth: true
-                                        Badge { text: window.pending.length + " 项审批 / 执行"; symbol: "shield"; ink: Theme.warning }
-                                        Badge { text: window.drafts.length + " 份回复草稿"; symbol: "message"; ink: Theme.positive }
-                                        Item { Layout.fillWidth: true }
-                                        ButtonX { text: "处理事项"; onClicked: window.page=window.approvals.length ? 9 : window.todos.length ? 2 : 7 }
-                                    }
-                                }
-                            }
-                            Panel { visible: window.width>=1320; Layout.preferredWidth: 270; Layout.fillHeight: true
-                                ColumnLayout { anchors.fill: parent; anchors.margins: 22; spacing: 12
-                                    Badge { text: "权限概览"; symbol: "shield"; ink: Theme.positive }
-                                    Copy { text: (window.backend.grants || []).length + " 项有效授权"; font.pixelSize: 21; font.weight: Font.Medium }
-                                    Caption { Layout.fillWidth: true; text: "内容披露与本地访问分别批准。" }
-                                    Item { Layout.fillHeight: true }
-                                }
-                            }
-                        }
-                        Panel { Layout.fillWidth: true; implicitHeight: activity.implicitHeight+44
-                            ColumnLayout { id: activity; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 22; spacing: 14
-                                RowLayout { Layout.fillWidth: true; Copy { text: "最近活动"; font.pixelSize: Theme.section; font.weight: Font.DemiBold }
- Item { Layout.fillWidth: true }
- ButtonX { text: "全部记录"; onClicked: window.page=4 } }
-                                Empty { Layout.fillWidth: true; visible: !window.recent.length; heading: "还没有执行记录"; explanation: "任务开始后，授权检查、执行与结果核验会在这里更新。"; symbol: "activity" }
-                                Repeater { model: window.recent.slice(0,4); delegate: JobRow { required property var modelData; Layout.fillWidth: true; job: modelData; compact: true } }
-                            }
-                        }
-                        Panel { Layout.fillWidth: true; implicitHeight: notes.implicitHeight+44
-                            ColumnLayout { id: notes; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 22; spacing: 14
-                                RowLayout { Layout.fillWidth: true; Copy { text: "工作摘要"; font.pixelSize: Theme.section; font.weight: Font.DemiBold }
-Item { Layout.fillWidth: true }
-ButtonX { text: "读取已授权摘要"; enabled: window.connected; onClicked: owner.summaries() } }
-                                Caption { Layout.fillWidth: true; visible: !(window.backend.summaries || []).length; text: "会话摘要会显示在这里。" }
-                                Repeater { model: window.backend.summaries || []; delegate: ColumnLayout { required property var modelData; Layout.fillWidth: true; spacing: 7
-                                    Copy { Layout.fillWidth: true; text: modelData.summary }
-                                    Caption { text: "来源：" + modelData.text_records + " 条获准文本 · " + (modelData.has_more ? "仍有后续分页" : "当前页已结束") }
-                                } }
-                            }
-                        }
-                        Item { Layout.preferredHeight: 18 }
-                    }
+                ConversationWorkspace { controller: owner; connected: window.connected; accessLevel: window.accessLevel
+                    accessSummary: window.scopeActive ? (window.backend.grants || []).length + " 个私聊 · " + window.allowance(window.autoReply.remaining) : "按需授权微信访问"
+                    onPermissionsRequested: function(level){window.openAccess(level)}
+                    onOpenProject: function(target){window.page=target}
                 }
                 PageScroll {
                     contentHeight: agentPage.implicitHeight
@@ -413,76 +400,58 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                             }
                         }
                         Panel { visible: window.settingsSection===0; Layout.fillWidth: true; implicitHeight: autoRows.implicitHeight+48
-                            ColumnLayout { id: autoRows; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 20; spacing: 14
-                                Copy { text: "自动回复"; font.pixelSize: 18; font.weight: Font.Medium }
-                                ColumnLayout { Layout.fillWidth: true; visible: window.connected && !!window.status.permissions && !window.systemReady; spacing: 10
-                                    Copy { text: "先完成系统权限设置"; font.weight: Font.Medium }
-                                    Caption { Layout.fillWidth: true; text: "为 AXR Authority 开启以下权限后即可授权服务。同一批准范围内无需逐次认证，停止无需认证。" }
-                                    RowLayout { Layout.fillWidth: true
-                                        Caption { text: "微信数据访问：" + ((window.status.permissions || {}).database ? "已允许" : "需要完全磁盘访问") }
-                                        Item { Layout.fillWidth: true }
-                                        ButtonX { text: "打开磁盘访问设置"; visible: !(window.status.permissions || {}).database; onClicked: owner.openSystemPermission("database") }
+                            ColumnLayout { id: autoRows; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 24; spacing: 18
+                                RowLayout { Layout.fillWidth: true
+                                    ColumnLayout { Layout.fillWidth: true; spacing: 8
+                                        Copy { text: "微信访问"; font.pixelSize: 18; font.weight: Font.Medium }
+                                        Caption { Layout.fillWidth: true; text: window.scopeActive ? (window.backend.grants || []).length + " 个私聊 · " + window.allowance(window.autoReply.remaining) + " · " + (window.autoReply.expires ? "至 " + window.timeLabel(window.autoReply.expires) : "直至停止") : "选择权限级别、访问对象和有效期" }
                                     }
-                                    RowLayout { Layout.fillWidth: true
-                                        Caption { text: "微信操作：" + ((window.status.permissions || {}).accessibility ? "已允许" : "需要设备控制权限") }
-                                        Item { Layout.fillWidth: true }
-                                        ButtonX { text: "打开设备控制设置"; visible: !(window.status.permissions || {}).accessibility; onClicked: owner.openSystemPermission("accessibility") }
-                                    }
+                                    GlassCombo { objectName: "settingsAccessMenu"; model: ["仅生成草稿", "自动回复", "完全访问"]; currentIndex: window.accessLevel
+                                        onActivated: {window.openAccess(currentIndex);currentIndex=Qt.binding(function(){return window.accessLevel})} }
                                 }
-                                Caption { Layout.fillWidth: true; visible: !!(window.status.security || {}).automatic_block; text: "自动回复已暂停。完成安全服务升级后，再为指定对象开启授权。" }
-                                Caption { Layout.fillWidth: true; text: window.autoReply.active ? "已开启 · " + (window.autoReply.expires ? "有效至 " + window.timeLabel(window.autoReply.expires) : "不限时长，直至停止") + " · 剩余 " + (window.autoReply.remaining===null ? "不限" : window.autoReply.remaining) + " 次" : "允许 Codex 阅读范围内的新消息、生成回复并发送。发送时微信会置前。" }
-                                Caption { Layout.fillWidth: true; visible: window.autoReply.active; text: "范围：已授权 " + (window.autoReply.targets || []).length + " 个私聊，可在权限管理查看。" }
-                                CheckX { visible: !window.autoReply.active; text: "本次已核验的全部私聊"; checked: window.autoAll; enabled: !window.autoReply.active; onToggled: window.autoAll=checked }
-                                Field { id: targetSearch; visible: !window.autoAll && !window.autoReply.active; Layout.fillWidth: true; placeholderText: "搜索授权对象"; enabled: !window.autoReply.active }
-                                Flow { Layout.fillWidth: true; spacing: 8; visible: !window.autoAll && !window.autoReply.active
-                                    Repeater { model: (window.backend.conversations || []).filter(function(c){return c.display_name.indexOf(targetSearch.text)>=0}).slice(0,40)
-                                        CheckX { text: modelData.display_name; enabled: !window.autoReply.active && !window.previewMode
-                                            checked: window.autoTargets.indexOf(modelData.conversation_id)>=0
-                                            Accessible.name: "自动回复范围：" + text
-                                            onToggled: { var ids=window.autoTargets.slice(); var at=ids.indexOf(modelData.conversation_id); if(checked && at<0)ids.push(modelData.conversation_id); if(!checked && at>=0)ids.splice(at,1); window.autoTargets=ids }
-                                        }
-                                    }
-                                }
-                                RowLayout { Layout.fillWidth: true; spacing: 12
-                                    Caption { visible: !window.autoReply.active; text: "有效时长" }
-                                    ComboBox { objectName: "autoDuration"; visible: !window.autoReply.active; model: ["5 分钟", "15 分钟", "30 分钟", "60 分钟", "不限时长"]; currentIndex: 1; enabled: !window.autoReply.active; onActivated: window.autoMinutes=[5,15,30,60,0][currentIndex]; Accessible.name: "自动回复有效时长" }
-                                    Caption { visible: !window.autoReply.active; text: "最多回复" }
-                                    SpinBox { objectName: "autoReplyLimit"; visible: !window.autoReply.active; from: 0; to: 100000; value: 4; textFromValue: function(value,locale){return value===0 ? "不限" : value.toString()}; enabled: !window.autoReply.active; onValueModified: window.autoReplies=value; Accessible.name: "最多自动回复次数" }
-                                    Item { Layout.fillWidth: true }
-                                    ButtonX { objectName: "autoStart"; text: "授权并开启"; primary: true; enabled: window.connected && window.systemReady && window.autoReply.supported === true && !window.autoReply.active && (window.autoAll || window.autoTargets.length>=2) && Qt.platform.os === "osx"; onClicked: autoDialog.open() }
-                                    ButtonX { objectName: "autoStop"; text: "停止自动回复"; danger: true; enabled: window.connected && (window.autoReply.active || window.backend.automatic_pending === true || (window.backend.automatic_worker || {}).running === true); onClicked: stopDialog.open() }
-                                }
-                                CheckX { visible: window.independentService && !window.autoReply.active; text: "强制覆盖已有输入"; checked: window.overwriteDrafts; onToggled: window.overwriteDrafts=checked }
-                                Caption { Layout.fillWidth: true; visible: window.overwriteDrafts && !window.autoReply.active; text: "会清空当前输入后写入回复。无法确认的附件、窗口或发送结果仍会停止。" }
-                                Caption { Layout.fillWidth: true; text: "仅回复开启后的入站文字。次数填 0 表示不限；不确定的发送不会重发。停止、到期或退出服务后撤权。" }
                                 Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
-                                RowLayout { Layout.fillWidth: true; spacing: 16
-                                    ColumnLayout { Layout.fillWidth: true; spacing: 6
-                                        Copy { text: "本人私聊 · 任务入口"; font.weight: Font.Medium }
-                                        Caption { Layout.fillWidth: true; text: "发送 /agent 加任务内容。默认只做普通回复；单独开启后可向绑定的 Codex 对话下任务，使用已授权工具。" }
-                                        Caption { Layout.fillWidth: true; text: window.autoReply.active ? (window.backend.owner_agent_enabled ? "已开启任务访问，敏感操作仍需确认" : "当前为普通回复权限") : window.selfAgentAccess ? "本次将申请任务访问" : "普通回复权限"; color: Theme.positive }
-                                    }
-                                    ButtonX { objectName: "selfAgentAccess"; visible: window.independentService && !window.autoReply.active
-                                        text: window.selfAgentAccess ? "取消任务访问" : "开启任务访问"
-                                        onClicked: {if(window.selfAgentAccess)window.selfAgentAccess=false;else selfAgentDialog.open()}
-                                    }
+                                RowLayout { Layout.fillWidth: true
+                                    Copy { text: "本人任务" }
+                                    Item { Layout.fillWidth: true }
+                                    Caption { text: (window.status.scope || {}).self_agent===true ? "已开启 · 敏感操作需确认" : "未开启" }
                                 }
-                                Caption { Layout.fillWidth: true; text: "空闲时降低检查频率；只在会话变化后读取新内容，需要回复时才唤醒助理。" }
+                                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+                                RowLayout { Layout.fillWidth: true
+                                    Copy { text: "已有草稿" }
+                                    Item { Layout.fillWidth: true }
+                                    Caption { text: (window.status.scope || {}).overwrite_drafts===true ? "允许覆盖" : "保留，不覆盖"; color: (window.status.scope || {}).overwrite_drafts===true ? Theme.warning : Theme.muted }
+                                }
+                                RowLayout { Layout.fillWidth: true
+                                    Copy { text: "连续消息" }
+                                    Item { Layout.fillWidth: true }
+                                    Caption { text: "合并后回复" }
+                                }
+                                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+                                RowLayout { Layout.fillWidth: true
+                                    ButtonX { objectName: "autoStart"; text: window.scopeActive ? "管理联系人与授权" : "选择范围并授权"; primary: true; enabled: window.connected && window.systemReady; onClicked: window.openAccess(window.accessLevel) }
+                                    ButtonX { objectName: "autoStop"; text: "停止并撤权"; danger: true; enabled: window.connected && (window.scopeActive || window.backend.automatic_pending===true); onClicked: stopDialog.open() }
+                                    Item { Layout.fillWidth: true }
+                                }
+                                Caption { Layout.fillWidth: true; text: "发送时微信会置前。权限变更需本机确认。" }
+                                RowLayout { visible: window.connected && !window.systemReady
+                                    ButtonX { text: "允许数据访问"; onClicked: owner.openSystemPermission("database") }
+                                    ButtonX { text: "允许设备控制"; onClicked: owner.openSystemPermission("accessibility") }
+                                }
                             }
                         }
                         Panel { visible: window.settingsSection===1; Layout.fillWidth: true; implicitHeight: assistantRows.implicitHeight+48
                             ColumnLayout { id: assistantRows; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 20; spacing: 12
                                 Copy { text: "你的 Codex 助理"; font.pixelSize: 18; font.weight: Font.Medium }
-                                Caption { Layout.fillWidth: true; text: window.independentService ? "普通聊天由独立助理生成回复。本人任务可交给你选择的 Codex 对话，忙碌时等待。" : "正在执行用户任务时排队，结束后再处理。" }
+                                Caption { Layout.fillWidth: true; text: "本人任务与桌面共享对话，忙碌时自动排队。" }
                                 RowLayout { Layout.fillWidth: true
-                                    ComboBox { id: threadChoice; enabled: !window.autoReply.active; Layout.fillWidth: true; model: owner.codexThreads; textRole: "title"; valueRole: "id"; Accessible.name: "绑定的 Codex 对话"; onActivated: window.assistantThread=currentValue }
+                                    GlassCombo { id: threadChoice; enabled: !window.autoReply.active; Layout.fillWidth: true; model: owner.codexThreads; textRole: "title"; valueRole: "id"; Accessible.name: "绑定的 Codex 对话"; onActivated: window.assistantThread=currentValue }
                                     ButtonX { text: "选择对话"; enabled: window.connected && !window.autoReply.active; onClicked: owner.loadThreads() }
                                     ButtonX { text: "更多对话"; enabled: window.connected && !window.autoReply.active; onClicked: owner.loadMoreThreads() }
                                 }
                                 Caption { Layout.fillWidth: true; text: "已绑定：" + ((owner.assistant || {}).thread_title || "未选择") + " · " + ((window.backend.thread_binding || {}).state==="busy" ? "当前任务进行中，微信任务排队" : (window.backend.thread_binding || {}).hooks_observed ? "已连接生命周期" : "等待 Codex 连接事件") }
                                 RowLayout { Layout.fillWidth: true
                                     ButtonX { text: "配置对话连接"; visible: !window.independentService; enabled: window.connected && !window.autoReply.active; onClicked: hooksDialog.open() }
-                                    Caption { Layout.fillWidth: true; text: "首次配置后在 Codex 的 /hooks 审核。不会模拟快捷键或改写输入框。" }
+                                    Caption { Layout.fillWidth: true; visible: !window.independentService; text: "首次连接需在 Codex 审核。" }
                                 }
                                 Caption { text: "人设" }
                                 ScrollView { Layout.fillWidth: true; Layout.preferredHeight: 110
@@ -519,6 +488,7 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                                     Item { Layout.fillWidth: true }
                                     ButtonX { text: "浅色"; primary: !window.darkMode; onClicked: window.darkMode=false }
                                     ButtonX { text: "深色"; primary: window.darkMode; onClicked: window.darkMode=true }
+                                    CheckX { text: "减少动态效果"; checked: owner.reduceMotion; onToggled: owner.setReduceMotion(checked) }
                                 }
                                 Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
                                 RowLayout { Layout.fillWidth: true; spacing: 16
@@ -536,7 +506,7 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                                         Caption { Layout.fillWidth: true; text: "随时查看或撤销会话授权" }
                                     }
                                     Item { Layout.fillWidth: true }
-                                    ButtonX { text: "管理权限"; onClicked: window.page=3 }
+                                    ButtonX { text: "管理权限"; onClicked: window.openAccess(window.accessLevel) }
                                 }
                                 Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
                                 RowLayout { Layout.fillWidth: true; spacing: 16
@@ -559,11 +529,7 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                                 }
                             }
                         }
-                        RowLayout { Layout.fillWidth: true; Layout.topMargin: 8
-                            Caption { text: "WeChat MCP Desktop" }
-                            Item { Layout.fillWidth: true }
-                            Caption { text: "Stellaria AXR · Gen1" }
-                        }
+
 
                     }
                 }
@@ -633,17 +599,38 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                 }
 
             }
-            Rectangle { objectName: "statusBar"; Layout.fillWidth: true; Layout.preferredHeight: 32; color: Theme.canvas
-                Rectangle { width: parent.width; height: 1; color: Theme.border }
-                RowLayout { anchors.fill: parent; anchors.leftMargin: Theme.margin; anchors.rightMargin: Theme.margin; spacing: 12
-                    Caption { text: window.previewMode ? "演示 · 无真实微信" : window.connected ? "本地服务已连接" : "本地服务未连接"; color: window.previewMode ? Theme.warning : Theme.muted }
-                    Caption { Layout.fillWidth: true; text: owner.notice; maximumLineCount: 1; elide: Text.ElideRight }
-                    Caption { text: "同步 " + (window.backend.last_sync || "—"); font.pixelSize: 11 }
-                }
-            }
+            Item { objectName: "statusBar"; Layout.fillWidth: true; Layout.preferredHeight: 0 }
+
         }
     }
 
+    AccessDialog { id: accessEditor; objectName: "accessDialog"; anchors.centerIn: parent
+        onApplyRequested: function(targets,minutes,replies,level,overwrite){owner.applyScope(targets,minutes,replies,level,overwrite)}
+        onStopped: stopDialog.open()
+    }
+    Dialog { id: riskDialog; objectName: "fullAccessRiskDialog"; anchors.centerIn: parent; width: Math.min(540,window.width-80); modal: true; padding: 28; title: "开启完全访问？"; header: null; closePolicy: Popup.CloseOnEscape
+        enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.motionEnabled ? 160 : 0 } }
+        exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: Theme.motionEnabled ? 100 : 0 } }
+        background: GlassPanel { radius: 26 }
+        Overlay.modal: Item {
+            MultiEffect { anchors.fill: parent; source: appContent; blurEnabled: true; blur: 1.0; blurMax: 32; autoPaddingEnabled: false }
+            Rectangle { anchors.fill: parent; color: window.darkMode ? "#6B000000" : "#3D20352A" }
+        }
+        contentItem: ColumnLayout { spacing: 20
+            Copy { text: "开启完全访问？"; font.pixelSize: 22; font.weight: Font.DemiBold }
+            Rectangle { width: 44; height: 44; radius: 14; color: Theme.riskTint; Icon { anchors.centerIn: parent; name: "warning"; ink: Theme.danger; width: 24; height: 24 } }
+            Copy { Layout.fillWidth: true; text: "微信内容将发送给模型分析，并可自动回复。本人 /agent 任务还能使用绑定 Codex 对话的上下文与已授权工具。"; font.pixelSize: 15 }
+            Caption { Layout.fillWidth: true; text: "可能发生错误回复、信息披露或文件变更。普通联系人不会获得任务权限；敏感操作仍需确认，发送结果不确定时不会重发。
+
+下一步仍需核对具体联系人、期限和次数，并完成本机认证。" }
+            RowLayout { Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                ButtonX { text: "取消"; onClicked: riskDialog.close(); Component.onCompleted: forceActiveFocus() }
+                ButtonX { objectName: "fullAccessContinue"; text: "已知风险，继续"; danger: true; background: Rectangle { radius: 11; color: Theme.riskTint; border.color: Theme.riskBorder }
+                    onClicked: {riskDialog.close();accessEditor.open()} }
+            }
+        }
+    }
     Dialog {
         id: intentDialog; anchors.centerIn: parent; width: Math.min(780,window.width-80); height: 590; modal: true; title: "核对这一次操作"
         background: Rectangle { radius: 14; color: Theme.surface; border.color: Theme.border }

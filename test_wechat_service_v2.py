@@ -67,6 +67,52 @@ class ServiceTests(unittest.TestCase):
         challenge=reviewed['challenge']
         return self.service.activate(self.owner,challenge['nonce'],self.owner_key.sign(canonical(challenge)).hex())
     def call(self,name,**args):return self.kernel.dispatch(self.client,{'operation':'WeChat','payload':{'method':name,'arguments':args}})
+    def test_direct_desktop_prompt_waits_for_idle_without_creating_wechat_scope(self):
+        thread='00000000-0000-4000-8000-000000000001'
+        self.service.state.set('assistant',{'thread_id':thread})
+        args={'text':'Synthetic direct owner task','request_id':'a'*32}
+        queued=self.service.queue_owner_prompt(args)
+        self.assertIsNone(self.service.scope)
+        self.assertFalse(self.service.claim_owner_task()['ready'])
+        self.service.lifecycle={'thread_id':thread,'state':'idle','ready_at':0}
+        task=self.service.claim_owner_task();self.assertTrue(task['ready']);self.assertEqual(task['channel'],'desktop')
+        self.assertFalse(self.service.claim_owner_task()['ready'])
+        self.service.finish_owner_task({'job_id':queued['job_id'],'text':'Synthetic local answer'})
+        self.assertEqual(self.service.jobs[queued['job_id']]['state'],'Completed');self.assertIsNone(self.service.scope)
+        self.assertEqual(self.service.queue_owner_prompt(args)['state'],'Completed')
+        value=self.service.dispatch(self.owner,{'operation':'WeChatOwner','payload':{'method':'snapshot','arguments':{}}})
+        self.assertEqual(value['owner_messages'][0]['answer'],'Synthetic local answer')
+        self.assertNotIn('prompt',value['jobs'][0]);self.assertNotIn('text',value['jobs'][0])
+        public=self.call('wechat_job_status',job_id=queued['job_id']);self.assertNotIn('prompt',public);self.assertNotIn('text',public)
+        with self.assertRaisesRegex(AXRError,'owner_channel'):
+            self.kernel.dispatch(self.client,{'operation':'WeChatOwner','payload':{'method':'queue_owner_prompt','arguments':args}})
+    def test_burst_overflow_stops_scope_without_model_or_send(self):
+        self.activate(automatic=True)
+        with patch.object(self.service,'scan_targets',return_value=[]),patch.object(self.service.bursts,'ready',side_effect=AXRError('wechat_burst_capacity')),patch.object(self.service,'infer') as infer,patch.object(self.service,'send') as send,patch.object(self.service.worker_event,'wait',side_effect=lambda *_:self.service.stop_event.set()):
+            self.service.loop()
+        self.assertIsNone(self.service.scope);self.assertEqual(self.service.bursts.pending,{})
+        self.assertEqual(self.service.state.get('worker-error'),{'code':'wechat_burst_capacity'})
+        infer.assert_not_called();send.assert_not_called()
+    def test_owner_model_choice_cancel_and_late_child_hooks_do_not_expand_scope(self):
+        thread='00000000-0000-4000-8000-000000000001';self.service.state.set('assistant',{'thread_id':thread})
+        args={'text':'Synthetic task','request_id':'b'*32,'model':'synthetic-model','effort':'high'}
+        q=self.service.queue_owner_prompt(args);self.service.lifecycle={'thread_id':thread,'state':'idle','ready_at':0}
+        task=self.service.claim_owner_task();self.assertEqual(task['model'],'synthetic-model');self.assertEqual(task['effort'],'high')
+        self.service.cancel_owner_task({'job_id':q['job_id']});self.assertEqual(self.service.jobs[q['job_id']]['state'],'Unknown')
+        self.service.lifecycle={'thread_id':thread,'state':'busy','turn_id':'owner-turn'}
+        event=self.service.lifecycle_event({'thread_id':thread,'event':'Stop','worker_token':task['worker_token'],'turn_id':'child-turn'})
+        self.assertTrue(event['worker_event']);self.assertEqual(self.service.lifecycle['state'],'busy')
+        with self.assertRaisesRegex(AXRError,'uncertain_text_never_retry'):
+            self.service.queue_owner_prompt({**args,'request_id':'c'*32})
+        with self.assertRaisesRegex(AXRError,'idempotency_content_changed'):
+            self.service.queue_owner_prompt({**args,'model':'different-model'})
+        self.assertIsNone(self.service.scope)
+    def test_draft_only_scope_cannot_send_even_through_mcp(self):
+        self.activate(reply_targets=[],automatic=False)
+        self.assertFalse(self.service.scope['automatic']);self.assertFalse(self.call('wechat_status')['send_available'])
+        with self.assertRaisesRegex(AXRError,'send_target_not_authorized'):
+            self.call('wechat_send_message',conversation_id='fixture-peer',text='must not send',request_id='blocked')
+        self.assertEqual(self.call('wechat_prepare_reply',conversation_id='fixture-peer',text='manual only')['state'],'Draft')
     def test_discovery_has_no_authority_and_read_requires_owner(self):
         self.assertFalse(self.call('wechat_status')['owner_authorized'])
         with self.assertRaisesRegex(AXRError,'scope_stopped'):self.call('wechat_read_messages',conversation_id='fixture-peer')
@@ -320,7 +366,7 @@ class ServiceTests(unittest.TestCase):
         self.activate(automatic=True,max_replies=1)
         # One synthetic new message. Real Guard/ledger remain in the loop;
         # inference/native UI are explicit synthetic boundaries in this test.
-        self.service.baseline=0
+        self.service.baseline=0;self.service.bursts.quiet_seconds=0
         def infer(identity,page):
             self.assertEqual(identity,'fixture-owner')
             self.assertEqual(page['messages'][0]['reference'],'synthetic-message')

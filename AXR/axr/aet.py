@@ -29,6 +29,17 @@ def canonical(value):
                       ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
+def wire_canonical(value):
+    """Protocol bytes shared with native verifiers; stored digests stay v1.
+
+    Python and native serializers may choose different decimal spellings of
+    the same binary float. Only transient wire MAC/root signatures use this;
+    never change historical journal/resource/checkpoint hashes implicitly.
+    """
+    from . import _axr_native as native
+    return native.wire_canonical(canonical(value).decode('utf-8')).encode('utf-8')
+
+
 def digest(value):
     return hashlib.sha256(canonical(value)).hexdigest()
 

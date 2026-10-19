@@ -23,6 +23,7 @@ from .wechat_database import NativeDatabase,actor_records,saved_draft_metadata
 from .wechat_execution import AuthorityNavigation
 from .codex_source import CodexSourceProvider
 from .wechat_targets import private_recipient
+from .wechat_burst import BurstBuffer
 
 PRINCIPAL='wechat:service'
 BOUNDARY='wechat-managed-v2'
@@ -88,7 +89,9 @@ class WeChatService:
         self.cursors={};self.baseline=0;self.reply_count=0;self.poll_position=0
         self.activity_after=[0,''];self.activity_seen={};self.activity_pending={}
         self.activity_stamp=None;self.activity_checked=0;self.poll_delay=2
-        self.lifecycle={'thread_id':'','state':'awaiting_lifecycle','turn_id':None};self.bridge_token=None
+        self.bursts=BurstBuffer()
+        self.lifecycle={'thread_id':'','state':'awaiting_lifecycle','turn_id':None};self.bridge_token=None;self.retired_tokens={}
+        self.last_error=self.state.get('worker-error',None)
         self.jobs=self.state.get('jobs',{})
         # Never resume or retry work interrupted by a crash/restart.
         for job in self.jobs.values():
@@ -119,7 +122,7 @@ class WeChatService:
         with self.job_lock:
             for key,job in list(self.jobs.items()):
                 if job['state'] in ('Queued','AwaitingAgent','HandedOff'):self.save_job(key,{**job,'state':'Unknown' if job['state']=='HandedOff' else 'FailedSafe','retry':False})
-        self.bridge_token=None
+        self.retire_bridge();self.bursts.clear()
         self.worker_event.set()
         return {'stopped':True,'revoked':True,'retry':False}
     def review(self,peer,arguments):
@@ -141,7 +144,7 @@ class WeChatService:
         if not isinstance(style,str) or len(style.encode())>12000:raise AXRError('wechat_owner_scope_invalid')
         if arguments.get('automatic',False) and not arguments.get('disclose',True):raise AXRError('wechat_model_disclosure_required')
         reply_targets=arguments.get('reply_targets',targets)
-        if type(reply_targets) is not list or not reply_targets or set(reply_targets)-set(targets):raise AXRError('wechat_owner_scope_invalid')
+        if type(reply_targets) is not list or set(reply_targets)-set(targets) or (arguments.get('automatic',False) and not reply_targets):raise AXRError('wechat_owner_scope_invalid')
         self_agent=arguments.get('self_agent',False);owner_thread=settings.get('thread_id','') if self_agent else ''
         if self_agent:
             from axr_integration.assistant_settings import valid_thread
@@ -177,19 +180,21 @@ class WeChatService:
             try:verified=native.verify_root_signature(self.kernel.owner_public_key,canonical(challenge),bytes.fromhex(signature))
             except Exception:verified=False
             if not verified:raise AXRError('owner_presence_signature_required')
-            self.owner=peer.principal;self.scope=challenge['scope'];self.generation+=1
+            self.owner=peer.principal;self.scope=challenge['scope'];self.generation+=1;self.last_error=None
             self.baseline=int(time.time())+1;self.cursors={};self.reply_count=0
             self.poll_position=0;self.activity_after=[0,''];self.activity_seen={};self.activity_pending={}
-            self.activity_stamp=None;self.activity_checked=0;self.poll_delay=2
-            try:self.derive_contract()
+            self.activity_stamp=None;self.activity_checked=0;self.poll_delay=2;self.bursts.clear()
+            try:
+                self.derive_contract()
+                self.state.set('last-owner-consent',{'challenge':challenge,'signature':signature,'authority_restored':False})
+                self.state.set('worker-error',None)
             except BaseException:self.scope=None;self.capability=None;raise
-            self.state.set('last-owner-consent',{'challenge':challenge,'signature':signature,'authority_restored':False})
         self.worker_event.set()
         return self.status()
     def derive_contract(self,identity=None):
         # A standing owner consent can be unlimited; every derived task remains
         # finite. Only this trusted host derives it, from the signed exact scope.
-        now=time.time();scope=self.scope;identity=identity or scope['reply_targets'][0]
+        now=time.time();scope=self.scope;identity=identity or scope['targets'][0]
         if identity not in scope['targets']:raise AXRError('wechat_target_not_authorized')
         keys=[self.resources[identity].key]
         contract=TaskContract(uuid.uuid4().hex,self.owner,PRINCIPAL,'wechat',digest(scope),'incoming','external-message',
@@ -252,7 +257,7 @@ class WeChatService:
         return self.local(identity,'messages.read',{'kind':kind,**parameters},
             lambda check:self.database.navigation(identity,kind,check,**parameters))
     def scan_targets(self):
-        self.check();targets=list(self.scope['reply_targets'])
+        self.check();targets=list(self.scope['reply_targets'] or self.scope['targets'])
         # Broad metadata is available only under the owner's full account grant.
         # Restricted grants continue to query only their own exact sources.
         if (len(targets)>8 and set(targets)==set(self.resources)==set(self.scope['targets'])
@@ -297,34 +302,82 @@ class WeChatService:
         text=mask_credentials(row['text'][7:])[0]
         if not text.strip() or len(text.encode())>16000:raise AXRError('wechat_owner_command_budget')
         self.save_job(key,{'id':key,'conversation_id':identity,'state':'AwaitingAgent','created':time.time(),
-            'expires':time.time()+900,'operation':'owner.command','text':text,'generation':self.generation,
+            'expires':time.time()+900,'operation':'owner.command','channel':'self','prompt':text,'text':text,'generation':self.generation,
             'thread_id':self.scope['owner_thread'],'source':row['reference'],'retry':False,'delivery_confirmed':False})
         return True
+    def retire_bridge(self):
+        now=time.monotonic();self.retired_tokens={k:v for k,v in self.retired_tokens.items() if v>now}
+        if self.bridge_token:self.retired_tokens[self.bridge_token]=now+30
+        if len(self.retired_tokens)>8:self.retired_tokens.pop(min(self.retired_tokens,key=self.retired_tokens.get))
+        self.bridge_token=None
     def lifecycle_event(self,args):
         if (set(args)-{'thread_id','event','turn_id','worker_token'} or args.get('event') not in ('UserPromptSubmit','SessionStart','Stop','Interrupt')
             or any(v is not None and (not isinstance(v,str) or len(v)>256) for v in args.values())):raise AXRError('wechat_lifecycle_invalid')
         selected=(self.scope or {}).get('owner_thread') or self.state.get('assistant',{}).get('thread_id')
         if not selected or args.get('thread_id')!=selected:return {'ignored':True}
         if self.bridge_token and secrets.compare_digest(args.get('worker_token') or '',self.bridge_token):return {'worker_event':True}
+        if any(expires>time.monotonic() and secrets.compare_digest(args.get('worker_token') or '',token) for token,expires in self.retired_tokens.items()):return {'worker_event':True}
         event=args['event'];state='busy' if event in ('UserPromptSubmit','SessionStart') else 'paused' if event=='Interrupt' else 'idle'
         # A late Stop for an older turn cannot declare the current turn idle.
         if event=='Stop' and self.lifecycle.get('turn_id') not in (None,args.get('turn_id')):return {'ignored':True}
         self.lifecycle={'thread_id':selected,'state':state,'turn_id':args.get('turn_id'),'ready_at':time.monotonic()+2}
         return {'recorded':True}
+    def cancel_owner_task(self,args):
+        job=self.jobs.get(args.get('job_id'))
+        if set(args)!={'job_id'} or not job or job.get('channel') not in ('desktop','self') or job.get('thread_id')!=self.state.get('assistant',{}).get('thread_id'):
+            raise AXRError('wechat_owner_command_not_active')
+        if job['state'] in ('AwaitingAgent','HandedOff'):
+            self.save_job(job['id'],{**job,'state':'Unknown' if job['state']=='HandedOff' else 'FailedSafe','retry':False})
+            if job['state']=='HandedOff':self.retire_bridge()
+        return {'stopped':True,'retry':False}
+    def owner_messages(self):
+        thread=self.state.get('assistant',{}).get('thread_id');rows=[]
+        for j in self.jobs.values():
+            if j.get('thread_id')!=thread or not j.get('prompt'):continue
+            if j.get('channel')!='desktop' and not (j.get('channel')=='self' and (self.scope or {}).get('self_agent') and j['generation']==self.generation):continue
+            rows.append({'id':j['id'],'prompt':j['prompt'],'answer':j.get('text') if j['state'] in ('Completed','Observed') else '',
+                'state':j['state'],'created':j['created'],'channel':j.get('channel'),'model':j.get('model','')})
+        return sorted(rows,key=lambda j:j['created'])[-8:]
+    def queue_owner_prompt(self,args):
+        if set(args)-{'text','request_id','model','effort'} or not {'text','request_id'}<=set(args) or not isinstance(args['request_id'],str) or not __import__('re').fullmatch('[0-9a-f]{32}',args['request_id']) or not isinstance(args['text'],str) or not args['text'].strip() or len(args['text'].encode())>16000:
+            raise AXRError('wechat_owner_command_budget')
+        if ('model' in args and (not isinstance(args['model'],str) or not __import__('re').fullmatch('[a-z0-9][a-z0-9._-]{0,99}',args['model']))) or ('effort' in args and args['effort'] not in ('none','minimal','low','medium','high','xhigh','max','ultra')):raise AXRError('wechat_owner_model_invalid')
+        from axr_integration.assistant_settings import valid_thread
+        thread=self.state.get('assistant',{}).get('thread_id','')
+        if not valid_thread(thread):raise AXRError('wechat_self_agent_binding_required')
+        if sum(j['state'] in ('AwaitingAgent','HandedOff') for j in self.jobs.values())>=32:raise AXRError('wechat_owner_queue_capacity')
+        key='desktop-'+digest([thread,args['request_id']]);now=time.time()
+        if key in self.jobs:
+            if self.jobs[key].get('prompt')!=args['text'] or any(self.jobs[key].get(k)!=args.get(k) for k in ('model','effort')):raise AXRError('wechat_idempotency_content_changed')
+            return {'job_id':key,'state':self.jobs[key]['state'],'retry':False}
+        if any(j.get('channel')=='desktop' and j['state']=='Unknown' and j.get('prompt')==args['text'] for j in self.jobs.values()):raise AXRError('wechat_uncertain_text_never_retry')
+        self.save_job(key,{'id':key,'conversation_id':self.config['account_id'],'channel':'desktop',
+            'prompt':args['text'],'text':args['text'],**{k:args[k] for k in ('model','effort') if k in args},'thread_id':thread,'created':now,'expires':now+900,
+            'operation':'owner.command','state':'AwaitingAgent','generation':self.generation,'retry':False,'delivery_confirmed':False})
+        return {'job_id':key,'state':'AwaitingAgent'}
     def claim_owner_task(self):
-        self.check()
-        if not self.scope.get('self_agent'):raise AXRError('wechat_self_agent_not_authorized')
+        local_pending=any(j.get('channel')=='desktop' and j['state'] in ('AwaitingAgent','HandedOff') for j in self.jobs.values())
+        if not local_pending and not (self.scope or {}).get('self_agent'):raise AXRError('wechat_self_agent_not_authorized')
         if self.bridge_token and not any(j['state']=='HandedOff' and j['expires']>time.time() for j in self.jobs.values()):
             for key,j in list(self.jobs.items()):
                 if j['state']=='HandedOff':self.save_job(key,{**j,'state':'Unknown','error':'owner_agent_handoff_expired'})
             self.bridge_token=None
-        if (self.lifecycle.get('thread_id')!=self.scope['owner_thread'] or self.lifecycle['state']!='idle'
+        selected=(self.scope or {}).get('owner_thread') or self.state.get('assistant',{}).get('thread_id')
+        if (self.lifecycle.get('thread_id')!=selected or self.lifecycle['state']!='idle'
             or time.monotonic()<self.lifecycle.get('ready_at',0) or self.bridge_token):return {'pending':True,'ready':False}
         with self.job_lock:
             job=next((j for j in self.jobs.values() if j['state']=='AwaitingAgent'),None)
             if not job:return {'pending':False,'ready':False}
-            if job['expires']<=time.time() or job['generation']!=self.generation:
+            if job['expires']<=time.time() or job['generation']!=self.generation or job['thread_id']!=selected:
                 self.save_job(job['id'],{**job,'state':'FailedSafe'});return {'pending':True,'ready':False}
+            if job.get('channel')=='desktop':
+                # Direct owner input is not a disclosure of WeChat data and
+                # never creates a read/send scope. Bind the same single handoff.
+                self.save_job(job['id'],{**job,'state':'HandedOff'});self.bridge_token=secrets.token_hex(32)
+                return {'ready':True,'job_id':job['id'],'thread_id':job['thread_id'],'text':job['text'],
+                    'worker_token':self.bridge_token,'expires':job['expires'],'channel':'desktop','retry':False,**{k:job[k] for k in ('model','effort') if k in job}}
+            self.check()
+            if not self.scope.get('self_agent'):raise AXRError('wechat_self_agent_not_authorized')
             action=self.action(self.config['account_id'],'disclosure.send',{'job_id':job['id'],'thread_id':job['thread_id'],'command_digest':digest(job['text'])},
                 destination=OWNER_DESTINATION,sources=(Provenance(self.resources[self.config['account_id']],job['source'],'personal'),))
             proof=self.prepare(action);self.kernel.claim_commit(self.peer,proof)
@@ -334,15 +387,17 @@ class WeChatService:
             return {'ready':True,'job_id':job['id'],'thread_id':job['thread_id'],'text':job['text'],
                     'worker_token':self.bridge_token,'expires':job['expires'],'retry':False}
     def finish_owner_task(self,args):
-        self.check();job=self.jobs.get(args.get('job_id'))
+        job=self.jobs.get(args.get('job_id'))
+        if not job or job.get('channel')!='desktop':self.check()
         if (set(args)-{'job_id','text','failed'} or not job or job['state']!='HandedOff' or job['generation']!=self.generation
-            or job['expires']<=time.time() or not self.scope.get('self_agent') or type(args.get('failed',False)) is not bool):raise AXRError('wechat_owner_command_not_active')
+            or job['expires']<=time.time() or (job.get('channel')!='desktop' and not self.scope.get('self_agent')) or type(args.get('failed',False)) is not bool):raise AXRError('wechat_owner_command_not_active')
         if args.get('failed',False):self.save_job(job['id'],{**job,'state':'Unknown','error':'owner_agent_handoff_uncertain'})
         else:
             text=args.get('text')
             if not isinstance(text,str) or not text.strip() or len(text.encode())>16000 or text.startswith('/agent '):raise AXRError('wechat_owner_command_budget')
-            self.save_job(job['id'],{**job,'text':text,'operation':'messages.send','state':'Queued'})
-        self.bridge_token=None;self.worker_event.set();return {'recorded':True,'retry':False}
+            self.save_job(job['id'],{**job,'text':text,'operation':'owner.command' if job.get('channel')=='desktop' else 'messages.send',
+                'state':'Completed' if job.get('channel')=='desktop' else 'Queued'})
+        self.retire_bridge();self.worker_event.set();return {'recorded':True,'retry':False}
     def enroll_handler(self,actual):
         with self.kernel.lock:
             self.kernel._check_integrity()
@@ -473,7 +528,7 @@ class WeChatService:
         self.worker_event.set();return {'job_id':key,'state':value['state'],'retry':False}
     def infer(self,identity,page):
         if not self.scope['disclose']:raise AXRError('wechat_model_disclosure_not_authorized')
-        records=actor_records(page)
+        records=actor_records(page,include_outgoing=True)
         if not records:return None
         generation=self.generation;resource=self.resources[identity]
         capability=self.contract(identity)
@@ -504,11 +559,11 @@ class WeChatService:
         permissions=self.readiness()
         return {'axr':True,'operational':True,'authority':'independent-native-v2','owner_authorized':active,
             'automatic_reply':bool(active and self.scope['automatic']),'scope':self.scope if active else None,
-            'permissions':permissions,'send_available':active and permissions['database'] and permissions['accessibility'],
+            'permissions':permissions,'send_available':active and bool(self.scope['reply_targets']) and permissions['database'] and permissions['accessibility'],
             'listener':{'listen':active,'wake_agent':active,'auto_execute':active and self.scope['automatic']},
-            'platform':{'mode':'wcdb-native','send_available':active and permissions['database'] and permissions['accessibility']},'audit_valid':self.kernel.store.journal.verify_audit(),
+            'platform':{'mode':'wcdb-native','send_available':active and bool(self.scope['reply_targets']) and permissions['database'] and permissions['accessibility']},'audit_valid':self.kernel.store.journal.verify_audit(),
             'policy_version':self.kernel.store.guard.version,'reply_count':self.reply_count,'retry_unknown':False,
-            'delivery_confirmed':False,'body_disclosed':False}
+            'delivery_confirmed':False,'body_disclosed':False,'pause_reason':self.last_error}
     def readiness(self):
         if self.kernel.development_fixture:return {'database':True,'accessibility':True,'synthetic':True}
         readable=True
@@ -533,6 +588,8 @@ class WeChatService:
             if method=='stop':return self.stop()
             if method=='codex_lifecycle':return self.lifecycle_event(args)
             if method=='claim_owner_task':return self.claim_owner_task()
+            if method=='queue_owner_prompt':return self.queue_owner_prompt(args)
+            if method=='cancel_owner_task':return self.cancel_owner_task(args)
             if method=='finish_owner_task':return self.finish_owner_task(args)
             if method=='assistant_settings':return self.state.get('assistant',{'thread_id':'','thread_title':'','persona':'','style':'简洁、自然、直接；不编造事实。','attribution':False})
             if method=='save_assistant_settings':
@@ -541,12 +598,13 @@ class WeChatService:
                 value={**self.state.get('assistant',{'thread_id':'','thread_title':'','persona':'','style':'简洁、自然、直接；不编造事实。','attribution':False}),**args}
                 self.state.set('assistant',value);return value
             if method=='snapshot':
-                return {'status':self.status(),'conversations':list(self.catalog.values()),'jobs':[
-                    {k:v for k,v in j.items() if k!='text'} for j in self.jobs.values()],
+                return {'status':self.status(),'conversations':[{**c,'is_self':c['conversation_id']==self.config['account_id']} for c in self.catalog.values()],'jobs':[
+                    {k:v for k,v in j.items() if k not in ('text','prompt')} for j in self.jobs.values()],
                     'drafts':[{'job_id':k,'display_name':self.catalog[j['conversation_id']]['display_name'],
                         'expires':j['expires']} for k,j in self.jobs.items() if j['state']=='Draft' and j['expires']>time.time()],
                     'grants':[],'summaries':[],'thread_binding':self.lifecycle,
-                    'owner_agent_enabled':bool(self.scope and self.scope.get('self_agent'))}
+                    'owner_agent_enabled':bool(self.scope and self.scope.get('self_agent')) or any(j.get('channel')=='desktop' and j['state'] in ('AwaitingAgent','HandedOff') for j in self.jobs.values()),
+                    'owner_messages':self.owner_messages()}
             if method=='check_target':
                 self.check();identity=args.get('conversation_id')
                 if (set(args)-{'conversation_id','metadata_only'} or 'conversation_id' not in args
@@ -583,7 +641,7 @@ class WeChatService:
         if method=='wechat_job_status':
             job=self.jobs.get(args['job_id'])
             if not job:raise AXRError('wechat_job_not_owned')
-            return {k:v for k,v in job.items() if k!='text'}
+            return {k:v for k,v in job.items() if k not in ('text','prompt')}
         self.check()
         if method=='wechat_conversations':return {'conversations':[self.catalog[i] for i in self.scope['targets'] if args.get('query','').casefold() in (self.catalog[i]['display_name']+' '+i).casefold()],'complete_history':False}
         if method=='wechat_read_messages':
@@ -618,30 +676,44 @@ class WeChatService:
                     # terminal records; no replay of the same inbound batch.
                     self.cursors[identity]=page['cursor']
                     self.finish_scan(identity,page)
-                    incoming=[]
+                    rows=[]
                     for row in page['messages']:
                         if self.owner_command(identity,row):continue
-                        if row['outgoing'] is False:incoming.append(row)
-                        elif identity==self.config['account_id'] and row.get('text','').startswith('/agent '):
-                            incoming.append({**row,'outgoing':False,'text':row['text'][7:]})
-                    if not incoming:continue
+                        if identity==self.config['account_id'] and row.get('outgoing') is True and row.get('text','').startswith('/agent '):
+                            rows.append({**row,'outgoing':False,'text':row['text'][7:]})
+                        else:rows.append(row)
+                    self.bursts.add(identity,rows,page['has_more'])
+                for identity,context,incoming in self.bursts.ready():
+                    self.check()
                     key='inbound-'+digest([identity,[r['reference'] for r in incoming]])
                     if key in self.jobs:continue
                     job={'id':key,'conversation_id':identity,'state':'Executing','created':time.time(),
-                        'expires':time.time()+900,'operation':'reply.prepare','retry':False,'delivery_confirmed':False}
+                        'expires':time.time()+900,'operation':'reply.prepare','batch_count':len(incoming),
+                        'context_count':len(context)-len(incoming),'retry':False,'delivery_confirmed':False}
                     self.save_job(key,job)
                     try:
-                        text=self.infer(identity,{**page,'messages':incoming})
+                        text=self.infer(identity,{'messages':context})
                         if text:
                             value={**job,'text':text,'state':'Draft'}
                             if self.scope['automatic']:
-                                result=self.send(identity,text,sources=(Provenance(self.resources[identity],digest(incoming),'personal'),));value.update(state='Observed' if result['database_record_observed'] else 'Unknown',result=result);self.reply_count+=1
+                                result=self.send(identity,text,sources=(Provenance(self.resources[identity],digest(context),'personal'),));value.update(state='Observed' if result['database_record_observed'] else 'Unknown',result=result);self.reply_count+=1
                             self.save_job(key,value)
                     except Exception as exc:self.save_job(key,{**job,'state':'Unknown','error':str(exc) if isinstance(exc,AXRError) else 'wechat_source_failed'})
+                if self.bursts.pending:self.poll_delay=1
             except AXRError as exc:
                 if self.scope and str(exc) in ('wechat_scope_stopped_or_expired','wechat_reply_budget_exhausted'):self.stop()
-            except Exception:
+                elif self.scope and str(exc)=='wechat_burst_capacity':
+                    self.last_error={'code':'wechat_burst_capacity'}
+                    self.stop()
+                    try:self.state.set('worker-error',self.last_error)
+                    except Exception:pass
+            except Exception as exc:
+                # Bounded exception class only; never persist a source body,
+                # arbitrary message, traceback, path or credential.
+                self.last_error={'code':'wechat_dispatcher_stopped','category':type(exc).__name__[:48]}
                 # Infrastructure failure cannot silently preserve an active UI
                 # state; revoke before the next dispatch pass.
                 self.stop()
+                try:self.state.set('worker-error',self.last_error)
+                except Exception:pass
             self.worker_event.wait(self.poll_delay);self.worker_event.clear()

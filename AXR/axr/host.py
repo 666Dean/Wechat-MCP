@@ -12,7 +12,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from .aet import AXRError, MAX_FRAME, PROTOCOL_VERSION, canonical, digest
+from .aet import wire_canonical, AXRError, MAX_FRAME, PROTOCOL_VERSION, canonical, digest
 
 
 class Lease:
@@ -57,7 +57,7 @@ class FrameCodec:
     def encode(self, payload):
         self.sent += 1
         body = dict(version=PROTOCOL_VERSION, epoch=self.epoch, sequence=self.sent, payload=payload)
-        encoded = canonical({"body": body, "mac": hmac.new(self.key, canonical(body), "sha256").hexdigest()})
+        encoded = canonical({"body": body, "mac": hmac.new(self.key, wire_canonical(body), "sha256").hexdigest()})
         if len(encoded) > MAX_FRAME:
             raise AXRError("ipc_frame_too_large")
         return encoded + b"\n"
@@ -68,7 +68,7 @@ class FrameCodec:
         try:
             frame = json.loads(encoded)
             body = frame["body"]
-            if (not hmac.compare_digest(frame["mac"], hmac.new(self.key, canonical(body), "sha256").hexdigest())
+            if (not hmac.compare_digest(frame["mac"], hmac.new(self.key, wire_canonical(body), "sha256").hexdigest())
                 or type(body["version"]) is not int or body["version"] != PROTOCOL_VERSION or body["epoch"] != self.epoch
                 or type(body["sequence"]) is not int
                 or body["sequence"] != self.received + 1):

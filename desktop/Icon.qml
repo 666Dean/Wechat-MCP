@@ -22,8 +22,12 @@ Canvas {
         else if(name==="clip"){c.beginPath();c.moveTo(8,14);c.lineTo(8,7);c.bezierCurveTo(8,1,18,1,18,7);c.lineTo(18,16);c.bezierCurveTo(18,24,5,24,5,16);c.lineTo(5,7);c.stroke();line([[11,7],[11,15],[14,15],[14,7]])}
         else if(name==="settings"){line([[3,6],[9,6]]);line([[13,6],[21,6]]);box(9,4,4,4);line([[3,12],[15,12]]);line([[19,12],[21,12]]);box(15,10,4,4);line([[3,18],[6,18]]);line([[10,18],[21,18]]);box(6,16,4,4)}
         else if(name==="check"){c.beginPath();c.arc(12,12,9,0,Math.PI*2);c.stroke();line([[8,12],[11,15],[16,9]])}
+        else if(name==="tick"){c.lineWidth=2.2;line([[5,12],[10,17],[19,7]])}
         else if(name==="clock"){c.beginPath();c.arc(12,12,9,0,Math.PI*2);c.stroke();line([[12,7],[12,12],[16,14]])}
         else if(name==="message"){line([[4,5],[20,5],[20,16],[12,16],[6,21],[6,16],[4,16],[4,5]])}
+        else if(name==="chevronDown"){line([[7,10],[12,15],[17,10]])}
+        else if(name==="arrowUp"){line([[12,19],[12,5],[6,11]]);line([[12,5],[18,11]])}
+        else if(name==="sparkle"){line([[12,3],[14.5,9.5],[21,12],[14.5,14.5],[12,21],[9.5,14.5],[3,12],[9.5,9.5],[12,3]])}
         else if(name==="arrow"){line([[5,12],[19,12],[14,7]]);line([[19,12],[14,17]])}
         else if(name==="refresh"){c.beginPath();c.arc(12,12,8,.8,5.9);c.stroke();line([[20,3],[20,9],[14,9]])}
         else if(name==="info"){c.beginPath();c.arc(12,12,9,0,Math.PI*2);c.stroke();line([[12,11],[12,17]]);line([[12,7],[12,7.1]])}

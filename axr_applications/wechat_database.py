@@ -111,7 +111,7 @@ class NativeDatabase:
         return {'rows':selected,'after':[selected[-1]['updated'],selected[-1]['conversation_id']] if selected else after,
                 'has_more':len(rows)>limit}
 
-def actor_records(page):
+def actor_records(page,*,include_outgoing=False):
     """Trusted source snapshot for an incoming actor; no raw credential fields.
 
     Local owner reads and model disclosure are distinct operations. Construct
@@ -122,9 +122,9 @@ def actor_records(page):
     if type(rows) is not list or len(rows)>6:raise AXRError('wechat_actor_page_budget')
     records=[]
     for row in rows:
-        if row.get('outgoing') is not False or not isinstance(row.get('text'),str):continue
+        if (row.get('outgoing') is not False and not (include_outgoing and row.get('outgoing') is True)) or not isinstance(row.get('text'),str):continue
         safe,_=mask_credentials(row['text'])
         if len(safe.encode())>4000:raise AXRError('wechat_actor_text_requires_bounded_page')
-        records.append({'reference':row['reference'],'text':safe,'data_class':'personal'})
+        records.append({'reference':row['reference'],'text':safe,'data_class':'personal',**({'context_only':True} if row.get('context_only') is True else {}),**({'direction':'outgoing-context'} if row.get('outgoing') is True else {})})
     if len(canonical(records))>24000:raise AXRError('wechat_actor_page_budget')
     return records

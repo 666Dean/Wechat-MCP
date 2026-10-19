@@ -9,7 +9,7 @@ performing the final side effect; replay cannot be turned into a new invocation.
 import json,threading,time,uuid
 from dataclasses import asdict
 from . import _axr_native as native
-from .aet import AXRError,Action,canonical,digest
+from .aet import wire_canonical, AXRError,Action,canonical,digest
 from .security import TaskContract
 from .ipc import PeerContext
 from .integrity import AuthorityIntegrity
@@ -77,11 +77,16 @@ class AuthorityKernel:
             self.security.signal('audit_integrity','kernel')
             raise AXRError('authority_integrity_sealed') from None
     def _signed(self,body):
-        data=canonical(body);return {'body':json.loads(data),'signature':self.signer.sign(data).hex()}
+        data=wire_canonical(body);return {'body':json.loads(data),'signature':self.signer.sign(data).hex()}
     def _verify(self,envelope,*,historical_receipt=False):
         try:
             body=envelope['body'];signature=bytes.fromhex(envelope['signature'])
-            if body['root_id']!=self.root_id or not native.verify_root_signature(self.root_public_key,canonical(body),signature):raise ValueError()
+            if body['root_id']!=self.root_id:raise ValueError()
+            valid=native.verify_root_signature(self.root_public_key,wire_canonical(body),signature)
+            # Compatibility is only for immutable historical receipts. Active
+            # execution proofs always use the current epoch/native wire form.
+            if not valid and historical_receipt:valid=native.verify_root_signature(self.root_public_key,canonical(body),signature)
+            if not valid:raise ValueError()
             if not historical_receipt and body['epoch']!=self.epoch:raise ValueError()
             return body
         except Exception:raise AXRError('authority_proof_invalid_or_old_epoch') from None

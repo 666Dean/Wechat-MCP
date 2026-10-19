@@ -30,3 +30,10 @@ def threads(cursor=None):
         'useStateDbOnly':True,'sourceKinds':['appServer','cli','exec','unknown']}))
     return {'threads':[{'id':t['id'],'title':t.get('name') or '未命名对话'} for t in data['data']],
             'next_cursor':data.get('nextCursor')}
+
+
+def models():
+    data=asyncio.run(_request('model/list',{'limit':100}))
+    return {'models':[{'id':m['model'],'title':m['displayName'],
+        'efforts':[e['reasoningEffort'] for e in m.get('supportedReasoningEfforts',[])],
+        'default_effort':m.get('defaultReasoningEffort','')} for m in data['data'] if not m.get('hidden')]}
