@@ -166,11 +166,14 @@ class DesktopUI(unittest.TestCase):
         try:
             c._models=[{'id':'synthetic-model','title':'Synthetic model','efforts':['low','medium','high'],'default_effort':'medium'}]
             c.modelsChanged.emit();QTest.qWait(30)
-            model=self.visual(w,'modelSelector');model.forceActiveFocus()
-            QTest.keyClick(w,Qt.Key_Space);QTest.keyClick(w,Qt.Key_Down);QTest.keyClick(w,Qt.Key_Return);QTest.qWait(30)
-            self.assertEqual(model.property('currentValue'),'synthetic-model')
             picker=self.visual(w,'reasoningSelector');picker.forceActiveFocus();QTest.keyClick(w,Qt.Key_Space);QTest.qWait(30)
             popup=w.findChild(QObject,'reasoningPopup');self.assertTrue(popup.property('visible'))
+            self.assertLessEqual(popup.property('width'),264)
+            model=self.visual(w,'modelSelector');model.forceActiveFocus();QTest.keyClick(w,Qt.Key_Space);QTest.qWait(20)
+            models=self.visual(w,'modelChoiceList');self.assertTrue(models.isVisible())
+            QTest.keyClick(w,Qt.Key_Down);QTest.keyClick(w,Qt.Key_Return);QTest.qWait(30)
+            self.assertEqual(picker.property('modelId'),'synthetic-model')
+            self.assertFalse(models.isVisible())
             slider=self.visual(w,'reasoningSlider');slider.forceActiveFocus();QTest.keyClick(w,Qt.Key_Right);QTest.qWait(20)
             self.assertEqual(picker.property('value'),'high')
             QTest.keyClick(w,Qt.Key_Escape);QTest.qWait(20);self.assertFalse(popup.property('visible'))
@@ -210,4 +213,41 @@ class DesktopUI(unittest.TestCase):
                 c.submitChat('New unsent edit','','')
                 c.accept({'name':'chat_prompt','error':None,'value':{'job_id':'synthetic-2','state':'AwaitingAgent'}})
                 self.assertEqual(composer.property('text'),'')
+        finally:self.dispose(c,e,w)
+
+    def test_right_edge_menus_keep_all_choices_inside_window_on_resize(self):
+        c,e,w=self.create();c.timer.stop()
+        try:
+            for width,height in [(1024,680),(1280,800),(1440,900)]:
+                w.setWidth(width);w.setHeight(height);w.setProperty('page',6);QTest.qWait(35)
+                menu=self.visual(w,'settingsAccessMenu');menu.forceActiveFocus();QTest.keyClick(w,Qt.Key_Space);QTest.qWait(35)
+                popup=menu.findChild(QObject,'glassChoicePopup');self.assertTrue(popup.property('visible'))
+                self.assertGreaterEqual(popup.property('height'),130)
+                self.assertGreaterEqual(popup.property('x'),12);self.assertGreaterEqual(popup.property('y'),12)
+                self.assertLessEqual(popup.property('x')+popup.property('width'),width-12)
+                self.assertLessEqual(popup.property('y')+popup.property('height'),height-12)
+                w.setWidth(width+60);QTest.qWait(30)
+                self.assertLessEqual(popup.property('x')+popup.property('width'),w.width()-12)
+                popup.close();w.setProperty('page',0);QTest.qWait(20)
+                quick=self.visual(w,'quickAccessMenu');quick.forceActiveFocus();QTest.keyClick(w,Qt.Key_Space);QTest.qWait(25)
+                popup=quick.findChild(QObject,'glassChoicePopup');self.assertGreaterEqual(popup.property('height'),130)
+                self.assertGreaterEqual(popup.property('x'),12);self.assertLessEqual(popup.property('y')+popup.property('height'),height-12)
+                popup.close()
+        finally:self.dispose(c,e,w)
+
+    def test_wrapped_messages_and_all_settings_categories_remain_scrollable(self):
+        c,e,w=self.create();c.timer.stop()
+        try:
+            w.setWidth(1024);w.setHeight(680)
+            c._data['owner_messages']=[{'id':'long-fixture','prompt':'Product 讨论与长任务描述 '*70,'answer':'Synthetic answer\n'*30,'state':'Completed'}]
+            c.changed.emit();QTest.qWait(60)
+            bubble=self.visual(w,'userMessageBubble');self.assertGreater(bubble.height(),40)
+            self.assertLessEqual(bubble.width(),self.visual(w,'conversationTranscript').width())
+            text=next(i for i in bubble.childItems() if i.metaObject().className().startswith('QQuickText'))
+            self.assertLessEqual(text.y()+text.property('contentHeight'),bubble.height())
+            w.setProperty('page',6);QTest.qWait(30)
+            for section in range(3):
+                category=self.visual(w,'settingsCategory'+str(section));category.forceActiveFocus();QTest.keyClick(w,Qt.Key_Space);QTest.qWait(30)
+                self.assertEqual(self.visual(w,'settingsPage').property('section'),section)
+                self.assertFalse(w.grabWindow().isNull())
         finally:self.dispose(c,e,w)

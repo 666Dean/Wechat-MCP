@@ -28,12 +28,14 @@ ComboBox {
             Icon { name: "tick"; width: 16; height: 16; ink: Theme.positive; opacity: control.currentIndex===row.index ? 1 : 0 }
         }
     }
-    popup: Popup {
+    popup: AnchoredPopup {
+        id: choicePopup
         objectName: "glassChoicePopup"
-        y: control.opensAbove ? -implicitHeight-7 : control.height+7
-        width: Math.max(control.menuWidth,control.width); implicitHeight: Math.min(350,contentItem.implicitHeight+16); padding: 8
+        anchorItem: control; preferAbove: control.opensAbove
+        preferredWidth: Math.max(control.menuWidth,control.width)
+        implicitHeight: Math.min(350,control.count*41+14)
         background: GlassPanel { radius: 17 }
-        contentItem: ListView { implicitHeight: contentHeight; model: control.popup.visible ? control.delegateModel : null; clip: true; currentIndex: control.highlightedIndex; spacing: 2; ScrollIndicator.vertical: ScrollIndicator {} }
+        contentItem: ListView { implicitHeight: Math.max(0,control.count*41-2); model: control.popup.visible ? control.delegateModel : null; clip: true; currentIndex: control.highlightedIndex; spacing: 2; ScrollIndicator.vertical: ScrollIndicator {} }
         enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.motionEnabled ? 110 : 0 } }
         exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: Theme.motionEnabled ? 80 : 0 } }
     }

@@ -11,13 +11,13 @@ Item {
     property string accessSummary: "尚未授权微信访问"
     property var conversations: controller.data.owner_messages || []
     property var modelChoices: [{id:"",title:"沿用对话模型",efforts:[]}].concat(controller.codexModels || [])
-    property var selectedModel: modelChoices[modelChoice.currentIndex] || modelChoices[0]
     property bool waiting: conversations.some(function(c){return c.state==="AwaitingAgent" || c.state==="HandedOff"})
     signal permissionsRequested(int level)
     signal openProject(int page)
-    function submit(){var value=composer.text.trim();if(value && connected && !controller.data.chat_submitting)controller.submitChat(value,modelChoice.currentValue || "",effortChoice.value)}
+    function submit(){var value=composer.text.trim();if(value && connected && !controller.data.chat_submitting)controller.submitChat(value,effortChoice.modelId,effortChoice.value)}
     Connections { target: workspace.controller; function onChatAccepted(text){if(composer.text.trim()===text)composer.clear()} }
     function syncMessages(){
+        var follow=transcript.followTail || threadModel.count===0
         var ids=conversations.map(function(m){return m.id})
         for(var i=threadModel.count-1;i>=0;i--)if(ids.indexOf(threadModel.get(i).jobId)<0)threadModel.remove(i)
         for(var j=0;j<conversations.length;j++){
@@ -26,19 +26,23 @@ Item {
             var value={jobId:row.id,prompt:row.prompt || "",answer:row.answer || "",jobState:row.state || "",channel:row.channel || "desktop"}
             if(at<0)threadModel.append(value);else threadModel.set(at,value)
         }
-        if(transcript.atYEnd || threadModel.count<=1)Qt.callLater(function(){transcript.positionViewAtEnd()})
+        if(follow)Qt.callLater(function(){transcript.positionViewAtEnd()})
     }
     onConversationsChanged: syncMessages()
     Component.onCompleted: syncMessages()
     ListModel { id: threadModel }
     component Choice: GlassCombo { opensAbove: true; quiet: true }
-    ColumnLayout { anchors.horizontalCenter: parent.horizontalCenter; anchors.top: parent.top; anchors.bottom: parent.bottom; width: Math.min(980,parent.width); spacing: 16
-        ListView { id: transcript; objectName: "conversationTranscript"; Layout.fillWidth: true; Layout.fillHeight: true; model: threadModel; clip: true; spacing: 24; ScrollBar.vertical: ScrollBar {}
+    ColumnLayout { anchors.horizontalCenter: parent.horizontalCenter; anchors.top: parent.top; anchors.bottom: parent.bottom; width: Math.min(860,parent.width); spacing: 14
+        ListView { id: transcript; objectName: "conversationTranscript"; Layout.fillWidth: true; Layout.fillHeight: true; model: threadModel; clip: true; spacing: 28; topMargin: 12; bottomMargin: 24
+            property bool followTail: true
+            onMovementEnded: followTail=atYEnd
+            onContentHeightChanged: if(followTail)Qt.callLater(function(){transcript.positionViewAtEnd()})
+            ScrollBar.vertical: ScrollBar {}
             add: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.motionEnabled ? 180 : 0 } }
             delegate: ColumnLayout { required property string jobId; required property string prompt; required property string answer; required property string jobState; required property string channel
                 width: transcript.width; spacing: 18
-                Rectangle { Layout.alignment: Qt.AlignRight; Layout.maximumWidth: 760; Layout.preferredWidth: Math.min(transcript.width-28,userText.implicitWidth+40); implicitHeight: userText.implicitHeight+32; radius: 18; color: Theme.messageSurface
-                    Text { id: userText; anchors.fill: parent; anchors.margins: 16; text: prompt; textFormat: Text.PlainText; color: Theme.ink; wrapMode: Text.Wrap; font.pixelSize: 14 }
+                Rectangle { objectName: "userMessageBubble"; Layout.alignment: Qt.AlignRight; Layout.preferredWidth: Math.min(transcript.width*.86,Math.max(150,userText.implicitWidth+32)); implicitHeight: userText.contentHeight+24; radius: 17; color: Theme.messageSurface
+                    Text { id: userText; anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 12; leftPadding: 4; width: parent.width-28; text: prompt; textFormat: Text.PlainText; color: Theme.ink; wrapMode: Text.Wrap; font.pixelSize: 14 }
                 }
                 ColumnLayout { Layout.fillWidth: true; Layout.maximumWidth: 860; spacing: 10
                     RowLayout { spacing: 8
@@ -57,7 +61,7 @@ Item {
                             }
                         }
                     }
-                    TextEdit { Layout.fillWidth: true; readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; textFormat: TextEdit.PlainText
+                    TextEdit { objectName: "assistantMessageBody"; Layout.fillWidth: true; readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; textFormat: TextEdit.PlainText
                         text: answer || ((controller.chatStreaming || {}).job_id===jobId && jobState==="HandedOff" ? (controller.chatStreaming || {}).text : "") || ({"AwaitingAgent":"等待当前任务结束…","HandedOff":"正在处理…","Queued":"等待返回微信…","Executing":"正在提交微信回复…","Unknown":"结果不确定，已停止且不会自动重做。请在 Codex 中核对。","FailedSafe":"任务已停止。"})[jobState] || ""
                         color: answer || jobState==="HandedOff" && (controller.chatStreaming || {}).text ? Theme.ink : Theme.muted; font.pixelSize: 14
                     }
@@ -71,14 +75,14 @@ Item {
                 }
             }
         }
-        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: inputColumn.implicitHeight+28; radius: 22; color: Theme.surface; border.color: composer.activeFocus ? Theme.focusBorder : Theme.border
+        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: inputColumn.implicitHeight+24; radius: 20; color: Theme.surface; border.color: composer.activeFocus ? Theme.focusBorder : Theme.border
             Behavior on border.color { ColorAnimation { duration: Theme.motionEnabled ? 140 : 0 } }
-            ColumnLayout { id: inputColumn; anchors.fill: parent; anchors.margins: 14; spacing: 10
+            ColumnLayout { id: inputColumn; anchors.fill: parent; anchors.margins: 12; spacing: 6
                 RowLayout { visible: !!(controller.composeAttachment || {}).name
                     Text { text: (controller.composeAttachment || {}).name || ""; color: Theme.ink; font.pixelSize: 12 }
                     ToolButton { text: "×"; onClicked: controller.removeComposeFile(); Accessible.name: "移除附件" }
                 }
-                ScrollView { Layout.fillWidth: true; Layout.preferredHeight: Math.min(150,Math.max(58,composer.contentHeight+8)); clip: true
+                ScrollView { Layout.fillWidth: true; Layout.preferredHeight: Math.min(150,Math.max(42,composer.contentHeight+6)); clip: true
                     TextArea { id: composer; objectName: "chatComposer"; placeholderText: "给助理发送任务…"; textFormat: TextEdit.PlainText; wrapMode: TextEdit.Wrap; color: Theme.ink; placeholderTextColor: Theme.muted; background: null; selectByMouse: true
                         Accessible.name: "给助理发送任务"; Keys.onPressed: function(event){if((event.key===Qt.Key_Return || event.key===Qt.Key_Enter) && (event.modifiers & (Qt.ControlModifier | Qt.MetaModifier))){workspace.submit();event.accepted=true}}
                     }
@@ -97,9 +101,7 @@ Item {
                         GlassTip { visible: permissionChoice.hovered; text: workspace.accessSummary }
                     }
                     Item { Layout.fillWidth: true }
-                    Choice { id: modelChoice; objectName: "modelSelector"; implicitWidth: 158; model: workspace.modelChoices; textRole: "title"; valueRole: "id"; currentIndex: 0; Accessible.name: "任务模型"; onActivated: effortChoice.value=""
-                        GlassTip { visible: modelChoice.hovered; text: "用于本次与后续任务，实际可用性由 Codex 确认。" } }
-                    ReasoningPicker { id: effortChoice; efforts: workspace.selectedModel.efforts || []; modelTitle: workspace.selectedModel.title; defaultEffort: workspace.selectedModel.default_effort || "" }
+                    ReasoningPicker { id: effortChoice; models: workspace.modelChoices }
                     ToolButton { objectName: "stopChat"; visible: workspace.waiting; text: "■"; Accessible.name: "停止当前任务"; onClicked: controller.stopChat(); implicitWidth: 32; implicitHeight: 32 }
                     ToolButton { objectName: "chatSend"; enabled: workspace.connected && composer.text.trim().length>0 && !controller.data.chat_submitting; onClicked: workspace.submit(); Accessible.name: "发送任务"; implicitWidth: 34; implicitHeight: 34
                         scale: down ? .92 : 1; Behavior on scale { NumberAnimation { duration: Theme.motionEnabled ? 100 : 0 } }

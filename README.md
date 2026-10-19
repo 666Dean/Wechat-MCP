@@ -28,11 +28,11 @@ Windows 当前处于[整个项目的代码完成阶段](docs/WINDOWS_CODE_COMPLE
 
 ## WeChat MCP Desktop · 工作与日常助手
 
-工作台现以对话为中心：左侧内容/授权入口，右侧真实模型与发送；联系人可搜索分页管理，完全访问先风险确认再本机签署。连续消息合并后再回复。[设计、使用和边界](docs/DESKTOP_CONVERSATION_EXPERIENCE.md)。
+工作台现以对话为中心：左侧内容/授权入口，右侧合并的模型/思考强度入口与发送；联系人可搜索分页管理，完全访问先风险确认再本机签署。连续消息合并后再回复。[设计、使用和边界](docs/DESKTOP_CONVERSATION_EXPERIENCE.md)。
 
 ![Qt Desktop light theme — synthetic preview](docs/assets/desktop-light.png)
 
-[深色主题设计预览](docs/assets/desktop-dark.png) · 图中仅为合成界面，无真实微信数据。
+[深色主题设计预览](docs/assets/desktop-dark.png) · [设置页预览](docs/assets/desktop-settings.png) · 图中仅为合成界面，无真实微信数据。
 
 新增 Qt 6 / QML 本地 App：[运行与权限中心](docs/DESKTOP.md)。连接 Codex、
 查看真实回执、核对精确意图、管理授权范围和已批准摘要，共享一个本地执行 Broker。
