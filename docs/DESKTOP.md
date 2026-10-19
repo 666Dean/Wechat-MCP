@@ -55,10 +55,37 @@ python scripts/build_desktop.py --state /private/owner/state --helper /path/to/a
 
 macOS gets a local `.app`; Windows gets a `.cmd` launcher (using `pythonw` when
 available). These are **development launchers requiring this checkout and Python
-runtime**, not relocatable, signed/notarized installers. Distribution packaging,
-login items, Windows GUI hardware and long-running operation remain unqualified.
+runtime**, not relocatable, signed/notarized installers. The separate Developer
+Preview packaging below does not change these launchers. Login items, Windows GUI
+hardware and long-running operation remain unqualified.
 Closing the UI stops its own bounded Codex worker; it does not silently claim to
 revoke every independent owner session. Use Revoke all to stop authority.
+
+## macOS Developer Preview DMG
+
+The public `WeChat MCP Developer Preview / v0.1.0-dp1` bundle includes its own
+Python/Qt runtime. This first artifact targets **macOS 27.0+ / arm64** only and is
+ad-hoc signed, not notarized. It contains no account-specific Authority deployment,
+credentials, owner grants, chat data or vendor Codex application. Real WeChat use
+still requires a separately prepared owner deployment; see the
+[release notes](releases/0.1.0-dp1.zh-CN.md) for setup and qualification limits.
+
+Build in a clean Python 3.14 environment using `requirements.release.txt`.
+Install `./AXR` explicitly with `cmake.define.AXR_SECURITY_RELEASE=ON` and compiler
+file-prefix maps for the builder home/temp directory. Supply that environment's
+native extension and the exact upstream QtForPython/Python notices:
+
+```sh
+python -m scripts.package_desktop_preview --output /private/build/new-preview \
+  --native /private/build/runtime/axr/_axr_native.cpython-314-darwin.so \
+  --notices /private/build/upstream-notices
+```
+
+The script requires a clean tracked commit, verifies native signatures and
+relocatability, rejects private user paths, and runs runtime/fixture checks from a
+read-only mounted DMG with an isolated HOME and system-only PATH. Matching source,
+third-party notices and SHA-256 checks accompany the release. These checks do not
+authorize or validate a real WeChat send.
 
 ## Single execution authority
 

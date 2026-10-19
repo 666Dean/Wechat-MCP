@@ -22,6 +22,7 @@ from .codex_config import snippet,native_snippet,install,restore
 from .owner_agent import OwnerAgentBridge
 
 def call(*args,**kwargs):
+    if getattr(sys,'frozen',False) and not authority_installed():raise AXRError('setup_service_required')
     return (authority_call if authority_installed() else legacy_call)(*args,**kwargs)
 
 
@@ -428,6 +429,7 @@ class Controller(QObject):
                     try:return authority_call(self.state,'status')
                     except AXRError:time.sleep(.2)
                 raise AXRError('independent_authority_control_unavailable')
+            if getattr(sys,'frozen',False):raise AXRError('setup_service_required')
             try:read_connection(self.state);call(self.state,'status');return {'already_running':True}
             except Exception:pass
             if self.broker_process is not None and self.broker_process.poll() is None:raise AXRError('broker_start_pending')
@@ -498,6 +500,7 @@ class Controller(QObject):
     def startAgent(self):
         if self.fixture:return
         def launch():
+            if getattr(sys,'frozen',False):raise AXRError('independent_authority_control_unavailable')
             if self.worker_process is not None and self.worker_process.poll() is None:raise AXRError('reply_worker_already_running')
             call(self.state,'status')
             root=Path(__file__).resolve().parent.parent
@@ -529,6 +532,8 @@ class Controller(QObject):
     @Slot()
     def configPreview(self):
         self.selected=None
+        if getattr(sys,'frozen',False) and not authority_installed():
+            self._notice='请先完成本地安全服务部署，再连接 Codex。';self.noticeChanged.emit();return
         path=Path.home()/'.codex/config.toml'
         raw=path.read_bytes() if path.exists() else b''
         value=native_snippet() if authority_installed() else snippet(sys.executable,Path(__file__).resolve().parent.parent/'server.py',self.state)
@@ -551,6 +556,7 @@ class Controller(QObject):
         self.selected=None;self._preview={};self.detailChanged.emit()
         if self.fixture:return
         def handshake():
+            if getattr(sys,'frozen',False) and not authority_installed():raise AXRError('setup_service_required')
             import asyncio
             from mcp import ClientSession,StdioServerParameters
             from mcp.client.stdio import stdio_client
@@ -589,7 +595,7 @@ def main():
     args=parser.parse_args()
     if args.capture and not args.fixture:parser.error('Screenshots are supported only for the synthetic fixture')
     QQuickStyle.setStyle('Basic')
-    app=QApplication(sys.argv);app.setApplicationName('WeChat MCP Desktop');app.setOrganizationName('Stellaria Studio')
+    app=QApplication(sys.argv);app.setApplicationName('WeChat MCP Developer Preview' if getattr(sys,'frozen',False) else 'WeChat MCP Desktop');app.setOrganizationName('Stellaria Studio')
     app.setWindowIcon(QIcon(str(Path(__file__).with_name('icon.svg'))))
     app.styleHints().setColorScheme(Qt.ColorScheme.Dark if args.theme=='dark' else Qt.ColorScheme.Light)
     controller=Controller(args.state,args.helper,args.fixture,args.fixture_case)
@@ -597,6 +603,7 @@ def main():
     engine.load(QUrl.fromLocalFile(str(Path(__file__).with_name('Main.qml'))))
     if not engine.rootObjects():raise SystemExit(1)
     window=engine.rootObjects()[0]
+    if getattr(sys,'frozen',False):window.setTitle('WeChat MCP Developer Preview — Stellaria AXR')
     app.applicationStateChanged.connect(lambda state:controller.setForeground(state==Qt.ApplicationActive))
     window.setWidth(args.width);window.setHeight(args.height);window.setProperty('page',args.page);window.setProperty('darkMode',args.theme=='dark')
     window.darkModeChanged.connect(lambda:app.styleHints().setColorScheme(

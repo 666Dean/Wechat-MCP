@@ -1,5 +1,17 @@
 # wechat-codex-mcp
 
+## macOS Developer Preview
+
+首版 **WeChat MCP Developer Preview / v0.1.0-dp1** 提供 macOS Apple Silicon DMG，
+当前二进制要求 macOS 27.0+。桌面自带运行时，真实微信功能仍需本人账号的独立安全
+服务部署、凭据准备及授权；不是无需配置的一键自动回复安装器。此版为未经 Apple
+公证的开发者预览，不提供 Intel / Windows / Linux 安装包。
+[下载与完整功能说明](https://github.com/666Dean/Wechat-MCP/releases/tag/v0.1.0-dp1) ·
+[安装前提、特性与已知限制](docs/releases/0.1.0-dp1.zh-CN.md)。
+
+无前台发送未通过验收；最近的新发送测试保留 Unknown、未重发。附件/简报/待办
+入口不代表所有独立服务路由均已完成。请先阅读发行说明，再批准实际账号范围。
+
 Windows 当前处于[整个项目的代码完成阶段](docs/WINDOWS_CODE_COMPLETION.md)，全部软件链路完成后再统一实机测试。已接通独立审批到异步选聊、草稿、缓存见证、单次提交及数据库观察的合成链路，八个独立 MCP 工具和 Windows 原生导航代码已加入。入站/对话调度、Windows 隔离推理、Hello、部署和新 GUI 接线仍有代码缺口，不能称为只差实机；macOS 与 Windows 证据分别见[当前状态](#一眼看清当前状态)。
 
 ## AXR Security Architecture 2 · 安全整合
