@@ -19,6 +19,7 @@ from axr.aet import AXRError
 from axr_integration.broker import call as legacy_call, read_connection
 from .authority_client import call as authority_call,installed as authority_installed
 from .codex_config import snippet,native_snippet,install,restore
+from .owner_agent import OwnerAgentBridge
 
 def call(*args,**kwargs):
     return (authority_call if authority_installed() else legacy_call)(*args,**kwargs)
@@ -26,6 +27,7 @@ def call(*args,**kwargs):
 
 class Controller(QObject):
     assistantChanged=Signal();threadsChanged=Signal();changed=Signal();detailChanged=Signal();manualChanged=Signal();noticeChanged=Signal();completed=Signal(object)
+    agentEvent=Signal(object);agentApprovalChanged=Signal()
     def __init__(self,state,helper=None,fixture=False,fixture_case="empty"):
         super().__init__();self.state=state;self.helper=helper;self.fixture=fixture;self.fixture_case=fixture_case
         self._data={'connected':False,'jobs':[],'drafts':[],'conversations':[],'grants':[],'summaries':[]}
@@ -33,13 +35,33 @@ class Controller(QObject):
         self._preview={};self._manual={};self._detail='';self._notice='连接本地服务，开始你的工作台。';self.selected=None;self.config_review=None;self.config_backup=None
         self.pool=concurrent.futures.ThreadPoolExecutor(max_workers=2);self.inflight=set();self.broker_process=None;self.worker_process=None;self.worker_job=None
         self.completed.connect(self.accept)
-        self.timer=QTimer(self);self.timer.timeout.connect(self.refresh);self.timer.start(5000)
+        self._agent_approval={};self._agent_approvals=[];self.agent_bridge=OwnerAgentBridge(self.agentEvent.emit);self.agentEvent.connect(self.acceptAgent)
+        self.timer=QTimer(self);self.timer.timeout.connect(self.refresh);self.timer.start(10000)
         if not self.fixture and authority_installed():QTimer.singleShot(0,self.start)
         self.refresh()
     @Property('QVariantMap',notify=assistantChanged)
     def assistant(self):return self._assistant
     @Property('QVariantList',notify=threadsChanged)
     def codexThreads(self):return self._threads
+    @Property('QVariantMap',notify=agentApprovalChanged)
+    def agentApproval(self):return self._agent_approval
+    @Slot(bool)
+    def setForeground(self,foreground):self.timer.setInterval(10000 if foreground else 30000)
+    @Slot(object)
+    def acceptAgent(self,event):
+        if event['kind']=='approval':
+            self._agent_approvals.append(event)
+            if len(self._agent_approvals)==1:self._agent_approval=event;self.agentApprovalChanged.emit()
+            return
+        self._agent_approvals=[];self._agent_approval={};self.agentApprovalChanged.emit()
+        payload={k:v for k,v in event.items() if k!='kind'}
+        self.run('owner_finish',lambda:call(self.state,'control.finish_owner_task',(payload,),owner=True))
+    @Slot(bool)
+    def decideAgent(self,approved):
+        self.agent_bridge.decide(self._agent_approval.get('request_key'),approved)
+        if self._agent_approvals:self._agent_approvals.pop(0)
+        self._agent_approval=self._agent_approvals[0] if self._agent_approvals else {}
+        QTimer.singleShot(0,self.agentApprovalChanged.emit)
     @Slot(str)
     def openSystemPermission(self,kind):
         if self.fixture or sys.platform!='darwin':return
@@ -124,6 +146,7 @@ class Controller(QObject):
                 'wechat_main_window_unavailable':'请打开微信主窗口后重试；尚未请求身份认证。',
                 'runtime_account_witness_changed':'当前微信账号与已绑定账号不一致，请核对登录账号；尚未请求身份认证。',
                 'wechat_owner_review_expired_or_changed':'本次确认已过期或范围发生变化，未开启服务。请核对范围后重新开启。',
+                'wechat_self_agent_binding_required':'请先选择并保存 Codex 对话，并在回复范围中包含本人私聊。',
                 'wechat_initialization_approval_changed':'设置与已批准内容不一致，已保留进度。请先核对配置，避免重复认证。',
                 'wechat_initialization_recovery_requires_review':'初始化已有运行记录，不能按空事务接续。请保留数据并检查服务状态。',
                 'independent_authority_control_unavailable':'本地安全服务未连接，请先启动服务；无需重新登录微信。',
@@ -151,12 +174,22 @@ class Controller(QObject):
         if name in ('threads','threads_more'):
             self._threads=(self._threads if name=='threads_more' else [])+value['threads'];self._threads_cursor=value.get('next_cursor');self.threadsChanged.emit();return
         if name=='assistant_save':self.loadAssistant()
+        if name=='owner_claim':
+            if value.get('ready'):self.agent_bridge.start(value)
+            return
         if name=='stop':
             self._manual={};self._preview={};self.manualChanged.emit();self.detailChanged.emit()
         if name=='install':self.changed.emit()
         if name=='refresh':
             self._data=value;self._data.update(connected=True,loading=bool(self.inflight),last_sync=time.strftime('%H:%M:%S'),
                 automatic_pending='automatic' in self.inflight,worker_state='running' if self.worker_process is not None and self.worker_process.poll() is None else 'stopped')
+            if value.get('owner_agent_enabled'):
+                binding=value.get('thread_binding',{})
+                running=bool(self.agent_bridge.thread and self.agent_bridge.thread.is_alive())
+                if running and binding.get('state') in ('busy','paused'):self.agent_bridge.stop()
+                elif not running and binding.get('state')=='idle' and not self.fixture:
+                    self.run('owner_claim',lambda:call(self.state,'control.claim_owner_task',owner=True))
+            elif self.agent_bridge.thread and self.agent_bridge.thread.is_alive():self.agent_bridge.stop()
             if self._manual and (self._manual.get('expires',0)<=time.time() or
                     not any(d['job_id']==self._manual.get('job_id') for d in value.get('drafts',[]))):
                 self._manual={};self.manualChanged.emit()
@@ -275,17 +308,19 @@ class Controller(QObject):
     @Slot()
     def stop(self):
         if self.fixture:return
+        self.agent_bridge.stop()
         self.run('stop',lambda:call(self.state,'control.revoke_all',owner=True))
-    @Slot('QVariantList',int,int,bool)
-    def startAutomatic(self,targets,minutes,replies,overwrite=False):
+    @Slot('QVariantList',int,int,bool,bool)
+    def startAutomatic(self,targets,minutes,replies,overwrite=False,self_agent=False):
         if self.fixture:return
         if overwrite and not authority_installed():
             self._notice='强制覆盖需要独立安全服务。';self.noticeChanged.emit();return
-        arguments=(list(targets),minutes*60,replies,overwrite) if authority_installed() else (list(targets),minutes*60,replies)
+        arguments=(list(targets),minutes*60,replies,overwrite,self_agent) if authority_installed() else (list(targets),minutes*60,replies)
         self.run('automatic',lambda:call(self.state,'control.start_automatic',arguments,owner=True,timeout=180))
     @Slot()
     def stopAutomatic(self):
         if self.fixture:return
+        self.agent_bridge.stop()
         self.run('automatic_stop',lambda:call(self.state,'control.stop_automatic',owner=True))
     @Slot()
     def startAgent(self):
@@ -360,6 +395,7 @@ class Controller(QObject):
             return asyncio.run(test())
         self.run('connection',handshake)
     def close(self):
+        self.agent_bridge.stop()
         if self.worker_process is not None and self.worker_process.poll() is None:self.worker_process.terminate()
         if self.worker_job is not None:self.worker_job.Close();self.worker_job=None
         self.timer.stop()
@@ -388,12 +424,13 @@ def main():
     engine.load(QUrl.fromLocalFile(str(Path(__file__).with_name('Main.qml'))))
     if not engine.rootObjects():raise SystemExit(1)
     window=engine.rootObjects()[0]
+    app.applicationStateChanged.connect(lambda state:controller.setForeground(state==Qt.ApplicationActive))
     window.setWidth(args.width);window.setHeight(args.height);window.setProperty('page',args.page);window.setProperty('darkMode',args.theme=='dark')
     window.darkModeChanged.connect(lambda:app.styleHints().setColorScheme(
         Qt.ColorScheme.Dark if window.property('darkMode') else Qt.ColorScheme.Light))
     tray=QSystemTrayIcon(QIcon(str(Path(__file__).with_name('icon.svg'))),app)
     menu=QMenu();menu.addAction('打开工作台',lambda:(window.show(),window.raise_(),window.requestActivate()))
-    menu.addAction('撤销全部授权',controller.stop);menu.addSeparator();menu.addAction('退出界面',app.quit)
+    menu.addAction('撤销全部授权',lambda:window.requestRevoke());menu.addSeparator();menu.addAction('退出界面',app.quit)
     tray.setContextMenu(menu);tray.setToolTip('WeChat MCP Desktop');tray.show()
     if args.capture:
         def capture():

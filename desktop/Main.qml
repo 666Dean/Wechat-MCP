@@ -36,10 +36,14 @@ ApplicationWindow {
     property int autoMinutes: 15
     property int autoReplies: 4
     property bool overwriteDrafts: false
+    property bool selfAgentAccess: false
+    property int settingsSection: 0
+    function requestRevoke(){revokeDialog.open()}
+    Connections { target: owner; function onAgentApprovalChanged(){if((owner.agentApproval || {}).request_key)agentActionDialog.open();else agentActionDialog.close()} }
     property var drafts: window.backend.drafts || []
     property var jobs: window.backend.jobs || []
-    property var pending: jobs.filter(function(j){return ["Ready","AwaitingApproval","Executing","Prepared","Verifying"].indexOf(j.state)>=0 && j.expires*1000>Date.now()})
-    property var recent: jobs.slice(0,6)
+    property var pending: jobs.filter(function(j){return ["Ready","AwaitingApproval","Executing","Prepared","Verifying","AwaitingAgent","HandedOff"].indexOf(j.state)>=0 && j.expires*1000>Date.now()})
+    property var recent: jobs.slice().sort(function(a,b){return b.created-a.created}).slice(0,6)
     property var approvals: pending.filter(function(j){return j.state==="AwaitingApproval"})
     property var todos: pending.filter(function(j){return j.state!=="AwaitingApproval"})
     property bool inSettings: [1,3,4,5,6].indexOf(page)>=0
@@ -47,16 +51,33 @@ ApplicationWindow {
     property var exactDisclosure: (owner.preview || {}).exact_disclosure || ({})
     property bool sendAvailable: !previewMode && platform.send_available === true
     Binding { target: Theme; property: "dark"; value: window.darkMode }
-    function operation(op){return ({"messages.read":"读取消息","messages.search":"搜索消息","files.read":"解析本地附件","reply.prepare":"生成回复草稿","disclosure.send":"内容披露审批","messages.send":"提交微信回复","workspace.write":"保存工作文档","application.navigate":"应用导航","expired":"已过期任务"})[op] || "处理任务"}
-    function stateLabel(state){return ({"AwaitingApproval":"等待你的批准","Ready":"等待执行","Queued":"等待处理","Draft":"等待人工回复","Observed":"已核对本机发出记录","Executing":"正在处理","Prepared":"已准备","Verifying":"核验结果","Completed":"已完成","Unknown":"结果待核对","FailedSafe":"已安全停止","Expired":"已过期","Cancelled":"已取消","Denied":"已拒绝","Proposed":"待检查","PolicyChecked":"已检查权限"})[state] || "待验证"}
+    function operation(op){return ({"owner.command":"本人任务","messages.read":"读取消息","messages.search":"搜索消息","files.read":"解析本地附件","reply.prepare":"生成回复草稿","disclosure.send":"内容披露审批","messages.send":"提交微信回复","workspace.write":"保存工作文档","application.navigate":"应用导航","expired":"已过期任务"})[op] || "处理任务"}
+    function stateLabel(state){return ({"AwaitingAgent":"等待 Codex 当前任务结束","HandedOff":"Codex 正在处理本人任务","AwaitingApproval":"等待你的批准","Ready":"等待执行","Queued":"等待处理","Draft":"等待人工回复","Observed":"已核对本机发出记录","Executing":"正在处理","Prepared":"已准备","Verifying":"核验结果","Completed":"已完成","Unknown":"结果待核对","FailedSafe":"已安全停止","Expired":"已过期","Cancelled":"已取消","Denied":"已拒绝","Proposed":"待检查","PolicyChecked":"已检查权限"})[state] || "待验证"}
     function destinationLabel(value){return value === "local" ? "仅本机" : value === "model:codex" ? "Codex" : value && value.indexOf("wechat:")===0 ? "指定微信会话" : value && value.indexOf("model:")===0 ? "模型：" + value.slice(6) : value || "—"}
     function targetName(cid){var list=window.backend.conversations || [];for(var i=0;i<list.length;i++)if(list[i].conversation_id===cid)return list[i].display_name;return cid || "本地操作"}
     function timeLabel(value){return value ? new Date(value*1000).toLocaleString(Qt.locale(),"MM-dd HH:mm") : "—"}
     function grantsFor(cid){return (window.backend.grants || []).filter(function(g){return g.conversation_id===cid})}
-    function permitted(cid,op){return (window.autoReply.active && (window.autoReply.targets || []).indexOf(cid)>=0 && ["messages.read","messages.search","reply.prepare"].indexOf(op)>=0) || grantsFor(cid).some(function(g){return g.operations.indexOf(op)>=0 && g.remaining>0})}
+    function permitted(cid,op){return (window.autoReply.active && (window.autoReply.targets || []).indexOf(cid)>=0 && ["messages.read","messages.search","reply.prepare"].indexOf(op)>=0) || grantsFor(cid).some(function(g){return g.operations.indexOf(op)>=0 && (g.remaining===null || g.remaining>0)})}
 
     component Copy: Text { color: Theme.ink; textFormat: Text.PlainText; wrapMode: Text.WordWrap; font.pixelSize: Theme.body }
     component Caption: Copy { color: Theme.muted; font.pixelSize: Theme.caption }
+    component Field: TextField {
+        id: field
+        implicitHeight: 40; leftPadding: 12; rightPadding: 12; color: Theme.ink
+        placeholderTextColor: Theme.muted; selectByMouse: true
+        background: Rectangle { radius: 11; color: Theme.canvas; border.width: field.activeFocus ? 2 : 1; border.color: field.activeFocus ? Theme.positive : Theme.border }
+    }
+    component CheckX: CheckBox {
+        id: check; implicitHeight: 36; spacing: 10
+        indicator: Rectangle { x: check.leftPadding; y: (check.height-height)/2; width: 20; height: 20; radius: 6
+            color: check.checked ? Theme.brand : Theme.surface; border.color: check.activeFocus ? Theme.positive : check.checked ? Theme.brand : Theme.border
+            border.width: check.activeFocus ? 2 : 1
+            Icon { anchors.centerIn: parent; width: 15; height: 15; name: "check"; ink: "white"; visible: check.checked }
+        }
+        contentItem: Text { text: check.text; font: check.font; color: check.enabled ? Theme.ink : Theme.muted
+            leftPadding: check.indicator.width+check.spacing; verticalAlignment: Text.AlignVCenter; textFormat: Text.PlainText
+        }
+    }
     component ButtonX: Button {
         id: control
         property bool primary: false
@@ -264,7 +285,7 @@ ButtonX { text: "查看消息任务"; onClicked: window.page=2 } }
                             ColumnLayout { anchors.fill: parent; anchors.margins: 22; spacing: 13
                                 Copy { text: "安装与恢复"; font.pixelSize: Theme.section; font.weight: Font.DemiBold }
                                 Caption { Layout.fillWidth: true; text: "连接前会备份 Codex 设置，可恢复本次连接前的状态。" }
-                                ButtonX { text: "恢复原设置"; enabled: !window.previewMode && owner.restoreAvailable; onClicked: owner.restoreConfig() }
+                                ButtonX { text: "恢复原设置"; enabled: !window.previewMode && owner.restoreAvailable; onClicked: restoreDialog.open() }
                             }
                         }
                     }
@@ -311,7 +332,7 @@ ButtonX { text: "查看消息任务"; onClicked: window.page=2 } }
                             ButtonX { text: "撤销全部授权"; danger: true; enabled: window.connected; onClicked: revokeDialog.open() }
                         }
                         Panel { Layout.fillWidth: true; visible: !(window.backend.conversations || []).length; implicitHeight: 122; Empty { anchors.fill: parent; anchors.margins: 22; heading: "还没有绑定会话"; explanation: window.previewMode ? "演示模式不会创建真实权限。" : "请先完成本机账号与会话的所有者初始化。"; symbol: "lock" } }
-                        TextField { id: permissionSearch; Layout.fillWidth: true; placeholderText: "搜索会话"; Accessible.name: "搜索会话权限" }
+                        Field { id: permissionSearch; Layout.fillWidth: true; placeholderText: "搜索会话"; Accessible.name: "搜索会话权限" }
                         Caption { Layout.fillWidth: true; visible: (window.backend.conversations || []).length>40; text: "共 " + (window.backend.conversations || []).length + " 个会话，每次显示最多 40 个搜索结果。" }
                         Repeater { model: window.page===3 ? (window.backend.conversations || []).filter(function(c){return (c.display_name+" "+c.conversation_id).toLowerCase().indexOf(permissionSearch.text.toLowerCase())>=0}).slice(0,40) : []; delegate: Panel {
                             required property var modelData
@@ -381,7 +402,17 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                 PageScroll {
                     contentHeight: settingsPage.implicitHeight
                     ColumnLayout { id: settingsPage; width: parent.width; height: implicitHeight; spacing: Theme.gap
-                        Panel { Layout.fillWidth: true; implicitHeight: autoRows.implicitHeight+40
+                        Rectangle { Layout.fillWidth: true; implicitHeight: 48; radius: 16; color: Theme.hover
+                            RowLayout { anchors.fill: parent; anchors.margins: 5; spacing: 5
+                                Repeater { model: ["自动回复", "你的助理", "连接与偏好"]
+                                    ButtonX { required property int index; required property string modelData
+                                        Layout.fillWidth: true; text: modelData; primary: window.settingsSection===index
+                                        onClicked: window.settingsSection=index
+                                    }
+                                }
+                            }
+                        }
+                        Panel { visible: window.settingsSection===0; Layout.fillWidth: true; implicitHeight: autoRows.implicitHeight+48
                             ColumnLayout { id: autoRows; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 20; spacing: 14
                                 Copy { text: "自动回复"; font.pixelSize: 18; font.weight: Font.Medium }
                                 ColumnLayout { Layout.fillWidth: true; visible: window.connected && !!window.status.permissions && !window.systemReady; spacing: 10
@@ -401,11 +432,11 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                                 Caption { Layout.fillWidth: true; visible: !!(window.status.security || {}).automatic_block; text: "自动回复已暂停。完成安全服务升级后，再为指定对象开启授权。" }
                                 Caption { Layout.fillWidth: true; text: window.autoReply.active ? "已开启 · " + (window.autoReply.expires ? "有效至 " + window.timeLabel(window.autoReply.expires) : "不限时长，直至停止") + " · 剩余 " + (window.autoReply.remaining===null ? "不限" : window.autoReply.remaining) + " 次" : "允许 Codex 阅读范围内的新消息、生成回复并发送。发送时微信会置前。" }
                                 Caption { Layout.fillWidth: true; visible: window.autoReply.active; text: "范围：已授权 " + (window.autoReply.targets || []).length + " 个私聊，可在权限管理查看。" }
-                                CheckBox { visible: !window.autoReply.active; text: "本次已核验的全部私聊"; checked: window.autoAll; enabled: !window.autoReply.active; onToggled: window.autoAll=checked }
-                                TextField { id: targetSearch; visible: !window.autoAll && !window.autoReply.active; Layout.fillWidth: true; placeholderText: "搜索授权对象"; enabled: !window.autoReply.active }
-                                Flow { Layout.fillWidth: true; spacing: 8; visible: !window.autoAll
+                                CheckX { visible: !window.autoReply.active; text: "本次已核验的全部私聊"; checked: window.autoAll; enabled: !window.autoReply.active; onToggled: window.autoAll=checked }
+                                Field { id: targetSearch; visible: !window.autoAll && !window.autoReply.active; Layout.fillWidth: true; placeholderText: "搜索授权对象"; enabled: !window.autoReply.active }
+                                Flow { Layout.fillWidth: true; spacing: 8; visible: !window.autoAll && !window.autoReply.active
                                     Repeater { model: (window.backend.conversations || []).filter(function(c){return c.display_name.indexOf(targetSearch.text)>=0}).slice(0,40)
-                                        CheckBox { text: modelData.display_name; enabled: !window.autoReply.active && !window.previewMode
+                                        CheckX { text: modelData.display_name; enabled: !window.autoReply.active && !window.previewMode
                                             checked: window.autoTargets.indexOf(modelData.conversation_id)>=0
                                             Accessible.name: "自动回复范围：" + text
                                             onToggled: { var ids=window.autoTargets.slice(); var at=ids.indexOf(modelData.conversation_id); if(checked && at<0)ids.push(modelData.conversation_id); if(!checked && at>=0)ids.splice(at,1); window.autoTargets=ids }
@@ -419,17 +450,30 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                                     SpinBox { objectName: "autoReplyLimit"; visible: !window.autoReply.active; from: 0; to: 100000; value: 4; textFromValue: function(value,locale){return value===0 ? "不限" : value.toString()}; enabled: !window.autoReply.active; onValueModified: window.autoReplies=value; Accessible.name: "最多自动回复次数" }
                                     Item { Layout.fillWidth: true }
                                     ButtonX { objectName: "autoStart"; text: "授权并开启"; primary: true; enabled: window.connected && window.systemReady && window.autoReply.supported === true && !window.autoReply.active && (window.autoAll || window.autoTargets.length>=2) && Qt.platform.os === "osx"; onClicked: autoDialog.open() }
-                                    ButtonX { objectName: "autoStop"; text: "停止自动回复"; danger: true; enabled: window.connected && (window.autoReply.active || window.backend.automatic_pending === true || (window.backend.automatic_worker || {}).running === true); onClicked: owner.stopAutomatic() }
+                                    ButtonX { objectName: "autoStop"; text: "停止自动回复"; danger: true; enabled: window.connected && (window.autoReply.active || window.backend.automatic_pending === true || (window.backend.automatic_worker || {}).running === true); onClicked: stopDialog.open() }
                                 }
-                                CheckBox { visible: window.independentService && !window.autoReply.active; text: "强制覆盖已有输入"; checked: window.overwriteDrafts; onToggled: window.overwriteDrafts=checked }
+                                CheckX { visible: window.independentService && !window.autoReply.active; text: "强制覆盖已有输入"; checked: window.overwriteDrafts; onToggled: window.overwriteDrafts=checked }
                                 Caption { Layout.fillWidth: true; visible: window.overwriteDrafts && !window.autoReply.active; text: "会清空当前输入后写入回复。无法确认的附件、窗口或发送结果仍会停止。" }
                                 Caption { Layout.fillWidth: true; text: "仅回复开启后的入站文字。次数填 0 表示不限；不确定的发送不会重发。停止、到期或退出服务后撤权。" }
+                                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+                                RowLayout { Layout.fillWidth: true; spacing: 16
+                                    ColumnLayout { Layout.fillWidth: true; spacing: 6
+                                        Copy { text: "本人私聊 · 任务入口"; font.weight: Font.Medium }
+                                        Caption { Layout.fillWidth: true; text: "发送 /agent 加任务内容。默认只做普通回复；单独开启后可向绑定的 Codex 对话下任务，使用已授权工具。" }
+                                        Caption { Layout.fillWidth: true; text: window.autoReply.active ? (window.backend.owner_agent_enabled ? "已开启任务访问，敏感操作仍需确认" : "当前为普通回复权限") : window.selfAgentAccess ? "本次将申请任务访问" : "普通回复权限"; color: Theme.positive }
+                                    }
+                                    ButtonX { objectName: "selfAgentAccess"; visible: window.independentService && !window.autoReply.active
+                                        text: window.selfAgentAccess ? "取消任务访问" : "开启任务访问"
+                                        onClicked: {if(window.selfAgentAccess)window.selfAgentAccess=false;else selfAgentDialog.open()}
+                                    }
+                                }
+                                Caption { Layout.fillWidth: true; text: "空闲时降低检查频率；只在会话变化后读取新内容，需要回复时才唤醒助理。" }
                             }
                         }
-                        Panel { Layout.fillWidth: true; implicitHeight: assistantRows.implicitHeight+40
+                        Panel { visible: window.settingsSection===1; Layout.fillWidth: true; implicitHeight: assistantRows.implicitHeight+48
                             ColumnLayout { id: assistantRows; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 20; spacing: 12
                                 Copy { text: "你的 Codex 助理"; font.pixelSize: 18; font.weight: Font.Medium }
-                                Caption { Layout.fillWidth: true; text: "所有触发留在同一个 Codex 对话。正在执行用户任务时排队，结束后再处理。" }
+                                Caption { Layout.fillWidth: true; text: window.independentService ? "普通聊天由独立助理生成回复。本人任务可交给你选择的 Codex 对话，忙碌时等待。" : "正在执行用户任务时排队，结束后再处理。" }
                                 RowLayout { Layout.fillWidth: true
                                     ComboBox { id: threadChoice; enabled: !window.autoReply.active; Layout.fillWidth: true; model: owner.codexThreads; textRole: "title"; valueRole: "id"; Accessible.name: "绑定的 Codex 对话"; onActivated: window.assistantThread=currentValue }
                                     ButtonX { text: "选择对话"; enabled: window.connected && !window.autoReply.active; onClicked: owner.loadThreads() }
@@ -437,7 +481,7 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                                 }
                                 Caption { Layout.fillWidth: true; text: "已绑定：" + ((owner.assistant || {}).thread_title || "未选择") + " · " + ((window.backend.thread_binding || {}).state==="busy" ? "当前任务进行中，微信任务排队" : (window.backend.thread_binding || {}).hooks_observed ? "已连接生命周期" : "等待 Codex 连接事件") }
                                 RowLayout { Layout.fillWidth: true
-                                    ButtonX { text: "配置对话连接"; enabled: window.connected && !window.autoReply.active; onClicked: owner.installHooks() }
+                                    ButtonX { text: "配置对话连接"; visible: !window.independentService; enabled: window.connected && !window.autoReply.active; onClicked: hooksDialog.open() }
                                     Caption { Layout.fillWidth: true; text: "首次配置后在 Codex 的 /hooks 审核。不会模拟快捷键或改写输入框。" }
                                 }
                                 Caption { text: "人设" }
@@ -445,12 +489,12 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                                     TextArea { id: personaInput; text: (owner.assistant || {}).persona || ""; placeholderText: "助理的身份、沟通偏好与工作背景"; wrapMode: TextEdit.Wrap; color: Theme.ink; background: Rectangle { color: Theme.canvas; radius: 9 } }
                                 }
                                 Caption { text: "回复风格" }
-                                TextField { id: styleInput; Layout.fillWidth: true; text: (owner.assistant || {}).style || ""; placeholderText: "例如：自然简短，先回答问题，再列待办" }
-                                CheckBox { id: attributionChoice; text: "在回复中显示 AI 署名"; checked: (owner.assistant || {}).attribution !== false }
+                                Field { id: styleInput; Layout.fillWidth: true; text: (owner.assistant || {}).style || ""; placeholderText: "例如：自然简短，先回答问题，再列待办" }
+                                CheckX { id: attributionChoice; text: "在回复中显示 AI 署名"; checked: (owner.assistant || {}).attribution !== false }
                                 RowLayout { Layout.fillWidth: true
                                     ButtonX { text: "导入人设"; enabled: !window.autoReply.active; onClicked: owner.importPersona() }
                                     Item { Layout.fillWidth: true }
-                                    ButtonX { text: "保存助理偏好"; primary: true; enabled: window.connected && !window.autoReply.active; onClicked: owner.saveAssistant({thread_id:window.assistantThread || (owner.assistant || {}).thread_id || "",thread_title:window.assistantThread ? threadChoice.currentText : (owner.assistant || {}).thread_title || "",persona:personaInput.text,style:styleInput.text,attribution:attributionChoice.checked}) }
+                                    ButtonX { text: "保存助理偏好"; primary: true; enabled: window.connected && !window.autoReply.active; onClicked: assistantDialog.open() }
                                 }
                             }
                         }
@@ -465,7 +509,7 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                                 }
                             }
                         }
-                        Panel { Layout.fillWidth: true; implicitHeight: settingRows.implicitHeight+40
+                        Panel { visible: window.settingsSection===2; Layout.fillWidth: true; implicitHeight: settingRows.implicitHeight+48
                             ColumnLayout { id: settingRows; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 20; spacing: 20
                                 RowLayout { Layout.fillWidth: true; spacing: 16
                                     ColumnLayout { Layout.preferredWidth: 280; Layout.minimumWidth: 200; Layout.maximumWidth: 280; spacing: 5
@@ -649,8 +693,45 @@ ButtonX { text: "系统认证并批准"; primary: true; enabled: !window.preview
         onAccepted: owner.approveAuthorization(window.authorizationRequest.id)
     }
     Dialog { id: autoDialog; anchors.centerIn: parent; width: Math.min(560,window.width-60); modal: true; title: "确认自动回复授权"; standardButtons: Dialog.Cancel | Dialog.Ok
-        contentItem: Copy { text: "目标：" + (window.autoAll ? "当前已核验的全部可用私聊；排除群、公众号、系统会话" : window.autoTargets.map(window.targetName).join("、")) + "\n时长：" + (window.autoMinutes ? window.autoMinutes + " 分钟" : "不限时长，直到停止") + "，回复：" + (window.autoReplies ? "最多 " + window.autoReplies + " 次" : "不限次数") + "。\n\n允许把所选私聊的新消息发给 Codex 生成回复，再自动发送到原私聊。发送时微信会置前；请勿同时操作输入区。" + (window.overwriteDrafts ? "强制覆盖已开启，将清空已有输入。" : "检测到已有输入将停止，微信提示文字不算草稿。") + "身份或附件状态无法核对时仍停止。\n\n接下来需要本机系统身份认证，单次原生提交凭据保持短期；不限会话只在当前服务中续发，停止立即撤权。" }
-        onAccepted: owner.startAutomatic(window.autoAll ? ["*"] : window.autoTargets,window.autoMinutes,window.autoReplies,window.overwriteDrafts)
+        background: Rectangle { radius: 20; color: Theme.surface; border.color: Theme.border }
+        contentItem: Copy { text: "目标：" + (window.autoAll ? "当前已核验的全部可用私聊；排除群、公众号、系统会话" : window.autoTargets.map(window.targetName).join("、")) + "\n时长：" + (window.autoMinutes ? window.autoMinutes + " 分钟" : "不限时长，直到停止") + "，回复：" + (window.autoReplies ? "最多 " + window.autoReplies + " 次" : "不限次数") + "。\n\n允许把所选私聊的新消息发给 Codex 生成回复，再自动发送到原私聊。发送时微信会置前；请勿同时操作输入区。" + (window.overwriteDrafts ? "强制覆盖已开启，将清空已有输入。" : "检测到已有输入将停止，微信提示文字不算草稿。") + "身份或附件状态无法核对时仍停止。\n\n接下来需要本机系统身份认证，单次原生提交凭据保持短期；不限会话只在当前服务中续发，停止立即撤权。" + (window.selfAgentAccess ? "\n\n本人任务访问已选择：/agent 命令将交给绑定 Codex 对话及其已授权工具，敏感操作仍单独确认。" : "\n\n本人私聊仅使用普通回复权限。") }
+        onAccepted: owner.startAutomatic(window.autoAll ? ["*"] : window.autoTargets,window.autoMinutes,window.autoReplies,window.overwriteDrafts,window.selfAgentAccess)
+    }
+    Dialog { id: selfAgentDialog; objectName: "selfAgentDialog"; anchors.centerIn: parent; width: Math.min(560,window.width-60); modal: true; title: "开启本人任务访问？"; standardButtons: Dialog.Cancel | Dialog.Ok
+        background: Rectangle { radius: 20; color: Theme.surface; border.color: Theme.border }
+        contentItem: Copy { text: "仅本人微信 ID 的私聊。以 /agent 开头的新文字将进入所选 Codex 对话，可使用该对话已授权的工具及上下文。\n\n普通联系人不会获得此权限。命令和文件变更仍会单独请求确认；权限扩大仍需本机身份认证。正在运行的任务会先完成，结果不确定时不重做。\n\n保存选择后，还需在开启服务时核对完整范围并完成系统认证。" }
+        onAccepted: window.selfAgentAccess=true
+    }
+    Dialog { id: assistantDialog; anchors.centerIn: parent; width: Math.min(540,window.width-60); modal: true; title: "保存助理设置？"; standardButtons: Dialog.Cancel | Dialog.Ok
+        background: Rectangle { radius: 20; color: Theme.surface; border.color: Theme.border }
+        contentItem: Copy { text: "绑定对话：" + (window.assistantThread ? threadChoice.currentText : (owner.assistant || {}).thread_title || "未选择") + "\n回复署名：" + (attributionChoice.checked ? "显示" : "不显示") + "\n\n人设与回复风格将在下次开启时使用。保存不会授予读取、披露或发送权限。" }
+        onAccepted: owner.saveAssistant({thread_id:window.assistantThread || (owner.assistant || {}).thread_id || "",thread_title:window.assistantThread ? threadChoice.currentText : (owner.assistant || {}).thread_title || "",persona:personaInput.text,style:styleInput.text,attribution:attributionChoice.checked})
+    }
+    Dialog { id: stopDialog; objectName: "stopDialog"; anchors.centerIn: parent; width: Math.min(500,window.width-60); modal: true; title: "停止自动回复？"; standardButtons: Dialog.Cancel | Dialog.Ok
+        background: Rectangle { radius: 20; color: Theme.surface; border.color: Theme.border }
+        contentItem: Copy { text: "停止监听并撤销当前读取、披露和发送权限。本人任务也将停止交接；已经提交的操作不会重试。无需再次身份认证。" }
+        onAccepted: owner.stopAutomatic()
+    }
+    Dialog { id: hooksDialog; anchors.centerIn: parent; width: Math.min(520,window.width-60); modal: true; title: "连接会话状态？"; standardButtons: Dialog.Cancel | Dialog.Ok
+        background: Rectangle { radius: 20; color: Theme.surface; border.color: Theme.border }
+        contentItem: Copy { text: "将添加四项 Codex 会话事件，用于等待当前任务结束。仅转发会话编号和忙闲状态，不记录提示词；需在 Codex 中审核。" }
+        onAccepted: owner.installHooks()
+    }
+    Dialog { id: restoreDialog; anchors.centerIn: parent; width: Math.min(500,window.width-60); modal: true; title: "恢复连接设置？"; standardButtons: Dialog.Cancel | Dialog.Ok
+        background: Rectangle { radius: 20; color: Theme.surface; border.color: Theme.border }
+        contentItem: Copy { text: "恢复本次连接前备份的 Codex 设置。若文件已被其他操作修改，将停止恢复并保留现状。" }
+        onAccepted: owner.restoreConfig()
+    }
+    Dialog { id: agentActionDialog; anchors.centerIn: parent; width: Math.min(720,window.width-60); height: Math.min(560,window.height-80); modal: true; title: (owner.agentApproval || {}).title || "确认任务操作"; standardButtons: Dialog.Cancel | Dialog.Ok; closePolicy: Popup.NoAutoClose
+        background: Rectangle { radius: 20; color: Theme.surface; border.color: Theme.border }
+        contentItem: ColumnLayout { spacing: 16
+            Caption { Layout.fillWidth: true; text: "来自本人私聊的任务。请核对精确操作；仅批准这一次，不保存放行规则。" }
+            ScrollView { Layout.fillWidth: true; Layout.fillHeight: true
+                TextArea { text: (owner.agentApproval || {}).detail || ""; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.Wrap; color: Theme.ink; background: Rectangle { radius: 12; color: Theme.canvas } }
+            }
+        }
+        onAccepted: owner.decideAgent(true)
+        onRejected: owner.decideAgent(false)
     }
     Dialog { id: cacheDialog; anchors.centerIn: parent; width: 540; modal: true; title: "设置本地缓存范围"; standardButtons: Dialog.Cancel | Dialog.Ok
         background: Rectangle { radius: 14; color: Theme.surface; border.color: Theme.border }

@@ -57,8 +57,16 @@ def verify_navigation_build(root,build):
     except (OSError,ValueError):raise ValueError('native navigation helper must be rebuilt from reviewed source/core') from None
     return output
 
+def verify_optimized_runtime(build):
+    try:
+        cache=(build/'CMakeCache.txt').read_text()
+        values=[line.split('=',1)[1] for line in cache.splitlines() if line.startswith('CMAKE_BUILD_TYPE:')]
+        if len(values)!=1 or values[0] not in ('Release','RelWithDebInfo'):raise ValueError()
+    except (OSError,ValueError):raise ValueError('deployment requires an optimized Release or RelWithDebInfo build') from None
+
 def stage(root,build,output,deployment,*,identity='-'):
     if sys.platform!='darwin' or sys.version_info[:2]!=(3,12):raise ValueError('macOS Python 3.12 packaging required')
+    verify_optimized_runtime(build)
     if not identity or identity=='-':raise ValueError('dynamic embedded runtime requires one local signing team; ad-hoc needs a fully static host')
     if deployment.get('application',{}).get('navigation_helper'):verify_navigation_build(root,build)
     output=output.absolute()

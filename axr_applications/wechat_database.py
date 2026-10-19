@@ -98,6 +98,19 @@ class NativeDatabase:
             rows=[{**row,'draft':''} if 'size' in row and empty_saved_draft(row.get('draft'),row['size']) else row for row in rows]
         return rows
 
+    def activity(self, *, since, after, check, limit=128):
+        batches=self.use(self.account,{'kind':'activity','since':since,'after':after,'limit':limit},check)
+        if len(batches)!=1:raise AXRError('wechat_native_activity_shard_required')
+        rows=batches[0]['rows'];previous=tuple(after)
+        for row in rows:
+            if (set(row)!={'conversation_id','updated','local_id'} or type(row['conversation_id']) is not str
+                or type(row['updated']) is not int or type(row['local_id']) is not int
+                or (row['updated'],row['conversation_id'])<=previous):raise AXRError('wechat_native_activity_schema')
+            previous=(row['updated'],row['conversation_id'])
+        selected=rows[:limit]
+        return {'rows':selected,'after':[selected[-1]['updated'],selected[-1]['conversation_id']] if selected else after,
+                'has_more':len(rows)>limit}
+
 def actor_records(page):
     """Trusted source snapshot for an incoming actor; no raw credential fields.
 

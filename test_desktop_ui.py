@@ -134,6 +134,10 @@ class DesktopUI(unittest.TestCase):
             self.assertTrue(stop.isEnabled());c.fixture=False
             with patch.object(c,'run') as run:
                 stop.forceActiveFocus();QTest.keyClick(w,Qt.Key_Return);QTest.qWait(20)
+                run.assert_not_called()
+                from PySide6.QtCore import QMetaObject
+                dialog=w.findChild(QObject,'stopDialog');self.assertTrue(dialog.property('visible'))
+                QMetaObject.invokeMethod(dialog,'accept');QTest.qWait(20)
                 self.assertEqual(run.call_args.args[0],'automatic_stop')
             c.fixture=True
             c._data['status']={'automatic_reply':{'active':True,'targets':['peer','self'],'expires':None,'remaining':None}}

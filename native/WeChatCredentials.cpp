@@ -137,17 +137,41 @@ protected:
         const std::map<std::string,std::set<std::string>> fields={
             {"messages",{"kind","since","until","after","cursors","limit"}},
             {"recent",{"kind","query","since"}},{"draft",{"kind"}},{"session_schema",{"kind"}},
+            {"activity",{"kind","since","after","limit"}},
             {"catalog",{"kind","offset","limit"}},
             {"unique_draft",{"kind","text"}}};
         auto permitted=fields.find(kind);
         if(permitted==fields.end())throw std::runtime_error("wcdb_native_operation_not_registered");
         for(auto i=request.begin();i!=request.end();++i)if(!permitted->second.contains(i.key()))throw std::runtime_error("wcdb_native_request_invalid");
+        Json activityParams;std::string activitySql;
+        if(kind=="activity"){
+            // Account-level local metadata only. Never return summaries, names,
+            // drafts or bodies, and never accept caller SQL or recipient lists.
+            if(id!=config.at("account_id").get<std::string>())throw std::runtime_error("wcdb_native_account_resource_required");
+            auto since=request.at("since"),after=request.at("after"),limit=request.at("limit");
+            if(!since.is_number_integer()||since.get<int64_t>()<0||!limit.is_number_integer()||limit.get<int64_t>()<1||limit.get<int64_t>()>128||
+               !after.is_array()||after.size()!=2||!after[0].is_number_integer()||after[0].get<int64_t>()<0||!after[1].is_string()||after[1].get<std::string>().size()>256)
+                throw std::runtime_error("wcdb_native_activity_range");
+            std::set<std::string> ids;
+            for(auto& r:config.at("resources")){
+                auto value=r.at("conversation_id").get<std::string>();
+                if(r.at("platform")!="wechat"||r.at("account_id")!=config.at("account_id")||value.empty()||value.size()>256||
+                   (value.find('@')!=std::string::npos&&value!=id)||!ids.insert(value).second)
+                    throw std::runtime_error("wcdb_native_activity_catalog");
+            }
+            if(ids.empty()||ids.size()>4096)throw std::runtime_error("wcdb_native_activity_catalog");
+            activitySql="SELECT username AS conversation_id,last_timestamp AS updated,last_msg_locald_id AS local_id FROM SessionTable WHERE username IN (";
+            activityParams=Json::array();
+            for(auto& value:ids){if(!activityParams.empty())activitySql+=",";activitySql+="?";activityParams.push_back(value);}
+            activitySql+=") AND last_timestamp>=? AND (last_timestamp,username)>(?,?) ORDER BY last_timestamp,username LIMIT ?";
+            for(auto& value:Json::array({since,after[0],after[1],limit.get<int64_t>()+1}))activityParams.push_back(value);
+        }
         Json result=Json::array();
         for(auto& shard:config.at("shards")){
             auto purpose=shard.at("role").get<std::string>();
             if(kind=="catalog"&&purpose!="contact")continue;
             if(kind!="catalog"&&purpose=="contact")continue;
-            if((kind=="messages"&&purpose!="message")||(kind=="recent"&&purpose!="general")||((kind=="draft"||kind=="unique_draft"||kind=="session_schema")&&purpose!="session"))continue;
+            if((kind=="messages"&&purpose!="message")||(kind=="recent"&&purpose!="general")||((kind=="draft"||kind=="unique_draft"||kind=="session_schema"||kind=="activity")&&purpose!="session"))continue;
             std::string key;
 #ifndef AXR_SECURITY_RELEASE
             if(!fixtureKeys.empty())key=fixtureKeys.at(shard.at("key_reference"));else
@@ -172,6 +196,7 @@ protected:
                 for(auto& row:rows)if(!row["body"].is_null()&&(row["sender"].is_null()||(row["sender"]!=id&&row["sender"]!=config.at("account_id"))))throw std::runtime_error("wcdb_native_sender_identity_mismatch");
             }else if(kind=="recent")rows=db.run("SELECT username,query,last_click_time FROM SearchRecent WHERE query=? AND last_click_time>=? LIMIT 3",Json::array({request.at("query"),request.at("since")}));
             else if(kind=="session_schema")rows=db.run("SELECT name,type FROM pragma_table_info('SessionTable') LIMIT 64");
+            else if(kind=="activity")rows=db.run(activitySql,activityParams);
             else if(kind=="draft")rows=db.run("SELECT CASE WHEN length(CAST(draft AS BLOB))<=16000 THEN draft ELSE NULL END AS draft,length(CAST(draft AS BLOB)) AS size FROM SessionTable WHERE username=? LIMIT 2",Json::array({id}));
             else {auto text=request.at("text").get<std::string>();if(text.empty()||text.size()>16000)throw std::runtime_error("wcdb_native_draft_budget");rows=db.run("SELECT username,CASE WHEN length(CAST(draft AS BLOB))<=16000 THEN draft ELSE NULL END AS draft FROM SessionTable WHERE instr(draft,?)>0 LIMIT 3",Json::array({text}));if(rows.size()!=1||rows[0]["username"]!=id||rows[0]["draft"]!=text)throw std::runtime_error("wcdb_native_unique_draft_mismatch");}
             result.push_back(Json{{"shard",shard.at("id")},{"rows",rows}});

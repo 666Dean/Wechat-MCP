@@ -19,8 +19,8 @@ QtObject {
     readonly property int sidebarWidth: 238
     readonly property int margin: 32
     readonly property int gap: 20
-    readonly property int radius: 13
-    readonly property int controlRadius: 9
+    readonly property int radius: 18
+    readonly property int controlRadius: 11
     readonly property int body: 14
     readonly property int caption: 12
     readonly property int heading: 28

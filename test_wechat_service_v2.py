@@ -166,6 +166,110 @@ class ServiceTests(unittest.TestCase):
         child=self.service.capabilities['wxid_fixture_3499']['body']['contract']
         self.assertEqual(child['resources'],[self.service.resources['wxid_fixture_3499'].key])
         self.assertEqual(child['sources'],child['resources'])
+    def large_catalog(self):
+        for n in range(12):
+            identity='wxid_activity_'+str(n)
+            self.service.resources[identity]=Resource('wechat','fixture-owner',identity)
+            self.service.catalog[identity]={'conversation_id':identity,'display_name':'Fixture activity','data_class':'personal'}
+    def test_account_activity_skips_unchanged_sources_and_preserves_unfinished_pages(self):
+        self.large_catalog();self.activate()
+        rows=[{'conversation_id':'fixture-peer','updated':self.service.baseline,'local_id':7}]
+        def activity(**args):
+            args['check']()
+            return {'rows':rows,'after':[rows[-1]['updated'],'fixture-peer'],'has_more':False}
+        with patch.object(self.service.database,'activity',side_effect=activity,create=True):
+            self.assertEqual(self.service.scan_targets(),['fixture-peer'])
+            self.service.finish_scan('fixture-peer',{'has_more':True})
+            self.assertEqual(self.service.scan_targets(),['fixture-peer'])
+            self.service.finish_scan('fixture-peer',{'has_more':False})
+            self.assertEqual(self.service.scan_targets(),[])
+            rows[0]['local_id']=8  # Same-second arrival must not be missed.
+            self.assertEqual(self.service.scan_targets(),['fixture-peer'])
+        self.assertEqual(self.service.database.calls,0)
+        self.assertTrue(self.kernel.integrity.verify())
+    def test_restricted_scope_never_uses_account_wide_activity(self):
+        self.large_catalog();targets=list(self.service.resources)[:-1]
+        for arguments in ({'targets':targets},{'reply_targets':targets}):
+            self.activate(**arguments)
+            with patch.object(self.service.database,'activity',create=True) as activity:
+                self.assertEqual(len(self.service.scan_targets()),8);activity.assert_not_called()
+            self.service.stop()
+    def test_activity_rejects_foreign_sources_and_resets_on_reauthorization(self):
+        self.large_catalog();self.activate()
+        with patch.object(self.service.database,'activity',return_value={'rows':[{'conversation_id':'foreign','updated':1,'local_id':1}],'has_more':False},create=True):
+            with self.assertRaisesRegex(AXRError,'activity_target_not_enrolled'):self.service.scan_targets()
+        self.service.activity_seen={'fixture-peer':(1,1)};self.service.activity_pending={'fixture-peer':(2,2)}
+        self.service.activity_after=[2,'fixture-peer'];self.service.stop();self.activate()
+        self.assertEqual(self.service.activity_seen,{});self.assertEqual(self.service.activity_pending,{})
+        self.assertEqual(self.service.activity_after,[0,''])
+    def test_idle_generation_gate_avoids_database_work_and_bounds_sleep(self):
+        self.large_catalog();self.activate();path=Path(self.temp.name)/'session';path.write_bytes(b'synthetic')
+        self.service.config['shards']=[{'role':'session','path':str(path)}]
+        def activity(**args):
+            args['check']();return {'rows':[],'after':[0,''],'has_more':False}
+        with patch.object(self.service.database,'activity',side_effect=activity,create=True) as query:
+            self.service.scan_targets()
+            for _ in range(3):self.assertEqual(self.service.scan_targets(),[])
+            self.assertEqual(query.call_count,1);self.assertEqual(self.service.poll_delay,8)
+            Path(str(path)+'-wal').write_bytes(b'new inbound metadata')
+            self.service.scan_targets();self.assertEqual(query.call_count,2);self.assertEqual(self.service.poll_delay,2)
+    def test_model_status_omits_contact_directory_and_owner_thread(self):
+        self.large_catalog();self.activate()
+        value=self.call('wechat_status');scope=value['scope']
+        self.assertEqual(scope['target_count'],14);self.assertEqual(scope['reply_target_count'],14)
+        for field in ('targets','reply_targets','owner_thread','style'):self.assertNotIn(field,scope)
+        self.assertIn('targets',self.service.status()['scope'])
+    def test_broad_self_send_uses_observed_peer_instead_of_first_directory_entry(self):
+        self.large_catalog();self.activate()
+        with self.assertRaisesRegex(AXRError,'verified_parking'):self.service.parking_target('fixture-owner')
+        self.service.jobs['observed']={'created':100,'conversation_id':'fixture-peer','state':'Observed','result':{'database_record_observed':True}}
+        self.assertEqual(self.service.parking_target('fixture-owner'),'fixture-peer')
+        self.service.jobs['unknown']={'created':200,'conversation_id':'wxid_activity_0','state':'Unknown','result':{'database_record_observed':False}}
+        self.assertEqual(self.service.parking_target('fixture-owner'),'fixture-peer')
+        self.service.scope['reply_targets'].remove('fixture-peer')
+        with self.assertRaisesRegex(AXRError,'verified_parking'):self.service.parking_target('fixture-owner')
+        self.assertEqual(self.service.parking_target('wxid_activity_0'),'fixture-owner')
+    def test_system_sessions_and_public_or_group_sources_are_ineligible(self):
+        from axr_applications.wechat_targets import private_recipient
+        for identity in ('notifymessage','brandsessionholder','mphelper','filehelper','gh_fixture','fixture@chatroom',''):
+            self.assertFalse(private_recipient(identity))
+        self.assertTrue(private_recipient('fixture-owner'));self.assertTrue(private_recipient('wxid_fixture_peer'))
+    def test_self_task_access_is_opt_in_owner_signed_and_requires_a_bound_thread(self):
+        with self.assertRaisesRegex(AXRError,'self_agent_binding_required'):self.activate(self_agent=True)
+        with self.assertRaisesRegex(AXRError,'scope_invalid'):self.activate(self_agent='yes')
+        self.activate()
+        row={'text':'/agent summarize my project','reference':'fixture-owner-command'}
+        self.assertFalse(self.service.owner_command('fixture-owner',row))
+        with self.assertRaisesRegex(AXRError,'self_agent_not_authorized'):self.service.claim_owner_task()
+        with self.assertRaisesRegex(AXRError,'self_command_loop_blocked'):self.service.send('fixture-owner','/agent synthetic loop')
+    def self_scope(self):
+        self.service.state.set('assistant',{'thread_id':'11111111-1111-4111-8111-111111111111','style':'short','attribution':False})
+        self.activate(self_agent=True)
+    def test_self_command_handoff_waits_for_idle_and_consumes_exactly_once(self):
+        self.self_scope();row={'text':'/agent list my tasks','reference':'fixture-self-reference'}
+        self.assertFalse(self.service.owner_command('fixture-peer',row))
+        self.assertTrue(self.service.owner_command('fixture-owner',row));self.assertTrue(self.service.owner_command('fixture-owner',row))
+        self.assertEqual(len(self.service.jobs),1);self.assertFalse(self.service.claim_owner_task()['ready'])
+        thread=self.service.scope['owner_thread']
+        self.service.lifecycle_event({'thread_id':thread,'event':'UserPromptSubmit','turn_id':'active'})
+        self.service.lifecycle_event({'thread_id':thread,'event':'Stop','turn_id':'older'})
+        self.assertEqual(self.service.lifecycle['state'],'busy')
+        self.service.lifecycle_event({'thread_id':thread,'event':'Stop','turn_id':'active'})
+        self.service.lifecycle['ready_at']=0
+        task=self.service.claim_owner_task();self.assertTrue(task['ready']);self.assertEqual(task['text'],'list my tasks')
+        self.assertFalse(self.service.claim_owner_task()['ready'])
+        self.service.lifecycle_event({'thread_id':thread,'event':'UserPromptSubmit','turn_id':'worker','worker_token':task['worker_token']})
+        self.assertEqual(self.service.lifecycle['state'],'idle')
+        self.service.finish_owner_task({'job_id':task['job_id'],'text':'Synthetic task completed'})
+        self.assertEqual(self.service.jobs[task['job_id']]['state'],'Queued')
+        with self.assertRaisesRegex(AXRError,'command_not_active'):self.service.finish_owner_task({'job_id':task['job_id'],'text':'do not repeat'})
+        self.assertTrue(self.kernel.integrity.verify())
+    def test_stop_and_expiry_cannot_resume_a_handed_off_self_task(self):
+        self.self_scope();self.service.owner_command('fixture-owner',{'text':'/agent synthetic','reference':'one'})
+        self.service.lifecycle={'thread_id':self.service.scope['owner_thread'],'state':'idle','ready_at':0}
+        task=self.service.claim_owner_task();self.service.stop()
+        self.assertEqual(self.service.jobs[task['job_id']]['state'],'Unknown')
+        with self.assertRaisesRegex(AXRError,'scope_stopped'):self.service.finish_owner_task({'job_id':task['job_id'],'text':'too late'})
     def test_real_guard_read_disclosure_masks_and_consumes_once(self):
         self.activate()
         result=self.call('wechat_read_messages',conversation_id='fixture-peer')

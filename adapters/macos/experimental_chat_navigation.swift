@@ -124,7 +124,15 @@ func run() throws -> [String:Any] {
   }
   guard app.isActive || app.activate(options:[]) else{throw Stop("activation_failed")}
   guard AXUIElementPerformAction(target,kAXRaiseAction as CFString) == .success else{throw Stop("raise_failed")}
-  RunLoop.current.run(until:Date().addingTimeInterval(0.2))
+  // Activation/raise is asynchronous. Wait for the actual key window rather
+  // than treating the activation request's return value as foreground proof.
+  let activationDeadline=Date().addingTimeInterval(0.8)
+  while Date()<activationDeadline {
+   if app.isActive,let focused=attr(root,kAXFocusedWindowAttribute),
+      CFGetTypeID(focused)==AXUIElementGetTypeID(),label(focused as! AXUIElement)==title {break}
+   RunLoop.current.run(until:Date().addingTimeInterval(0.025))
+  }
+  guard app.isActive else{throw Stop("activation_unconfirmed")}
  }
  func verify(_ dialog:Bool=false) throws {
   guard !app.isTerminated,app.isActive else{throw Stop("foreground_changed")}
@@ -168,8 +176,16 @@ func run() throws -> [String:Any] {
  func echo(dialog:Bool=false) throws -> Bool {
   let nonce="AXR-copy-"+UUID().uuidString;try put(nonce)
   try key(0,.maskCommand,dialog:dialog);try key(8,.maskCommand,dialog:dialog)
-  RunLoop.current.run(until:Date().addingTimeInterval(0.15));try verify(dialog)
-  if pb.changeCount != owned && pb.string(forType:.string)==text {owned=pb.changeCount;return true}
+  let copyDeadline=Date().addingTimeInterval(0.8)
+  while Date()<copyDeadline {
+   try verify(dialog);try proof()
+   if pb.changeCount != owned {
+    if pb.string(forType:.string)==text {owned=pb.changeCount;return true}
+    return false
+   }
+   RunLoop.current.run(until:Date().addingTimeInterval(0.025))
+  }
+  throw Stop("copy_result_timeout")
   // Unknown clipboard data is never disclosed or assumed to be our epoch.
   return false
  }

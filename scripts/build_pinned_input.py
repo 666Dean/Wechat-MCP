@@ -23,7 +23,8 @@ def main():
     core=(build/'AXR/libaxr.a').resolve(strict=True)
     source='experimental_chat_navigation.swift' if args.navigation else 'experimental_pinned_input.swift'
     output=build/('wechat-chat-navigation-experimental' if args.navigation else 'wechat-pinned-input-experimental')
-    subprocess.run(['swiftc','-I',str(root/'AXR/native/bridge'),
+    optimized=any(line in ('CMAKE_BUILD_TYPE:STRING=Release','CMAKE_BUILD_TYPE:STRING=RelWithDebInfo') for line in cache.splitlines())
+    subprocess.run(['swiftc',*(['-O'] if optimized else []),'-I',str(root/'AXR/native/bridge'),
         str(root/'adapters/macos'/source),
         '-Xlinker',str(core),'-Xlinker',str(crypto),'-lsqlite3','-lc++',
         '-o',str(output)],check=True)

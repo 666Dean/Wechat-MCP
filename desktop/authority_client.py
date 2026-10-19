@@ -45,7 +45,13 @@ def call(state,method,args=(),kwargs=None,*,owner=False,timeout=180):
     if method=='control.start_automatic':
         targets,seconds,count=args[:3]
         return control('start',{'targets':'all' if not targets or targets==['*'] else targets,'seconds':seconds,
-            'max_replies':count,'automatic':True,'disclose':True,'overwrite_drafts':bool(args[3]) if len(args)>3 else False},timeout=180)
+            'max_replies':count,'automatic':True,'disclose':True,'overwrite_drafts':bool(args[3]) if len(args)>3 else False,
+            'self_agent':bool(args[4]) if len(args)>4 else False},timeout=180)
+    if method=='control.codex_threads':
+        from axr_integration.codex_bridge import threads
+        return threads(args[0] if args else None)
+    if method in ('control.claim_owner_task','control.finish_owner_task'):
+        return control(method.split('.',1)[1],dict(args[0]) if args else {})
     if method=='control.assistant_settings':return control('assistant_settings')
     if method=='control.save_assistant_settings':return control('save_assistant_settings',dict(args[0]))
     if method in ('control.draft','control.manual_draft'):

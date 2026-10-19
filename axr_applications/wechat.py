@@ -27,6 +27,8 @@ from .wechat_service import WeChatKernel,WeChatService,PRINCIPAL,BOUNDARY
 
 BASE=Path('/Library/Application Support/Stellaria AXR')
 
+from .wechat_targets import private_recipient
+
 def resources_root():
     actual=process_identity(os.getpid());image=Path(actual['image'])
     return image.parent/'runtime' if os.name=='nt' else image.parent.parent/'Resources'
@@ -79,7 +81,7 @@ def _configuration(value):
         if resource.platform!='wechat' or resource.account_id!=application['account_id'] or resource.key in seen:raise AXRError('wechat_deployment_resource_mismatch')
         seen.add(resource.key)
         identity=resource.conversation_id
-        if os.name!='nt' and ('@' in identity or identity.startswith('gh_') or identity in ('filehelper','weixin','fmessage','newsapp','medianote','floatbottle','qmessage','qqmail','tmessage','feedsapp','notification_messages')):raise AXRError('wechat_private_resource_required')
+        if os.name!='nt' and (not private_recipient(identity)):raise AXRError('wechat_private_resource_required')
     return {**value,'state':str(state),'application':application}
 
 def owner_setup_review(value):
@@ -190,7 +192,7 @@ def initialize_owner(value, signer, enrollment=None):
             rows=batches[0]['rows']
             for row in rows:
                 identity=row['username']
-                if '@' in identity or identity.startswith('gh_') or identity in ('filehelper','weixin','fmessage','newsapp','medianote','floatbottle','qmessage','qqmail','tmessage','feedsapp','notification_messages'):continue
+                if not private_recipient(identity):continue
                 catalog.append({'conversation_id':identity,'display_name':row['remark'] or row['nick_name'] or identity,'data_class':'personal'})
             if len(rows)<1000:break
         else:raise AXRError('wechat_contact_catalog_budget')

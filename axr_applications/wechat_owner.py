@@ -41,7 +41,8 @@ def control(runtime_root,request):
             key=native.HardwareSigningKey('Stellaria.AXR.Owner.v2',user_presence=True,owner_interaction=True)
             challenge=reviewed['challenge'];signature=key.sign(canonical(challenge)).hex()
             result=client.request('WeChatOwner',method='activate',arguments={'nonce':challenge['nonce'],'signature':signature})
-        elif method in ('snapshot','stop','manual_draft','assistant_settings','save_assistant_settings','check_target'):
+        elif method in ('snapshot','stop','manual_draft','assistant_settings','save_assistant_settings','check_target',
+                        'codex_lifecycle','claim_owner_task','finish_owner_task'):
             result=client.request('WeChatOwner',method=method,arguments=args)
         else:raise AXRError('wechat_owner_operation_not_registered')
         print(json.dumps(result,ensure_ascii=False),flush=True)

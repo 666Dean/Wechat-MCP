@@ -5,6 +5,20 @@
 #include <thread>
 #include <iostream>
 using namespace Stellaria::AXR;
+void CheckLegacyProof(Guard& guard,const Json& action,const Json& reservation,const std::filesystem::path& database){
+#ifdef AXR_SECURITY_RELEASE
+    bool denied=false;
+    try{guard.ExecutionProof(action,reservation[0],reservation[1],Now());}
+    catch(const std::exception& e){denied=std::string(e.what())=="legacy_commit_disabled_in_security_release";}
+    assert(denied);
+#else
+    auto checked=guard.ExecutionProof(action,reservation[0],reservation[1],Now());assert(checked["grants"].size()==1);
+    auto proof=checked.dump();auto path=database.u8string();
+    assert(axr_check_commit(reinterpret_cast<const char*>(path.c_str()),proof.c_str())==1);
+    guard.RevokeOwner(reservation[0]);
+    assert(axr_check_commit(reinterpret_cast<const char*>(path.c_str()),proof.c_str())==0);
+#endif
+}
 int main() {
     assert(axr_authority_preflight(nullptr,nullptr,nullptr)==0);
     assert(std::string(axr_authority_last_failure())=="scope");
@@ -34,11 +48,9 @@ int main() {
             {"classes",Json::array({"workspace-normal"})},{"intent",nullptr},{"workflow","manual"}};
         guard.IssueOwner(b,Now());guard.Check(a,Now());auto reservation=guard.Consume(a,Now());denied=false;
         try{guard.Check(a,Now());}catch(...){denied=true;}assert(denied);
-        auto proof=guard.ExecutionProof(a,reservation[0],reservation[1],Now()).dump();
-        auto path=(dir/"guard.db").u8string();
-        assert(axr_check_commit(reinterpret_cast<const char*>(path.c_str()),proof.c_str())==1);
+        CheckLegacyProof(guard,a,reservation,dir/"guard.db");
         guard.RevokeOwner(reservation[0]);
-        assert(axr_check_commit(reinterpret_cast<const char*>(path.c_str()),proof.c_str())==0);
+        denied=false;try{guard.Revalidate(a,reservation[0],reservation[1],Now());}catch(...){denied=true;}assert(denied);
         auto classified=a;
         classified["sources"]=Json::array({Json{{"resource",a["resource"]},{"reference","query:fixture"},
             {"data_class","personal"},{"trust","untrusted-external"}}});
@@ -46,15 +58,12 @@ int main() {
         try{guard.Check(classified,Now());}catch(...){denied=true;}assert(denied);
         b["classes"]=Json::array({"personal"});guard.IssueOwner(b,Now());
         reservation=guard.Consume(classified,Now());
-        auto checked=guard.ExecutionProof(classified,reservation[0],reservation[1],Now());
-        assert(checked["grants"].size()==1);proof=checked.dump();
-        assert(axr_check_commit(reinterpret_cast<const char*>(path.c_str()),proof.c_str())==1);
+        CheckLegacyProof(guard,classified,reservation,dir/"guard.db");
         denied=false;try{guard.Check(classified,Now());}catch(...){denied=true;}assert(denied);
         classified["sources"][0]["data_class"]="sensitive";b["classes"]=Json::array({"sensitive"});
         b["intent"]=IntentSeal(classified);guard.IssueOwner(b,Now());
         reservation=guard.Consume(classified,Now());
-        proof=guard.ExecutionProof(classified,reservation[0],reservation[1],Now()).dump();
-        assert(axr_check_commit(reinterpret_cast<const char*>(path.c_str()),proof.c_str())==1);
+        CheckLegacyProof(guard,classified,reservation,dir/"guard.db");
     }
     assert(DurableWrite(dir/"record.json",record.dump()));
 #if !defined(_WIN32)

@@ -100,3 +100,26 @@ CREATE TABLE SearchRecent(username TEXT,query TEXT,last_click_time INTEGER);INSE
         self.assertEqual(len(rows),1);self.assertEqual(len(rows[0]['rows']),1)
         self.assertEqual(rows[0]['rows'][0]['username'],self.account)
         with self.assertRaisesRegex(RuntimeError,'catalog_budget'):self.use({'kind':'catalog','offset':-1})
+    def test_activity_is_bounded_local_metadata_for_the_account_resource(self):
+        handle=C.c_void_p();self.assertEqual(self.api.sqlite3_open_v2(os.fsencode(self.path),C.byref(handle),2,None),0)
+        raw_key=("x'"+self.key.hex()+"'").encode();self.assertEqual(self.api.sqlite3_key(handle,raw_key,len(raw_key)),0)
+        try:
+            sql=f"ALTER TABLE SessionTable ADD COLUMN last_timestamp INTEGER; ALTER TABLE SessionTable ADD COLUMN last_msg_locald_id INTEGER; UPDATE SessionTable SET last_timestamp=101,last_msg_locald_id=7; INSERT INTO SessionTable VALUES('{self.account}','private owner draft',101,8),('unenrolled','private foreign draft',102,9);"
+            self.assertEqual(self.api.sqlite3_exec(handle,sql.encode(),None,None,None),0)
+        finally:self.api.sqlite3_close_v2(handle)
+        owner=Resource('wechat',self.account,self.account)
+        self.config['resources'].append(asdict(owner))
+        self.consumer=self.module.fixture_consumer('fixture-handler',canonical(self.config).decode(),{'fixture-key':self.key})
+        from axr_applications.wechat_database import NativeDatabase
+        db=NativeDatabase(self.consumer,self.account)
+        page=db.activity(since=100,after=[0,''],check=lambda:None,limit=1)
+        self.assertTrue(page['has_more']);self.assertEqual(set(page['rows'][0]),{'conversation_id','updated','local_id'})
+        second=db.activity(since=100,after=page['after'],check=lambda:None,limit=1)
+        self.assertFalse(second['has_more']);self.assertNotIn('private',str(page)+str(second))
+        self.assertEqual({page['rows'][0]['conversation_id'],second['rows'][0]['conversation_id']},{self.account,self.peer})
+        request={'kind':'activity','since':100,'after':[0,''],'limit':1}
+        with self.assertRaisesRegex(RuntimeError,'account_resource'):self.use(request)
+        for change,code in (({'since':-1},'activity_range'),({'limit':129},'activity_range'),
+                ({'after':[0,5]},'activity_range'),({'sql':'SELECT draft'},'request_invalid'),
+                ({'identities':['unenrolled']},'request_invalid')):
+            with self.subTest(change=change),self.assertRaisesRegex(RuntimeError,code):self.use({**request,**change},owner)
