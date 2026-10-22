@@ -83,6 +83,12 @@ Item {
                     }
                     Group { Layout.fillWidth: true
                         Row { title: "本人任务"; detail: "敏感操作仍需确认"; Detail { text: (settings.status.scope || {}).self_agent===true ? "已开启" : "未开启" } }
+                        Rule { visible: settings.status.pending_review_supported===true }
+                        Row { visible: settings.status.pending_review_supported===true; title: "人工审批"; detail: "披露与发送分别核对；旧待办仍需批准"
+                            Switch { objectName: "manualApprovalSwitch"; checked: settings.status.manual_approval_required!==false
+                                enabled: settings.connected && !settings.controller.data.loading
+                                onClicked: settings.controller.setManualApproval(checked) }
+                        }
                         Rule {}
                         Row { title: "已有草稿"; Detail { text: (settings.status.scope || {}).overwrite_drafts ? "允许覆盖" : "保留"; color: (settings.status.scope || {}).overwrite_drafts ? Theme.warning : Theme.muted } }
                         Rule {}

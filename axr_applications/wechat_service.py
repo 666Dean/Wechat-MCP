@@ -48,7 +48,8 @@ class WeChatKernel(AuthorityKernel):
                 self._check_integrity()
             # Never hold the authority lock while a helper connects back to
             # preflight/claim/observe. Stop remains responsive during inference.
-            return self.application.dispatch(peer,packet)
+            application=getattr(self,'wechat_service',None) or self.application
+            return application.dispatch(peer,packet)
         return super().dispatch(peer,packet)
 
 class ApplicationState:
@@ -185,7 +186,8 @@ class WeChatService:
             challenge=self.reviews.pop(nonce,None)
             if (not challenge or challenge['expires']<=time.time() or challenge['peer']!=peer.witness or
                 challenge['policy_version']!=self.kernel.security.guard.version or self.scope):raise AXRError('wechat_owner_review_expired_or_changed')
-            try:verified=native.verify_root_signature(self.kernel.owner_public_key,canonical(challenge),bytes.fromhex(signature))
+            verify=native.verify_owner_signature if getattr(self,'windows',False) else native.verify_root_signature
+            try:verified=verify(self.kernel.owner_public_key,canonical(challenge),bytes.fromhex(signature))
             except Exception:verified=False
             if not verified:raise AXRError('owner_presence_signature_required')
             self.owner=peer.principal;self.scope=challenge['scope'];self.generation+=1;self.last_error=None
@@ -205,8 +207,9 @@ class WeChatService:
         now=time.time();scope=self.scope;identity=identity or scope['targets'][0]
         if identity not in scope['targets']:raise AXRError('wechat_target_not_authorized')
         keys=[self.resources[identity].key]
+        resources=keys+[Resource('wechat',self.config['account_id'],'axr:application-ui').key] if getattr(self,'windows',False) else keys
         contract=TaskContract(uuid.uuid4().hex,self.owner,PRINCIPAL,'wechat',digest(scope),'incoming','external-message',
-            OPERATIONS,tuple(keys),tuple(keys),tuple(['local',CodexSourceProvider.destination,'model:codex-mcp',*([OWNER_DESTINATION] if scope.get('self_agent') and identity==self.config['account_id'] else []),*['wechat:'+k for k in keys]]),
+            OPERATIONS,tuple(resources),tuple(keys),tuple(['local',CodexSourceProvider.destination,'model:codex-mcp',*([OWNER_DESTINATION] if scope.get('self_agent') and identity==self.config['account_id'] else []),*['wechat:'+k for k in keys]]),
             ('personal','workspace-normal'),('ReplyDraft','Summary'),BOUNDARY,False,now,
             min(now+3600,scope['expires']) if scope['expires'] else now+3600,100000,self.kernel.security.guard.version)
         with self.kernel.lock:
@@ -235,7 +238,9 @@ class WeChatService:
     def prepare(self,action):
         self.check()
         with self.kernel.lock:
-            capability=self.contract(action.resource.conversation_id)
+            identity=action.resource.conversation_id
+            if getattr(self,'windows',False) and identity=='axr:application-ui':identity=getattr(self.context,'recipient',None)
+            capability=self.contract(identity)
             for source in action.sources:
                 if action.destination!='local':
                     from dataclasses import replace
@@ -545,6 +550,17 @@ class WeChatService:
         with self.job_lock:
             if len(self.jobs)>=1000 and key not in self.jobs:raise AXRError('wechat_job_capacity')
             self.jobs[key]=value;self.state.set('jobs',self.jobs)
+    def queue_state(self,manual):return 'Draft' if manual else 'Queued'
+    def pending_jobs(self):return [j for j in self.jobs.values() if j['state'] in ('Queued','WaitingForIdle')]
+    def process_pending(self):pass
+    def process_incoming(self,key,job,context):
+        text=self.infer(job['conversation_id'],{'messages':context})
+        if text:
+            value={**job,'text':text,'state':'Draft'}
+            if self.scope['automatic']:
+                value.update(state=self.queue_state(False),operation='messages.send',source=digest(context))
+            self.save_job(key,value)
+            self.worker_event.set()
     def queue(self,identity,text,request_id,*,manual=False):
         self.check()
         if identity not in self.scope['targets']:raise AXRError('wechat_target_not_authorized')
@@ -556,7 +572,7 @@ class WeChatService:
                 if self.jobs[key].get('text')!=text:raise AXRError('wechat_idempotency_content_changed')
                 return {'job_id':key,**{k:v for k,v in self.jobs[key].items() if k!='text'}}
             if not manual and any(j['state']=='Unknown' and j['conversation_id']==identity and j.get('text')==text for j in self.jobs.values()):raise AXRError('wechat_uncertain_text_never_retry')
-            value={'id':key,'conversation_id':identity,'text':text,'state':'Draft' if manual else 'Queued',
+            value={'id':key,'conversation_id':identity,'text':text,'state':self.queue_state(manual),
                 'created':time.time(),'expires':time.time()+900,'operation':'reply.prepare' if manual else 'messages.send',
                 'retry':False,'delivery_confirmed':False}
             self.save_job(key,value)
@@ -719,6 +735,7 @@ class WeChatService:
             try:
                 self.context.generation=self.generation
                 self.check()
+                self.process_pending()
                 for key,job in list(self.jobs.items()):
                     if job['state'] not in ('Queued','WaitingForIdle'):continue
                     if job['expires']<=time.time():
@@ -728,7 +745,7 @@ class WeChatService:
                         if job['state']!='WaitingForIdle' or job.get('wait_reason')!=waiting:
                             self.save_job(key,{**job,'state':'WaitingForIdle','wait_reason':waiting})
                         continue
-                    self.check();self.save_job(key,{**job,'state':'Executing'})
+                    self.check();self.save_job(key,{**job,'state':'Executing'});self.context.executing_job=key
                     try:
                         sources=(Provenance(self.resources[job['conversation_id']],job['source'],'personal'),) if job.get('source') else ()
                         result=self.send(job['conversation_id'],job['text'],sources=sources);value={**job,'state':'Observed' if result['database_record_observed'] else 'Unknown','result':result}
@@ -747,7 +764,7 @@ class WeChatService:
                             rows.append({**row,'outgoing':False,'text':row['text'][7:]})
                         else:rows.append(row)
                     self.bursts.add(identity,rows,page['has_more'])
-                waiting=[j for j in self.jobs.values() if j['state'] in ('Queued','WaitingForIdle')]
+                waiting=self.pending_jobs()
                 slots=max(0,self.scope['max_replies']-self.reply_count-len(waiting)) if self.scope['max_replies'] else None
                 for identity,context,incoming in self.bursts.ready(limit=slots,blocked={j['conversation_id'] for j in waiting}):
                     self.check()
@@ -758,13 +775,7 @@ class WeChatService:
                         'context_count':len(context)-len(incoming),'retry':False,'delivery_confirmed':False}
                     self.save_job(key,job)
                     try:
-                        text=self.infer(identity,{'messages':context})
-                        if text:
-                            value={**job,'text':text,'state':'Draft'}
-                            if self.scope['automatic']:
-                                value.update(state='Queued',operation='messages.send',source=digest(context))
-                            self.save_job(key,value)
-                            self.worker_event.set()
+                        self.process_incoming(key,job,context)
                     except Exception as exc:self.save_job(key,{**job,'state':'Unknown','error':str(exc) if isinstance(exc,AXRError) else 'wechat_source_failed'})
                 if self.bursts.pending:self.poll_delay=1
             except AXRError as exc:

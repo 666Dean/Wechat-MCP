@@ -5,6 +5,7 @@
 #include "axr/WindowsHello.hpp"
 #include "axr/WindowsAttestation.hpp"
 #include "axr/WindowsOwnerSetup.hpp"
+#include "axr/WindowsInstallation.hpp"
 #include "axr/ProtectedStore.hpp"
 #include "axr/Credentials.hpp"
 #include <pybind11/functional.h>
@@ -51,6 +52,8 @@ PYBIND11_MODULE(_axr_native,m) {
       .def("attestation",[](const WindowsHelloOwnerKey& key){py::gil_scoped_release release;return key.Attestation().dump();})
       .def("sign",[](const WindowsHelloOwnerKey& key,py::bytes message){auto value=std::string(message);std::string signature;{py::gil_scoped_release release;signature=key.Sign(value);}return py::bytes(signature);});
     m.def("provision_windows_hello_owner",&WindowsHelloOwnerKey::Provision,py::arg("review"),py::arg("expires"),py::call_guard<py::gil_scoped_release>());
+    m.def("review_windows_owner",&ReviewWindowsOwner,py::arg("review"),py::arg("expires"),py::call_guard<py::gil_scoped_release>());
+    m.def("windows_installation_root",[]{auto path=WindowsInstallationRoot().u8string();return std::string(path.begin(),path.end());});
     m.def("exchange_windows_owner_setup",[](const std::string& sid,const std::string& challenge){
         auto value=ParseBounded(challenge);py::gil_scoped_release release;return ExchangeWindowsOwnerSetup(sid,value).dump();});
     py::class_<WindowsOwnerSetupClient>(m,"WindowsOwnerSetupClient")

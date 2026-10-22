@@ -59,10 +59,10 @@ ApplicationWindow {
     Connections { target: owner; function onAgentApprovalChanged(){if((owner.agentApproval || {}).request_key)agentActionDialog.open();else agentActionDialog.close()} }
     property var drafts: window.backend.drafts || []
     property var jobs: window.backend.jobs || []
-    property var pending: jobs.filter(function(j){return ["Ready","Queued","WaitingForIdle","AwaitingApproval","Executing","Prepared","Verifying","AwaitingAgent","HandedOff"].indexOf(j.state)>=0 && j.expires*1000>Date.now()})
+    property var pending: jobs.filter(function(j){return ["Ready","Queued","WaitingForIdle","AwaitingApproval","AwaitingDisclosureApproval","AwaitingInference","DisclosureReady","Executing","Prepared","Verifying","AwaitingAgent","HandedOff"].indexOf(j.state)>=0 && j.expires*1000>Date.now()})
     property var recent: jobs.slice().sort(function(a,b){return b.created-a.created}).slice(0,6)
-    property var approvals: pending.filter(function(j){return j.state==="AwaitingApproval"})
-    property var todos: pending.filter(function(j){return j.state!=="AwaitingApproval"})
+    property var approvals: pending.filter(function(j){return j.state==="AwaitingApproval" || j.state==="AwaitingDisclosureApproval"})
+    property var todos: pending.filter(function(j){return j.state!=="AwaitingApproval" && j.state!=="AwaitingDisclosureApproval"})
     property bool inSettings: [1,3,4,5,6].indexOf(page)>=0
     property var intent: (owner.preview || {}).intent || ({})
     property var exactDisclosure: (owner.preview || {}).exact_disclosure || ({})
@@ -71,7 +71,7 @@ ApplicationWindow {
     Binding { target: Theme; property: "dark"; value: window.darkMode }
     Binding { target: Theme; property: "glassSource"; value: appContent }
     function operation(op){return ({"owner.command":"本人任务","messages.read":"读取消息","messages.search":"搜索消息","files.read":"解析本地附件","reply.prepare":"生成回复草稿","disclosure.send":"内容披露审批","messages.send":"提交微信回复","workspace.write":"保存工作文档","application.navigate":"应用导航","expired":"已过期任务"})[op] || "处理任务"}
-    function stateLabel(state){return ({"WaitingForIdle":"等待电脑空闲后发送","AwaitingAgent":"等待 Codex 当前任务结束","HandedOff":"Codex 正在处理本人任务","AwaitingApproval":"等待你的批准","Ready":"等待执行","Queued":"等待处理","Draft":"等待人工回复","Observed":"已核对本机发出记录","Executing":"正在处理","Prepared":"已准备","Verifying":"核验结果","Completed":"已完成","Unknown":"结果待核对","FailedSafe":"已安全停止","Expired":"已过期","Cancelled":"已取消","Denied":"已拒绝","Proposed":"待检查","PolicyChecked":"已检查权限"})[state] || "待验证"}
+    function stateLabel(state){return ({"WaitingForIdle":"等待电脑空闲后发送","AwaitingAgent":"等待 Codex 当前任务结束","HandedOff":"Codex 正在处理本人任务","AwaitingApproval":"等待你的批准","AwaitingDisclosureApproval":"等待披露内容审批","AwaitingInference":"等待生成回复","DisclosureReady":"已批准，等待原请求方读取","Ready":"等待执行","Queued":"等待处理","Draft":"等待人工回复","Observed":"已核对本机发出记录","Executing":"正在处理","Prepared":"已准备","Verifying":"核验结果","Completed":"已完成","Unknown":"结果待核对","FailedSafe":"已安全停止","Expired":"已过期","Cancelled":"已取消","Denied":"已拒绝","Proposed":"待检查","PolicyChecked":"已检查权限"})[state] || "待验证"}
     function destinationLabel(value){return value === "local" ? "仅本机" : value === "model:codex" ? "Codex" : value && value.indexOf("wechat:")===0 ? "指定微信会话" : value && value.indexOf("model:")===0 ? "模型：" + value.slice(6) : value || "—"}
     function targetName(cid){var list=window.backend.conversations || [];for(var i=0;i<list.length;i++)if(list[i].conversation_id===cid)return list[i].display_name;return cid || "本地操作"}
     function timeLabel(value){return value ? new Date(value*1000).toLocaleString(Qt.locale(),"MM-dd HH:mm") : "—"}
@@ -143,7 +143,10 @@ ApplicationWindow {
                 Copy { Layout.fillWidth: true; text: window.operation(job.operation) + (job.target ? " · " + job.target : ""); font.weight: Font.Medium; maximumLineCount: 1; elide: Text.ElideRight }
                 Caption { Layout.fillWidth: true; text: window.stateLabel(job.state) + "  ·  " + window.timeLabel(job.created) }
             }
-            ButtonX { visible: !compact; text: "核对详情"; onClicked: {owner.review(job.id);intentDialog.open()} }
+            ButtonX { visible: !compact; objectName: "pendingReview_" + job.id
+                property bool exactPending: window.status.pending_review_supported===true && (job.state==="AwaitingApproval" || job.state==="AwaitingDisclosureApproval")
+                text: exactPending ? "核对并批准" : "核对详情"; enabled: !exactPending || !window.previewMode
+                onClicked: {if(exactPending)owner.approvePending(job.id);else {owner.review(job.id);intentDialog.open()}} }
             ButtonX { visible: !compact && job.state==="Ready"; text: "执行"; enabled: !window.previewMode; onClicked: owner.execute(job.id) }
         }
     }

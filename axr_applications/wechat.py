@@ -313,23 +313,46 @@ def _windows_kernel(store,signer,owner_public_key,*,initialize=False):
     # The controller is trusted root code; native database operations stay in the
     # same protected process. It is registered as a handler, never as a model.
     actual=process_identity(os.getpid())
-    credential_peer=PeerContext('handler','wechat:credentials',digest(actual),actual['pid'],actual['birth'])
+    credential_peer=PeerContext('handler',PRINCIPAL,digest(actual),actual['pid'],actual['birth'])
     def identity(peer):return {'agent':peer.principal,'application':'wechat','identity_verified':registry.accept(process_identity(peer.pid))==peer}
     def environment(peer):
         row=next((r for r in registry.rows if r['identity']['pid']==peer.pid and r['identity']['birth']==peer.birth),None)
         sandbox=(row or {}).get('sandbox')
-        return {'sandbox':sandbox.get('profile') if sandbox else 'trusted-native-handler','environment_valid':bool(sandbox),'audit_valid':store.journal.verify_audit(),'network_allowed':True}
+        return {'sandbox':BOUNDARY if peer==credential_peer else sandbox.get('profile') if sandbox else 'trusted-native-handler',
+            'environment_valid':bool(sandbox) or peer==credential_peer,'audit_valid':store.journal.verify_audit(),'network_allowed':True}
     security=SecurityService(store,lambda:{},lambda:{},revoke_domain=lambda scope:None)
     pending={}
     def handler(operation,resource):
         if operation in ('messages.search','database.query','messages.read','disclosure.send','reply.prepare'):return credential_peer
         peer=pending.get('native')
+        if operation=='status.read' and resource.conversation_id!='axr:application-ui' and peer is None:return credential_peer
         if peer is None:raise AXRError('wechat_native_handler_not_ready')
         return peer
-    kernel=AuthorityKernel(security,signer,bytes.fromhex(owner_public_key),identity=identity,environment=environment,
-            handler_for=handler,initialize=initialize,recovery_verifier=lambda peer,scope:store.journal.verify_audit())
+    store.journal.db.execute('CREATE TABLE IF NOT EXISTS wechat_state(name TEXT PRIMARY KEY,payload BLOB)')
+    kernel=WeChatKernel(security,signer,bytes.fromhex(owner_public_key),identity=identity,environment=environment,
+            handler_for=handler,initialize=initialize,recovery_verifier=lambda peer,scope:store.journal.verify_audit(),
+            application_tables={'wechat_state':'name'})
+    kernel.controller_peer=credential_peer
     registry.on_change=kernel.integrity.persist
-    registry.enroll(actual,'handler','wechat:credentials',lambda:config['owner_user'])
+    registry.enroll(actual,'handler',PRINCIPAL,lambda:config['owner_user'])
+    original_accept=registry.accept
+    def accept(candidate):
+        try:return original_accept(candidate)
+        except AXRError:
+            # Owner role only. Windows clients still require separately managed
+            # AppContainer registration; a pinned file alone is insufficient.
+            image=resources_root().parent/'axr-owner.exe'
+            if candidate.get('image')!=str(image) or not deployment.verify_process(candidate,'owner'):
+                raise AXRError('ipc_peer_not_enrolled') from None
+            with kernel.lock:
+                kernel._check_integrity()
+                def alive(row):
+                    try:return process_identity(row['identity']['pid'])==row['identity']
+                    except AXRError:return False
+                registry.rows=[r for r in registry.rows if alive(r)]
+                registry.enroll(candidate,'owner','wechat:owner',lambda:config['owner_user'])
+                return original_accept(candidate)
+    registry.accept=accept
     kernel.wechat_registry=registry;kernel.wechat_handlers=pending
     return kernel,registry
 
@@ -411,25 +434,41 @@ def release_gate(value):
 def create_authority(value):
     release_gate(value).require()
     store=OwnerStore(value['state'],authority_service=True)
+    kernel=None
     try:
         signer=native.HardwareSigningKey('Stellaria.AXR.Root.v2')
         kernel,registry=_kernel(store,signer,value['owner_public_key'])
         if os.name=='nt':
             from .wechat_mcp import attach_windows_mcp
             attach_windows_mcp(kernel,store.config()['application'])
-            server=AuthorityServer(kernel,registry,value['endpoint']);server.wechat_store=store
-            return server
         server=AuthorityServer(kernel,registry,value['endpoint']);server.wechat_store=store
-        service=WeChatService(kernel,registry,store.config()['application'],value['endpoint']);kernel.application=service
+        if os.name=='nt':
+            from .wechat_windows_service import WindowsWeChatService
+            service=WindowsWeChatService(kernel,registry,store.config()['application'],value['endpoint'])
+            kernel.wechat_service=service # Keep the separately approved eight-tool application intact.
+        else:
+            service=WeChatService(kernel,registry,store.config()['application'],value['endpoint']);kernel.application=service
         old_serve=server.serve;old_close=server.close
         def serve():
             service.start()
             return old_serve()
         def close():
-            service.close();old_close()
+            try:service.close()
+            finally:old_close()
+        if os.name=='nt':
+            previous_close=getattr(kernel,'application_close',None)
+            def application_close():
+                try:service.close()
+                finally:
+                    if callable(previous_close):previous_close()
+            kernel.application_close=application_close
         server.serve=serve;server.close=close
         return server
-    except BaseException:store.close();raise
+    except BaseException:
+        try:
+            if kernel is not None:kernel.close()
+        finally:store.close()
+        raise
 
 def owner_enroll(runtime_root):
     from .wechat_owner import main

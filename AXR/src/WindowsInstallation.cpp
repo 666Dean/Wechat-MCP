@@ -5,8 +5,19 @@
 #include <windows.h>
 #include <aclapi.h>
 #include <sddl.h>
+#include <shlobj.h>
 #endif
 namespace Stellaria::AXR {
+std::filesystem::path WindowsInstallationRoot(){
+#if defined(_WIN32)
+    PWSTR value=nullptr;
+    if(FAILED(SHGetKnownFolderPath(FOLDERID_ProgramFiles,KF_FLAG_DEFAULT,nullptr,&value)))
+        throw std::runtime_error("authority_installation_unavailable");
+    auto path=std::filesystem::path(value)/L"Stellaria AXR";CoTaskMemFree(value);return path;
+#else
+    throw std::runtime_error("windows_installation_required");
+#endif
+}
 #if defined(_WIN32)
 namespace {
 void Protected(const std::filesystem::path& path,bool ancestor){

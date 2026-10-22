@@ -435,7 +435,7 @@ class Controller(QObject):
             self._notice='已载入 '+str(len(self._threads))+' 个 Codex 对话。'+('可继续载入更多。' if self._threads_cursor else '')
             self.noticeChanged.emit();return
         if name=='assistant_save':self.loadAssistant()
-        if name in ('chat_prompt','chat_cancel','owner_finish','automatic','automatic_stop'):self.refresh()
+        if name in ('chat_prompt','chat_cancel','owner_finish','automatic','automatic_stop','approval_setting'):self.refresh()
         if name=='owner_claim':
             if value.get('ready'):self.agent_bridge.start(value)
             return
@@ -537,6 +537,14 @@ class Controller(QObject):
                 except Exception:time.sleep(.15)
             raise AXRError('broker_start_timeout')
         self.run('start',launch)
+    @Slot(str)
+    def approvePending(self,jid):
+        if self.fixture:return
+        self.run('approve',lambda:call(self.state,'control.approve_pending',(jid,),owner=True,timeout=180))
+    @Slot(bool)
+    def setManualApproval(self,required):
+        if self.fixture:return
+        self.run('approval_setting',lambda:call(self.state,'control.set_manual_approval',(required,),owner=True,timeout=180))
     @Slot(str)
     def review(self,jid):
         if self.fixture:return

@@ -7,13 +7,17 @@ from pathlib import Path
 import subprocess
 from axr.aet import AXRError,canonical
 
-OWNER=Path('/Library/Application Support/Stellaria AXR/AXR Owner.app/Contents/MacOS/axr-owner')
+if sys.platform=='win32':
+    from axr import _axr_native as native
+    OWNER=Path(native.windows_installation_root())/'axr-owner.exe'
+else:OWNER=Path('/Library/Application Support/Stellaria AXR/AXR Owner.app/Contents/MacOS/axr-owner')
 
 def installed():return OWNER.is_file()
 
 def control(method,arguments=None,timeout=180):
-    process=subprocess.run([str(OWNER),'--owner-enroll'],input=canonical({'operation':'control','method':method,
-        'arguments':arguments or {}})+b'\n',stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout)
+    process=subprocess.run([str(OWNER),'--owner-control' if sys.platform=='win32' else '--owner-enroll'],input=canonical({'operation':'control','method':method,
+        'arguments':arguments or {}})+b'\n',stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout,
+        **({'creationflags':subprocess.CREATE_NO_WINDOW} if sys.platform=='win32' else {}))
     if process.returncode:
         # Preserve a bounded machine code so the UI can explain a missing OS
         # permission before another authentication is attempted. Never display
@@ -32,7 +36,7 @@ def call(state,method,args=(),kwargs=None,*,owner=False,timeout=180):
     if not owner and method!='status':raise AXRError('managed_mcp_frontend_required')
     if method=='control.snapshot':
         value=control('snapshot');status=value['status'];scope=status.get('scope') or {}
-        status['automatic_reply']={'active':status['automatic_reply'],'supported':sys.platform=='darwin',
+        status['automatic_reply']={'active':status['automatic_reply'],'supported':sys.platform in ('darwin','win32'),
             'ready':all(status.get('permissions',{}).get(k,False) for k in ('database','accessibility')),
             'expires':scope.get('expires',0),
             'remaining':max(0,scope['max_replies']-status['reply_count']) if scope.get('max_replies') else None,
@@ -42,6 +46,8 @@ def call(state,method,args=(),kwargs=None,*,owner=False,timeout=180):
             'destinations':['Codex'] if scope.get('disclose') else [],'exact_intent':True} for identity in scope.get('targets',[])]
         return value
     if method in ('control.revoke_all','control.stop_automatic'):return control('stop')
+    if method=='control.approve_pending':return control('approve_pending',{'job_id':args[0]})
+    if method=='control.set_manual_approval':return control('set_manual_approval',{'required':args[0]})
     if method=='control.start_automatic':
         targets,seconds,count=args[:3]
         return control('start',{'targets':'all' if not targets or targets==['*'] else targets,'seconds':seconds,

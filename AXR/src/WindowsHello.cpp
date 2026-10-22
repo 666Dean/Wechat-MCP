@@ -76,7 +76,7 @@ LRESULT CALLBACK EnrollmentWindow(HWND window,UINT message,WPARAM wparam,LPARAM 
     if(message==WM_NCDESTROY)SetWindowLongPtrW(window,GWLP_USERDATA,0);
     return DefWindowProcW(window,message,wparam,lparam);
 }
-bool ReviewEnrollment(std::string_view text,double expires){
+bool ReviewEnrollment(std::string_view text,double expires,bool enrollment=true){
     HMODULE module=nullptr;
     if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
             reinterpret_cast<LPCWSTR>(&EnrollmentWindow),&module))throw std::runtime_error("hello_review_unavailable");
@@ -91,7 +91,7 @@ bool ReviewEnrollment(std::string_view text,double expires){
     EnrollmentReview state{expires,GetTickCount64()+ULONGLONG(remaining*1000)};
     RECT screen{};if(!SystemParametersInfoW(SPI_GETWORKAREA,0,&screen,0))throw std::runtime_error("hello_review_unavailable");
     int width=std::min(800L,screen.right-screen.left-40),height=std::min(680L,screen.bottom-screen.top-40);
-    HWND window=CreateWindowExW(WS_EX_CONTROLPARENT,name,L"微信代理 · 首次登记所有者",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_THICKFRAME,
+    HWND window=CreateWindowExW(WS_EX_CONTROLPARENT,name,enrollment?L"微信代理 · 首次登记所有者":L"微信代理 · 所有者授权审查",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_THICKFRAME,
         screen.left+(screen.right-screen.left-width)/2,screen.top+(screen.bottom-screen.top-height)/2,width,height,nullptr,nullptr,module,&state);
     if(!window)throw std::runtime_error("hello_review_unavailable");
     struct Close {HWND window;~Close(){if(IsWindow(window))DestroyWindow(window);}} close{window};
@@ -122,6 +122,17 @@ struct WindowsHelloOwnerKey::Impl {
     KeyCredential key{nullptr};
 #endif
 };
+bool ReviewWindowsOwner(std::string review,double expires){
+    if(review.empty()||review.size()>65536||review.find('\0')!=std::string::npos||
+       !std::isfinite(expires)||expires<=Now()||expires>Now()+180)throw std::runtime_error("hello_owner_review_invalid");
+#if defined(_WIN32)
+    OwnerHost();
+    try{return ReviewEnrollment(review,expires,false);}
+    catch(const winrt::hresult_error&){throw std::runtime_error("hello_review_unavailable");}
+#else
+    throw std::runtime_error("windows_hello_required");
+#endif
+}
 WindowsHelloOwnerKey::WindowsHelloOwnerKey():impl_(std::make_unique<Impl>()){}
 std::unique_ptr<WindowsHelloOwnerKey> WindowsHelloOwnerKey::Provision(std::string review,double expires){
     if(review.empty()||review.size()>65536||review.find('\0')!=std::string::npos||

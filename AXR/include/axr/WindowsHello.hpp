@@ -2,6 +2,8 @@
 #pragma once
 #include "Core.hpp"
 namespace Stellaria::AXR {
+// Fixed protected interactive owner host only; no signing or provisioning.
+bool ReviewWindowsOwner(std::string review,double expires);
 // The constructor only opens an enrolled, pinned credential. Provision is a
 // separate, locally reviewed first-enrollment path with FailIfExists. Neither
 // path replaces/deletes keys or supplies software fallback/private-key export.

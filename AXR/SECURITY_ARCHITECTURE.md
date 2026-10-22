@@ -268,6 +268,19 @@ credential migration, explicit interrupted-creation recovery and desktop
 Hello/review UI validation remain outstanding. Neither
 a pin file nor Hello API success is hardware attestation.
 
+The Windows shared WeChat dispatcher uses this owner signature verifier for
+standing scopes and exact pending approvals. Its separate native read-only review
+window requires the same protected interactive owner host, defaults to cancel and
+bounds wall/monotonic time; displaying a review neither creates a key nor signs.
+Inference disclosure and a generated send require separate exact approvals when
+the independent approval setting is enabled. Disabling it does not approve old
+pending work. MCP page disclosure is bound to the original client process witness,
+consumed once and erased before delivery; stop/restart never resumes pending pages.
+These are software/fixture checks, not Windows UI/Hello/device qualification.
+LocalSystem-to-interactive UIA execution, Windows source-provider isolation,
+native frontend/deployment and migration/recovery remain code gaps. Reusing the
+Mac scheduler does not make those OS boundaries operational or open the release gate.
+
 The bounded PCP KADS profile accepts TPM2 SHA-256 names and RSA-2048 owner
 keys, requiring fixedTPM, fixedParent, sensitiveDataOrigin and signing attributes.
 Legacy PCP AIK certification uses fixed PKCS#1/SHA-1 only inside this attestation
