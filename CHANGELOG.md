@@ -1,5 +1,11 @@
 # 更新日志
 
+## 2026-10-22 · 修复 macOS CI 的受保护安装拒绝码校验
+
+- 核对 `4177c8e` 的 Actions 运行 `39781657843`：macOS 原生构建和 `AXRSecurityRelease` 已通过，后续校验因未列入 `protected_host_installation_required` 失败；Windows 与 native-fuzz 作业通过。原生 `RequireProtectedHost` 在映像不位于固定安装路径，或路径非 root 所有/可被非可信用户写入/含链接时返回该拒绝码，发生在服务启动前。
+- 校验脚本只增加这一明确拒绝码，仍要求退出码为 1、`authority_started is False` 及有限错误集合；未知错误、成功退出或已启动均失败，不改动原生保护条件。
+- 三项脚本回归通过，覆盖预期安装拒绝、未知错误以及错误退出/启动状态拒绝；Windows 正式原生宿主实际拒绝检查通过。macOS 修复后的实际结果以新提交的 GitHub Actions 为准，不把本地合成脚本测试当作 macOS 重跑通过。
+
 ## 2026-10-22 · Windows 直接复用最新 Mac 初始化与任务桥
 
 - **目的与实现**：先阅读更新指南/日志并同步远端 Mac 实现至 `37867a6`，Windows 直接复用硬件登记钩子、空审计账本、原生联系人目录、密封配置、资产固定及完整性保存。增加固定 owner SID 和 Windows exe 资产布局；公钥固定在账本完整性保存后独占创建，不覆盖不同或损坏固定，最终 bootstrap 密钥仍最后写入，保存前重新核对配置。
