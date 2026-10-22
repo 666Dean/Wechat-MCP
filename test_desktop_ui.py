@@ -8,7 +8,7 @@ from pathlib import Path
 try:
     from PySide6.QtCore import QUrl,QCoreApplication,QEvent,Qt,QObject,QPointF
     from PySide6.QtWidgets import QApplication
-    from PySide6.QtQml import QQmlApplicationEngine
+    from PySide6.QtQml import QQmlApplicationEngine,QQmlComponent
     from PySide6.QtQuick import QQuickWindow
     from PySide6.QtQuickControls2 import QQuickStyle
     from PySide6.QtTest import QTest
@@ -69,6 +69,42 @@ class DesktopUI(unittest.TestCase):
             if item.objectName()==name:return item
             pending.extend(item.childItems())
         return None
+    def wait_open(self,popup):
+        self.wait_until(lambda: bool(popup.property('opened')),'popup did not finish opening')
+    def wait_until(self,predicate,message):
+        import time
+        deadline=time.monotonic()+1
+        while not predicate() and time.monotonic()<deadline:QTest.qWait(10)
+        self.assertTrue(predicate(),message)
+    def test_popup_tracks_ancestor_motion_without_window_resize(self):
+        engine=QQmlApplicationEngine();component=QQmlComponent(engine)
+        component.setData(b'''
+import QtQuick
+import QtQuick.Controls
+import "."
+ApplicationWindow {
+    width: 480; height: 400; visible: true
+    Item { objectName: "movingAncestor"; x: 40; y: 180
+        Rectangle { id: anchor; x: 20; width: 60; height: 30
+            AnchoredPopup { objectName: "movingPopup"; anchorItem: anchor
+                preferredWidth: 140; implicitHeight: 80
+            }
+        }
+    }
+}
+''',QUrl.fromLocalFile(str(Path(__file__).parent/'desktop/popup-regression.qml')))
+        window=component.create();self.assertIsNotNone(window,component.errorString())
+        try:
+            popup=window.findChild(QObject,'movingPopup');popup.open();self.wait_open(popup);QTest.qWait(50)
+            before=popup.property('x');ancestor=window.findChild(QObject,'movingAncestor')
+            ancestor.setX(220);ancestor.setY(60)
+            self.wait_until(lambda: popup.property('anchorPoint').x()==240,'popup kept stale ancestor coordinates')
+            self.assertGreater(popup.property('x'),before)
+            self.assertGreaterEqual(popup.property('x'),12);self.assertLessEqual(popup.property('x')+popup.property('width'),468)
+            self.assertGreaterEqual(popup.property('y'),12);self.assertLessEqual(popup.property('y')+popup.property('height'),388)
+        finally:
+            window.close();window.deleteLater();engine.deleteLater()
+            QCoreApplication.sendPostedEvents(None,QEvent.DeferredDelete)
     def test_all_pages_sizes_themes_and_nonoverlapping_footer(self):
         c,e,w=self.create('content')
         try:
@@ -216,10 +252,11 @@ class DesktopUI(unittest.TestCase):
             c._models=[{'id':'synthetic-model','title':'Synthetic model','efforts':['low','medium','high'],'default_effort':'medium'}]
             c.modelsChanged.emit();QTest.qWait(30)
             picker=self.visual(w,'reasoningSelector');picker.forceActiveFocus();QTest.keyClick(w,Qt.Key_Space);QTest.qWait(30)
-            popup=w.findChild(QObject,'reasoningPopup');self.assertTrue(popup.property('visible'))
+            popup=w.findChild(QObject,'reasoningPopup');self.wait_open(popup)
             self.assertLessEqual(popup.property('width'),264)
             model=self.visual(w,'modelSelector');model.forceActiveFocus();QTest.keyClick(w,Qt.Key_Space);QTest.qWait(20)
             models=self.visual(w,'modelChoiceList');self.assertTrue(models.isVisible())
+            self.wait_until(lambda: self.visual(w,'modelOption1') is not None,'model delegates did not appear')
             for index in range(2):
                 option=self.visual(w,'modelOption'+str(index));text=self.visual(w,'modelOptionText'+str(index));tick=self.visual(w,'modelOptionTick'+str(index))
                 middle=option.mapToScene(QPointF(0,option.height()/2)).y()
@@ -275,7 +312,7 @@ class DesktopUI(unittest.TestCase):
             for width,height in [(1024,680),(1280,800),(1440,900)]:
                 w.setWidth(width);w.setHeight(height);w.setProperty('page',6);QTest.qWait(35)
                 menu=self.visual(w,'settingsAccessMenu');menu.forceActiveFocus();QTest.keyClick(w,Qt.Key_Space);QTest.qWait(35)
-                popup=menu.findChild(QObject,'glassChoicePopup');self.assertTrue(popup.property('visible'))
+                popup=menu.findChild(QObject,'glassChoicePopup');self.wait_open(popup)
                 self.assertGreaterEqual(popup.property('height'),130)
                 self.assertGreaterEqual(popup.property('x'),12);self.assertGreaterEqual(popup.property('y'),12)
                 self.assertLessEqual(popup.property('x')+popup.property('width'),width-12)
@@ -284,7 +321,7 @@ class DesktopUI(unittest.TestCase):
                 self.assertLessEqual(popup.property('x')+popup.property('width'),w.width()-12)
                 popup.close();w.setProperty('page',0);QTest.qWait(20)
                 quick=self.visual(w,'quickAccessMenu');quick.forceActiveFocus();QTest.keyClick(w,Qt.Key_Space);QTest.qWait(25)
-                popup=quick.findChild(QObject,'glassChoicePopup');self.assertGreaterEqual(popup.property('height'),130)
+                popup=quick.findChild(QObject,'glassChoicePopup');self.wait_open(popup);self.assertGreaterEqual(popup.property('height'),130)
                 self.assertGreaterEqual(popup.property('x'),12);self.assertLessEqual(popup.property('y')+popup.property('height'),height-12)
                 popup.close()
         finally:self.dispose(c,e,w)

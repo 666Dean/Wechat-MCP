@@ -63,7 +63,10 @@ ToolButton {
                 ToolButton { implicitWidth: 24; implicitHeight: 28; Accessible.name: "返回思考强度"; onClicked: picker.choosingModel=false; contentItem: Icon { name: "chevronDown"; rotation: 90; ink: Theme.muted } }
                 Text { Layout.fillWidth: true; text: "选择模型"; color: Theme.muted; font.pixelSize: 12 }
             }
-            ListView { id: modelList; objectName: "modelChoiceList"; visible: picker.choosingModel; Layout.fillWidth: true; Layout.preferredHeight: Math.min(300,contentHeight); implicitHeight: visible ? Math.min(300,contentHeight) : 0
+            ListView { id: modelList; objectName: "modelChoiceList"; visible: picker.choosingModel; Layout.fillWidth: true
+                // Do not size a virtualized view from delegates it needs height to create.
+                readonly property real rowsHeight: Math.max(0,picker.models.length*40-2)
+                Layout.preferredHeight: Math.min(300,rowsHeight); implicitHeight: visible ? Math.min(300,rowsHeight) : 0
                 clip: true; model: picker.models; spacing: 2; currentIndex: Math.max(0,picker.models.findIndex(function(m){return m.id===picker.modelId})); keyNavigationWraps: true
                 Keys.onReturnPressed: picker.choose(picker.models[currentIndex])
                 Keys.onEnterPressed: picker.choose(picker.models[currentIndex])
