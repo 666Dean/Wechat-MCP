@@ -51,10 +51,19 @@ def initialize(runtime_root):
         enrollment=hardware_enrollment(configuration['deployment'])
         try:
             challenge=enrollment['challenge'];identity=enrollment['identity']
-            if (identity['signing_id']!='org.stellaria.axr.owner' or identity['signature_valid'] is not True or identity['hardened_runtime'] is not True
+            if sys.platform=='win32':
+                # LocalSystem and the interactive owner have different SIDs.
+                # The fixed native pipe authenticates their complete OS births;
+                # the application rechecks the pinned SID and hardware proof.
+                if module!='axr_applications.wechat':raise ValueError()
+                from axr_applications.wechat import _configuration
+                from axr_applications.windows_enrollment import validate_enrollment
+                validate_enrollment(_configuration(configuration['deployment']),enrollment,root)
+            elif (identity['signing_id']!='org.stellaria.axr.owner' or identity['signature_valid'] is not True or identity['hardened_runtime'] is not True
                 or identity['user']!=__import__('axr.ipc',fromlist=['process_identity']).process_identity(os.getpid())['user']
                 or challenge['expires']<=__import__('time').time() or not native.verify_root_signature(bytes.fromhex(enrollment['public_key']),canonical(challenge),bytes.fromhex(enrollment['signature']))):raise ValueError()
         except Exception:raise AXRError('owner_hardware_enrollment_required') from None
+    elif sys.platform=='win32':raise AXRError('owner_hardware_enrollment_required')
     else:authenticate(helper)
     if path.read_bytes()!=data:raise AXRError('authority_deployment_changed_during_authentication')
     signer=native.HardwareSigningKey('Stellaria.AXR.Root.v2',create=True)
@@ -62,6 +71,7 @@ def initialize(runtime_root):
     # it cannot obtain a software fallback or automatic legacy authority restore.
     deployment=(registration.initialize_owner(configuration['deployment'],signer,enrollment) if enrollment is not None
                 else registration.initialize_owner(configuration['deployment'],signer))
+    if path.read_bytes()!=data:raise AXRError('authority_deployment_changed_during_authentication')
     return complete(backend,configuration,deployment,signer)
 
 def complete(backend,configuration,deployment,signer):

@@ -23,15 +23,15 @@
 | Windows 主窗口原生导航 | `adapters/windows/WeChatUIA.cpp` | 已编译 UIA 固定选择器的 binding/navigate/stage/read/send 路径；实际客户端控件可用性仍待代码阶段结束后验证 |
 | helper 回连与停止 | `authority_server.py`、`wechat_execution.py` | 已支持并发认证连接、有界管道读写、取消和精确进程登记清理；不在持有 authority 锁时等待 UI |
 | 发送、观察及重复调用 | `attempts.py`、独立 authority ledger | 已接通；输入回执保留 Unknown，数据库观察不改变原回执，不确定不重发 |
-| 认证配置与资源固定 | `wechat.py` | 已补 Windows runtime 和固定本机管道解析、资源相对路径包含检查、重复范围和 helper/endpoint 一致性；初始化仍有 Mac 专用流程待替换 |
-| 新入站分页、追赶和去重 | Mac `service.py`、`automatic_reply.py` | **新独立服务完整监听和调度仍未接通**；不能直接启用旧服务 |
-| 有限/不限所有者自动会话 | Mac `automatic_reply.py` | **内存会话、短时子任务派生、计数及停止到新 authority 的接线仍缺失**；重启不得恢复授权 |
-| Codex 对话选择与忙闲交接 | Mac `codex_bridge.py`、`thread_router.py` | **新服务登记与生命周期路由仍未接通**；新架构的隔离推理不能继承父对话历史 |
+| 认证配置与资源固定 | `wechat.py` | 已补 Windows runtime 和固定本机管道解析、资源相对路径包含检查、重复范围和 helper/endpoint 一致性；初始化已复用最新 Mac 硬件登记/空账本/资产固定流程，Windows 使用固定跨会话原生管道及 exe 资产；安装、迁移和恢复仍缺失 |
+| 新入站分页、追赶和去重 | 最新 Mac `wechat_service.py` 的 `scan_targets` / `finish_scan` / `loop` | **新独立服务完整监听和调度仍未接通**；不能直接启用旧服务 |
+| 有限/不限所有者自动会话 | 最新 Mac `wechat_service.py` 的 `review` / `activate` / `derive_contract` | **内存会话、短时子任务派生、计数及停止到新 authority 的接线仍缺失**；重启不得恢复授权 |
+| Codex 对话选择与忙闲交接 | Mac `codex_bridge.py`、`wechat_service.py` 及 `desktop/owner_agent.py` | 桌面本人任务桥已有 Windows 原生匿名管道接收、协议往返、停止及预算测试；**新服务登记与生命周期路由仍未接通**；来源推理不能继承父对话历史 |
 | 单来源推理与 Windows 隔离 | `IncomingActor`、Mac `codex_source.py` | **Windows 固定提供方、实际来源隔离和进程登记仍缺失**；JobObject 不能充当 Agent 沙箱 |
 | 全部/指定私聊及新联系人 | Mac `authorization_requests.py`、联系人快照 | **新服务目录刷新、模型申请和所有者签名扩围仍未接通**；申请本身没有权限 |
 | 人设、风格及署名设置 | Mac `assistant_settings.py` | 最终回复支持所有者配置的署名要求；**新服务偏好保存、会话固定及界面仍未接通** |
-| 独立 owner 本人签名 | `windows_owner.py`、`TrustRoot.cpp` | 固定入口已支持审批设置和精确任务审查；Windows 已补独立 RSA-2048/SPKI/PKCS#1-SHA-256 所有者验签，根签名仍限 P-256。Hello 原生既有凭据打开/逐次签名已接入固定控制入口，强制受保护交互 host、公钥固定及限时拒绝；新增 TPM2 证明/公钥绑定、AIK 证书链与吊销核验，既有凭据登记响应已接固定入口；首次创建已接入有期限、默认取消的原生本地审查和 `FailIfExists`；**跨会话启动、可信登记保存与中断创建的显式恢复仍未实现**，无实机 Hello 结论，不能代用静默 TPM 签名 |
-| Windows 受保护安装与迁移 | `OwnerDeployment`、`initialize_owner`、原生凭据消费者 | **Windows 应用安装、服务登记、交互所有者启动、真实凭据原生迁移及客户端登记仍未全部实现** |
+| 独立 owner 本人签名 | `windows_owner.py`、`TrustRoot.cpp` | 固定入口已支持审批设置和精确任务审查；Windows 已补独立 RSA-2048/SPKI/PKCS#1-SHA-256 所有者验签，根签名仍限 P-256。Hello 原生既有凭据打开/逐次签名已接入固定控制入口，强制受保护交互 host、公钥固定及限时拒绝；新增 TPM2 证明/公钥绑定、AIK 证书链与吊销核验，既有凭据登记响应已接固定入口；首次创建已接入有期限、默认取消的原生本地审查和 `FailIfExists`；跨会话原生启动、双向认证管道及完整性保存后公钥固定已接入；**真实跨会话/硬件验证、安装/迁移和中断创建的显式恢复仍缺失**，无实机 Hello 结论，不能代用静默 TPM 签名 |
+| Windows 受保护安装与迁移 | `OwnerDeployment`、`initialize_owner`、原生凭据消费者 | 交互所有者固定原生启动已编译，尚未真实执行；**Windows 应用安装、服务登记、真实凭据原生迁移及客户端登记仍未全部实现** |
 | 本地完整 GUI | `desktop/` 的 Mac/旧 Broker 参考 | **新 owner 通道的界面、范围批准、会话开始/停止和恢复接线仍缺失** |
 | 整体准入 | `wechat.release_gate` | **仍含明确未接通检查，整体关闭**；需要完成上述实现和可信资格材料流程，不能直接删除拒绝或改成 True |
 
@@ -47,4 +47,4 @@
 
 ## 后续代码工作顺序
 
-先完成 Windows 独立所有者签名、交互进程启动与受保护安装/登记闭环，再完成单来源 Windows 推理提供方及短时任务派生，随后接入入站监听、去重、范围申请、生命周期路由、偏好和 GUI。上述代码及软件回归全部完成后，才进入单独的实机阶段。[旧设备证据](WINDOWS_WCDB_ACCEPTANCE.md)不会因这里的代码增加而自动更新。
+直接复用同步后的 Mac `wechat_service.py`、桌面及初始化实现，仅替换 Windows OS 交互边界；补齐受保护安装/登记和原生凭据迁移，再完成单来源 Windows 推理提供方及短时任务派生，随后接入入站监听、去重、范围申请、生命周期路由、偏好和 GUI。上述代码及软件回归全部完成后，才进入单独的实机阶段。[旧设备证据](WINDOWS_WCDB_ACCEPTANCE.md)不会因这里的代码增加而自动更新。

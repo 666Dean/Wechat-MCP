@@ -20,7 +20,7 @@ BUNDLES=('AXR Authority.app','AXR Owner.app','AXR MCP.app')
 def regular(path,maximum):
     path=Path(path).absolute()
     for node in (path,*path.parents):
-        if node.is_symlink():raise AXRError('setup_path_redirected')
+        if node.is_symlink() or getattr(node.lstat(),'st_file_attributes',0)&0x400:raise AXRError('setup_path_redirected')
     info=path.stat()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1 or not 0<info.st_size<=maximum:
         raise AXRError('setup_file_invalid')
@@ -29,8 +29,21 @@ def regular(path,maximum):
 def fingerprint(path,maximum):
     path=regular(path,maximum);before=path.stat()
     # The desktop receives a fingerprint, never the plaintext credential file.
-    result=subprocess.run(['/usr/bin/shasum','-a','256',str(path)],capture_output=True,timeout=20,check=True)
-    value=result.stdout.split(b' ',1)[0].decode('ascii')
+    if os.name=='nt':
+        import ctypes
+        system=ctypes.create_unicode_buffer(32768)
+        length=ctypes.windll.kernel32.GetSystemDirectoryW(system,len(system))
+        if not 0<length<len(system):raise AXRError('setup_hash_utility_unavailable')
+        result=subprocess.run([str(Path(system.value)/'certutil.exe'),'-hashfile',str(path),'SHA256'],
+            capture_output=True,timeout=20,check=True,creationflags=subprocess.CREATE_NO_WINDOW)
+        # Localized headings and paths are ignored. Only one complete hash is accepted.
+        hashes=[line.strip().replace(b' ',b'').lower() for line in result.stdout.splitlines()]
+        hashes=[line for line in hashes if re.fullmatch(b'[0-9a-f]{64}',line)]
+        if len(hashes)!=1:raise AXRError('setup_hash_result_invalid')
+        value=hashes[0].decode('ascii')
+    else:
+        result=subprocess.run(['/usr/bin/shasum','-a','256',str(path)],capture_output=True,timeout=20,check=True)
+        value=result.stdout.split(b' ',1)[0].decode('ascii')
     identity=lambda s:(s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
     if not re.fullmatch('[0-9a-f]{64}',value) or identity(before)!=identity(path.stat()):raise AXRError('setup_file_changed')
     return value

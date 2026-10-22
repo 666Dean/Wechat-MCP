@@ -12,6 +12,30 @@ from unittest.mock import patch
 from desktop.owner_agent import OwnerAgentBridge
 
 class OwnerAgentTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform=='win32','Windows anonymous-pipe cancellation')
+    def test_windows_idle_app_server_stops_and_releases_reader(self):
+        script="import sys,time;sys.stdin.readline();time.sleep(30)"
+        launched=threading.Event();finished=threading.Event();events=[];real=subprocess.Popen
+        bridge=OwnerAgentBridge(lambda event:(events.append(event),finished.set() if event['kind']=='finished' else None))
+        def fixture(args,**kwargs):
+            process=real([sys.executable,'-u','-c',script],**kwargs);launched.set();return process
+        with patch('desktop.owner_agent.codex_binary',return_value='/fixture/codex'),patch('desktop.owner_agent.subprocess.Popen',side_effect=fixture):
+            bridge.start({'job_id':'idle-fixture','worker_token':'synthetic','expires':time.time()+10})
+            self.assertTrue(launched.wait(2));bridge.stop();self.assertTrue(finished.wait(3));bridge.thread.join(1)
+        self.assertIsNotNone(bridge.process.poll());self.assertTrue(events[-1]['failed'])
+        self.assertFalse(any(thread.name=='owner-codex-output' and thread.is_alive() for thread in threading.enumerate()))
+
+    @unittest.skipUnless(sys.platform=='win32','Windows bounded pipe protocol')
+    def test_windows_oversized_app_server_frame_is_rejected(self):
+        script="import sys,time;sys.stdin.readline();sys.stdout.write('x'*(2*1024*1024));sys.stdout.flush();time.sleep(30)"
+        finished=threading.Event();events=[];real=subprocess.Popen
+        bridge=OwnerAgentBridge(lambda event:(events.append(event),finished.set() if event['kind']=='finished' else None))
+        def fixture(args,**kwargs):return real([sys.executable,'-u','-c',script],**kwargs)
+        with patch('desktop.owner_agent.codex_binary',return_value='/fixture/codex'),patch('desktop.owner_agent.subprocess.Popen',side_effect=fixture):
+            bridge.start({'job_id':'budget-fixture','worker_token':'synthetic','expires':time.time()+10})
+            self.assertTrue(finished.wait(4));bridge.thread.join(1)
+        self.assertTrue(events[-1]['failed']);self.assertIsNotNone(bridge.process.poll())
+
     def test_approval_is_exact_one_time_and_never_truncates_a_diff(self):
         row={'id':12,'method':'item/commandExecution/requestApproval','params':{'command':'echo synthetic','cwd':'fixture'}}
         value=OwnerAgentBridge.approval(row,{})

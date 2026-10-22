@@ -3,6 +3,7 @@
 // a protected fixed installation, never an endpoint's JSON description.
 #include "axr/Commit.h"
 #include "axr/Security.hpp"
+#include "axr/WindowsInstallation.hpp"
 #include "axr/TrustRoot.hpp"
 #include <chrono>
 #include <mutex>
@@ -38,22 +39,7 @@ std::filesystem::path InstalledAuthority(){return "/Library/Application Support/
 unsigned long Self(){return unsigned(getpid());}
 #elif defined(_WIN32)
 void Protected(const std::filesystem::path& path){
-    for(auto p=path;!p.empty();p=p.parent_path()){
-        auto attrs=GetFileAttributesW(p.c_str());if(attrs==INVALID_FILE_ATTRIBUTES||(attrs&FILE_ATTRIBUTE_REPARSE_POINT))Denied();
-        PSID owner=nullptr;PACL acl=nullptr;PSECURITY_DESCRIPTOR sd=nullptr;
-        if(GetNamedSecurityInfoW(p.c_str(),SE_FILE_OBJECT,OWNER_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION,&owner,nullptr,&acl,nullptr,&sd)!=ERROR_SUCCESS||!acl)Denied();
-        auto trusted=[](PSID sid){return IsWellKnownSid(sid,WinLocalSystemSid)||IsWellKnownSid(sid,WinBuiltinAdministratorsSid)||IsWellKnownSid(sid,WinCreatorOwnerSid);};
-        bool safe=trusted(owner);
-        // TrustedInstaller owns some OS ancestors; Program Files is a trusted
-        // installation anchor, whose ordinary-user write access is still denied.
-        for(DWORD i=0;i<acl->AceCount&&safe;++i){void* raw=nullptr;if(!GetAce(acl,i,&raw)){safe=false;break;}
-            auto h=static_cast<ACE_HEADER*>(raw);if(h->AceType==ACCESS_DENIED_ACE_TYPE)continue;
-            if(h->AceType!=ACCESS_ALLOWED_ACE_TYPE){safe=false;break;}
-            auto a=static_cast<ACCESS_ALLOWED_ACE*>(raw);
-            if((a->Mask&(FILE_WRITE_DATA|FILE_APPEND_DATA|FILE_WRITE_EA|FILE_WRITE_ATTRIBUTES|DELETE|WRITE_DAC|WRITE_OWNER|GENERIC_WRITE|GENERIC_ALL))&&!trusted(&a->SidStart))safe=false;
-        }
-        LocalFree(sd);if(!safe)Denied();if(p==p.root_path())break;
-    }
+    try{VerifyWindowsInstallation(path.parent_path());}catch(...){Denied();}
 }
 std::filesystem::path InstalledAuthority(){PWSTR p=nullptr;if(FAILED(SHGetKnownFolderPath(FOLDERID_ProgramFiles,KF_FLAG_DEFAULT,nullptr,&p)))Denied();auto result=std::filesystem::path(p)/L"Stellaria AXR"/L"axr-authority.exe";CoTaskMemFree(p);return result;}
 unsigned long Self(){return GetCurrentProcessId();}

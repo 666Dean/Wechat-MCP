@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Stopped build updates retain history and cannot restore operation grants."""
-import json,tempfile,time,unittest
+import json,tempfile,time,unittest,sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock,patch
@@ -11,6 +11,11 @@ from axr_applications import wechat
 from test.test_security_authority import ProtectedStore
 
 class BuildUpdate(unittest.TestCase):
+    @unittest.skipUnless(sys.platform=='win32','Windows update remains separately unavailable')
+    def test_windows_cannot_enter_the_mac_hardware_build_update(self):
+        with patch.object(wechat,'_hardware_enrollment') as auth,patch.object(wechat,'OwnerStore') as store:
+            with self.assertRaisesRegex(AXRError,'platform_unavailable'):wechat.refresh_owner_build({}, {})
+            auth.assert_not_called();store.assert_not_called()
     def test_only_fixed_provider_code_can_migrate_not_login_or_sources(self):
         provider={'binary':'old-external','sha256':'a'*64,'auth_file':'fixture-login','workspace':'fixture-work','tls_bundle':'fixture-trust','tls_sha256':'b'*64}
         original={'account_id':'fixture','resources':[],'codex_provider':provider}
@@ -29,6 +34,7 @@ class BuildUpdate(unittest.TestCase):
             old=pins.review(root,assets);self.assertEqual(backend.values,{})
             (root/'host').write_bytes(b'new')
             self.assertNotEqual(pins.review(root,assets)['build'],old['build'])
+    @unittest.skipUnless(sys.platform=='darwin','macOS stopped hardware build update')
     def test_running_endpoint_and_changed_configuration_fail_before_owner_prompt(self):
         with tempfile.TemporaryDirectory() as tmp:
             config={'state':tmp,'endpoint':str(Path(tmp)/'sock'),'application':{}}
@@ -43,6 +49,7 @@ class BuildUpdate(unittest.TestCase):
                  patch.object(wechat,'process_identity',return_value={'user':'u'}),patch.object(wechat,'_hardware_enrollment') as auth:
                 with self.assertRaisesRegex(AXRError,'configuration_changed'):wechat.refresh_owner_build(config,bootstrap)
                 auth.assert_not_called()
+    @unittest.skipUnless(sys.platform=='darwin','macOS stopped hardware build update')
     def test_different_hardware_owner_cannot_replace_pin_after_revocation(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);(root/'host').write_bytes(b'new build')

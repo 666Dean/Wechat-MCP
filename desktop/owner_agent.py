@@ -6,11 +6,35 @@ first consume one exact, live self-task disclosure. No retry after handoff.
 """
 import json
 import os
+import queue
 import select
 import subprocess
 import threading
 import time
 from axr_integration.codex_bridge import codex_binary
+
+class _WindowsOutput:
+    """Bounded anonymous-pipe reader; select() accepts only sockets on Windows."""
+    def __init__(self,stream):
+        self.stream=stream;self.stopped=threading.Event();self.chunks=queue.Queue(maxsize=2)
+        self.thread=threading.Thread(target=self.read,name='owner-codex-output',daemon=True);self.thread.start()
+    def read(self):
+        try:
+            while not self.stopped.is_set():
+                chunk=os.read(self.stream.fileno(),65536)
+                while not self.stopped.is_set():
+                    try:self.chunks.put(chunk,timeout=.05);break
+                    except queue.Full:continue
+                if not chunk:break
+        except (OSError,ValueError):
+            while not self.stopped.is_set():
+                try:self.chunks.put(b'',timeout=.05);break
+                except queue.Full:continue
+    def next(self):
+        try:return self.chunks.get(timeout=.05)
+        except queue.Empty:return None
+    def close(self):
+        self.stopped.set();self.thread.join(timeout=1)
 
 class OwnerAgentBridge:
     def __init__(self,emit):
@@ -44,12 +68,14 @@ class OwnerAgentBridge:
         return {'title':'确认运行命令' if 'commandExecution' in method else '确认修改文件',
                 'detail':text,'request_key':str(row['id'])}
     def run(self):
-        result={'job_id':self.task['job_id'],'failed':True};turn=None
+        result={'job_id':self.task['job_id'],'failed':True};turn=None;reader=None
         try:
             binary=codex_binary()
             env={**os.environ,'AXR_CODEX_WORKER_HOOK_TOKEN':self.task['worker_token']}
             self.process=subprocess.Popen([binary,'app-server','--listen','stdio://'],stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,bufsize=0,env=env,start_new_session=True)
+                stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,bufsize=0,env=env,start_new_session=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+            if os.name=='nt':reader=_WindowsOutput(self.process.stdout)
             self.send({'id':1,'method':'initialize','params':{'clientInfo':{'name':'wechat_axr_owner_agent','version':'2.0'}}})
             items={};answer='';budget=0;buffer=b''
             while time.time()<self.task['expires']:
@@ -57,8 +83,12 @@ class OwnerAgentBridge:
                     if turn:self.send({'id':9,'method':'turn/interrupt','params':{'threadId':self.task['thread_id'],'turnId':turn}})
                     break
                 if b'\n' not in buffer:
-                    if not select.select([self.process.stdout],[],[],.25)[0]:continue
-                    chunk=os.read(self.process.stdout.fileno(),65536)
+                    if reader:
+                        chunk=reader.next()
+                        if chunk is None:continue
+                    else:
+                        if not select.select([self.process.stdout],[],[],.25)[0]:continue
+                        chunk=os.read(self.process.stdout.fileno(),65536)
                     if not chunk:break
                     buffer+=chunk;budget+=len(chunk)
                     if len(buffer)>1024*1024 or budget>16*1024*1024:raise RuntimeError('owner_agent_event_budget')
@@ -113,6 +143,7 @@ class OwnerAgentBridge:
                     if self.process.poll() is None:self.process.terminate()
                     self.process.wait(timeout=2)
                 except subprocess.TimeoutExpired:self.process.kill();self.process.wait(timeout=2)
+                if reader:reader.close()
                 for stream in (self.process.stdin,self.process.stdout):
                     if stream:stream.close()
             with self.lock:self.pending={}

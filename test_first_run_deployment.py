@@ -3,6 +3,7 @@
 import io
 import hashlib
 import json
+import sys
 from pathlib import Path
 import tarfile
 import tempfile
@@ -36,6 +37,13 @@ class FirstRunDeployment(unittest.TestCase):
         source=self.root/'selected.txt';source.write_bytes(b'a'*64)
         result=fingerprint(source,65536)
         self.assertEqual(result,'ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb')
+    @unittest.skipUnless(sys.platform=='win32','Windows native hash utility')
+    def test_windows_fingerprint_handles_literal_paths_and_rejects_ambiguous_hashes(self):
+        source=self.root/'selected $literal ; 中文.txt';source.write_bytes(b'synthetic credential bytes')
+        self.assertEqual(fingerprint(source,65536),hashlib.sha256(source.read_bytes()).hexdigest())
+        from subprocess import CompletedProcess
+        with patch('desktop.provisioning.subprocess.run',return_value=CompletedProcess([],0,b'a'*64+b'\n'+b'b'*64+b'\n')):
+            with self.assertRaisesRegex(AXRError,'hash_result_invalid'):fingerprint(source,65536)
     def test_codex_symlink_resolves_to_a_verified_self_contained_image(self):
         import subprocess
         image=self.root/'native-codex';image.write_bytes(b'signed image fixture')
@@ -69,6 +77,7 @@ class FirstRunDeployment(unittest.TestCase):
         self.assertEqual(configuration_path(root),file)
         file.unlink();file.symlink_to(self.root/'elsewhere')
         with self.assertRaisesRegex(AXRError,'configuration_invalid'):configuration_path(root)
+    @unittest.skipUnless(sys.platform=='darwin','macOS root-owned sidecar configuration')
     def test_external_configuration_requires_protected_ownership(self):
         root=self.root/'install/Authority.app/Contents/Resources';root.mkdir(parents=True)
         (root/'deployment.json').write_text(json.dumps(MARKER))
@@ -84,6 +93,7 @@ class FirstRunDeployment(unittest.TestCase):
         file.write_text(native_snippet().replace('enabled = true','enabled = false'));self.assertFalse(native_registered(file))
         file.write_text(native_snippet().replace('--mcp','--something-else'));self.assertFalse(native_registered(file))
         file.write_text('[invalid');self.assertFalse(native_registered(file))
+    @unittest.skipUnless(sys.platform=='darwin','macOS bundle installer and permission script')
     def test_public_install_keeps_configuration_private_and_public_runtime_readable(self):
         from scripts import install_authority_macos as installer
         package=self.root/'components';manifest={}

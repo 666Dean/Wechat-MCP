@@ -4,9 +4,10 @@
 The native host protects installation files. Certificate evidence only travels
 over its private setup channel; never return it from MCP or put it in logs.
 First creation is a separately reviewed native operation, never an error
-fallback for an existing pin. Cross-session setup transport remains separate.
+fallback for an existing pin. Cross-session transport is a fixed native pipe.
 """
 import json
+import io
 from pathlib import Path
 from datetime import datetime
 import sys
@@ -68,6 +69,7 @@ def validate_response(challenge,response,roots,*,clock=time.time):
         if (len(key)!=294 or len(signature)!=256 or
                 not native.verify_owner_signature(key,canonical(challenge),signature)):raise ValueError()
         validate_attestation(key,response['attestation'],roots)
+        if clock()>=challenge['expires']:raise ValueError()
         return key
     except (ValueError,TypeError,KeyError):
         raise AXRError('wechat_owner_hardware_enrollment_invalid') from None
@@ -133,5 +135,60 @@ def respond(runtime_root,source,emit,*,clock=time.time):
 
 def main(runtime_root):
     if sys.platform!='win32' or native.security_release is not True:raise AXRError('formal_windows_owner_host_required')
-    return respond(runtime_root,sys.stdin.buffer,
-        lambda value:print(json.dumps(value,separators=(',',':')),flush=True))
+    # Cross-session child receives no inherited stdio/environment configuration.
+    # Native code loads the fixed protected descriptor and authenticates both
+    # sides against actual PID/birth/image/user evidence before giving a nonce.
+    client=native.WindowsOwnerSetupClient()
+    try:
+        challenge=json.loads(client.challenge)
+        return respond(runtime_root,io.BytesIO(canonical(challenge)+b'\n'),
+            lambda value:client.respond(canonical(value).decode('utf-8')))
+    finally:client.close()
+
+
+def exchange(configuration,challenge,runtime_root):
+    owner=configuration.get('owner_user')
+    if type(owner) is not str:raise AXRError('wechat_windows_owner_user_required')
+    value=json.loads(native.exchange_windows_owner_setup(owner,canonical(challenge).decode('utf-8')))
+    if type(value) is not dict or set(value)!={'response','identity'}:raise AXRError('wechat_owner_host_identity_required')
+    if type(value['response']) is not dict or value['response'].get('challenge')!=challenge:
+        raise AXRError('wechat_owner_hardware_enrollment_invalid')
+    validate_enrollment(configuration,{**value['response'],'identity':value['identity']},runtime_root)
+    return value['response'],value['identity']
+
+
+def validate_enrollment(configuration,enrollment,runtime_root):
+    """Recheck a protected setup hook result before creating the new ledger."""
+    try:
+        owner=configuration['owner_user'];actual=enrollment['identity'];expected=Path(runtime_root).parent/'axr-owner.exe'
+        if (actual['user']!=owner or actual['platform']!='windows' or actual['app_container'] is not False or
+                Path(actual['image'])!=expected or type(actual['pid']) is not int or actual['pid']<=0 or
+                type(actual['birth']) is not str or not actual['birth'] or
+                len(hex_bytes(actual['image_sha256'],32))!=32):raise ValueError()
+        response={key:value for key,value in enrollment.items() if key!='identity'}
+        if response['challenge']['configuration_digest']!=digest(configuration):raise ValueError()
+        validate_response(response['challenge'],response,trust_roots(runtime_root))
+    except (ValueError,TypeError,KeyError):raise AXRError('wechat_owner_host_identity_required') from None
+
+
+def persist_pin(runtime_root,public_key):
+    """Authority calls this only after proof and new-ledger integrity persist.
+
+    Exclusive create never replaces a previous key. Interrupted writes remain
+    an explicit recovery case; owner/model processes cannot write the install.
+    """
+    raw=hex_bytes(public_key,294)
+    if len(raw)!=294:raise AXRError('wechat_owner_enrolled_key_pin_required')
+    value={'version':2,'provider':'WindowsHello/RSA2048','public_key':public_key}
+    from axr.windows_files import create_once
+    directory=RootedDirectory(runtime_root)
+    try:
+        with directory.parent('owner-key.json') as (parent,name):
+            try:create_once(parent,name,canonical(value)+b'\n')
+            except FileExistsError:
+                previous=installed_json(runtime_root,'owner-key.json',32768)
+                if previous!=value or type(previous.get('version')) is not int:
+                    raise AXRError('wechat_owner_public_key_pin_changed') from None
+        saved=installed_json(runtime_root,'owner-key.json',32768)
+        if saved!=value or type(saved.get('version')) is not int:raise AXRError('wechat_owner_public_key_pin_write_failed')
+    finally:directory.close()

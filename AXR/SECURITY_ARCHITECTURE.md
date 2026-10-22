@@ -259,9 +259,13 @@ scope, defaults to cancel, bounds wall/monotonic review time and calls only
 RequestCreateAsync(FailIfExists). Missing pins alone select creation; malformed
 pins or unavailable existing credentials never do. Ordinary Python is rejected
 before review or WinRT. Interrupted creation may leave an unqualified OS key;
-there is no silent replacement, deletion or retry. Cross-session launch, trusted
-registration persistence, explicit interrupted-creation recovery and actual
-desktop Hello/review UI validation remain outstanding. Neither
+there is no silent replacement, deletion or retry. The fixed native LocalSystem-to-interactive-owner launch and mutually OS-authenticated
+one-shot pipe now feed the shared setup workflow. Authority verification and new
+ledger integrity persistence precede exclusive public-key pin creation. The
+transport acknowledgment restores no authority. Native pipe I/O and synthetic
+proof/wiring tests pass; actual cross-session launch, protected installation and
+credential migration, explicit interrupted-creation recovery and desktop
+Hello/review UI validation remain outstanding. Neither
 a pin file nor Hello API success is hardware attestation.
 
 The bounded PCP KADS profile accepts TPM2 SHA-256 names and RSA-2048 owner

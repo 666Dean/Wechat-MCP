@@ -2,6 +2,7 @@
 #include "axr/WindowsHello.hpp"
 #include "axr/TrustRoot.hpp"
 #include "axr/Security.hpp"
+#include "axr/WindowsInstallation.hpp"
 #include <cmath>
 #if defined(_WIN32)
 #define NOMINMAX
@@ -21,39 +22,6 @@ namespace {
 using namespace winrt::Windows::Security::Credentials;
 using namespace winrt::Windows::Security::Cryptography;
 using namespace winrt::Windows::Security::Cryptography::Core;
-void Protected(const std::filesystem::path& path,bool ancestor=false){
-    auto attributes=GetFileAttributesW(path.c_str());
-    if(attributes==INVALID_FILE_ATTRIBUTES||(attributes&FILE_ATTRIBUTE_REPARSE_POINT))
-        throw std::runtime_error("hello_owner_installation_required");
-    PSID owner=nullptr;PACL acl=nullptr;PSECURITY_DESCRIPTOR descriptor=nullptr;
-    auto status=GetNamedSecurityInfoW(path.c_str(),SE_FILE_OBJECT,
-        OWNER_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION,&owner,nullptr,&acl,nullptr,&descriptor);
-    struct Release {PSECURITY_DESCRIPTOR value;~Release(){if(value)LocalFree(value);}} release{descriptor};
-    struct InstallerSid {
-        PSID value=nullptr;
-        InstallerSid(){if(!ConvertStringSidToSidW(L"S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",&value))
-            throw std::runtime_error("hello_owner_installation_required");}
-        ~InstallerSid(){if(value)LocalFree(value);}
-    };
-    static const InstallerSid installer;
-    auto trusted=[&](PSID sid){return sid&&(IsWellKnownSid(sid,WinLocalSystemSid)||
-        IsWellKnownSid(sid,WinBuiltinAdministratorsSid)||EqualSid(sid,installer.value));};
-    if(status!=ERROR_SUCCESS||!acl||!trusted(owner))throw std::runtime_error("hello_owner_installation_required");
-    for(DWORD i=0;i<acl->AceCount;++i){
-        void* raw=nullptr;if(!GetAce(acl,i,&raw))throw std::runtime_error("hello_owner_installation_required");
-        auto header=static_cast<ACE_HEADER*>(raw);
-        if(header->AceFlags&INHERIT_ONLY_ACE)continue; // Does not apply to this object.
-        if(header->AceType==ACCESS_DENIED_ACE_TYPE)continue;
-        if(header->AceType!=ACCESS_ALLOWED_ACE_TYPE)throw std::runtime_error("hello_owner_installation_required");
-        auto ace=static_cast<ACCESS_ALLOWED_ACE*>(raw);
-        DWORD writes=FILE_WRITE_DATA|FILE_APPEND_DATA|FILE_WRITE_EA|FILE_WRITE_ATTRIBUTES|
-            FILE_DELETE_CHILD|DELETE|WRITE_DAC|WRITE_OWNER|GENERIC_WRITE|GENERIC_ALL;
-        // Creating a sibling in an ancestor cannot replace an already protected
-        // directory. Delete-child, metadata and ACL modification still deny.
-        if(ancestor)writes&=~(FILE_WRITE_DATA|FILE_APPEND_DATA);
-        if((ace->Mask&writes)&&!trusted(&ace->SidStart))throw std::runtime_error("hello_owner_installation_required");
-    }
-}
 void OwnerHost(){
     // Always enforced, including reference builds: tests must never pop Hello.
     auto identity=ProcessIdentity(GetCurrentProcessId());
@@ -62,15 +30,8 @@ void OwnerHost(){
     DWORD session=0;
     if(identity.at("user")=="S-1-5-18"||!ProcessIdToSessionId(GetCurrentProcessId(),&session)||session==0)
         throw std::runtime_error("hello_interactive_owner_required");
-    auto root=image.parent_path();
-    for(auto parent=root;!parent.empty();parent=parent.parent_path()){
-        Protected(parent,parent!=root);if(parent==parent.root_path())break;
-    }
-    size_t entries=0;
-    for(const auto& entry:std::filesystem::recursive_directory_iterator(root)){
-        if(++entries>20000)throw std::runtime_error("hello_owner_installation_budget");
-        Protected(entry.path());
-    }
+    try{VerifyWindowsInstallation(image.parent_path());}
+    catch(...){throw std::runtime_error("hello_owner_installation_required");}
 }
 template<class Operation,class Duration> auto Await(Operation operation,Duration budget){
     using winrt::Windows::Foundation::AsyncStatus;

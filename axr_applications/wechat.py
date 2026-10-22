@@ -34,7 +34,9 @@ def resources_root():
     return image.parent/'runtime' if os.name=='nt' else image.parent.parent/'Resources'
 
 def _configuration(value):
-    if type(value) is not dict or set(value)-{'state','endpoint','application','legacy_namespace','credential_import','owner_public_key'} or not {'state','endpoint','application'}<=set(value):raise AXRError('wechat_deployment_configuration_invalid')
+    if type(value) is not dict or set(value)-{'state','endpoint','application','legacy_namespace','credential_import','owner_public_key','owner_user'} or not {'state','endpoint','application'}<=set(value):raise AXRError('wechat_deployment_configuration_invalid')
+    if 'owner_user' in value and (os.name!='nt' or type(value['owner_user']) is not str or
+            re.fullmatch(r'S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+',value['owner_user']) is None):raise AXRError('wechat_windows_owner_user_invalid')
     if value.get('legacy_namespace') and value.get('credential_import'):raise AXRError('wechat_deployment_configuration_invalid')
     if 'credential_import' in value:
         source=value['credential_import']
@@ -95,6 +97,7 @@ def _configuration(value):
 
 def owner_setup_review(value):
     config=_configuration(value)
+    if os.name=='nt' and 'owner_user' not in config:raise AXRError('wechat_windows_owner_user_required')
     if os.name!='nt' and ('conversations' not in config['application'] or 'codex_provider' not in config['application']):raise AXRError('wechat_application_routes_required')
     return {'application':'WeChat MCP','fresh_state':config['state'],'endpoint':config['endpoint'],
         'credential_import':'native OS store to native OS store; keys never returned to Python',
@@ -106,6 +109,13 @@ def authenticate_owner_setup(value):
     config=_configuration(value);directory=Path(config['state'])
     from axr.initialization import empty_initialization
     if not empty_initialization(directory):raise AXRError('wechat_fresh_authority_state_required')
+    if os.name=='nt':
+        from .windows_enrollment import exchange
+        _build_assets(config['application']) # Reject helper escapes before any owner key operation.
+        challenge={'version':2,'kind':'wechat-owner-enrollment','configuration_digest':digest(config),
+            'nonce':secrets.token_hex(32),'expires':time.time()+180}
+        response,actual=exchange(config,challenge,resources_root())
+        return {**response,'identity':actual}
     return _hardware_enrollment(digest(config))
 
 def _hardware_enrollment(configuration_digest):
@@ -194,6 +204,15 @@ def refresh_owner_build(value,bootstrap):
 
 def _build_assets(application):
     helper=Path(application['navigation_helper'])
+    if os.name=='nt':
+        install=resources_root().parent
+        try:
+            relative=helper.relative_to(install)
+            if not helper.is_absolute() or '..' in relative.parts:raise ValueError()
+        except ValueError:raise AXRError('wechat_deployment_native_helper_required') from None
+        # The native Windows frontend remains unavailable until OS isolation is ported.
+        return [{'path':'axr-authority.exe','roles':['server','handler']},
+            {'path':'axr-owner.exe','roles':['owner']},{'path':relative.as_posix(),'roles':['handler']}]
     return [{'path':'AXR Authority.app/Contents/MacOS/axr-authority','roles':['server','handler']},
             {'path':'AXR Owner.app/Contents/MacOS/axr-owner','roles':['owner']},
             {'path':'AXR MCP.app/Contents/MacOS/axr-frontend','roles':['client']},
@@ -205,14 +224,24 @@ def initialize_owner(value, signer, enrollment=None):
     if not empty_initialization(directory):raise AXRError('wechat_fresh_authority_state_required')
     if enrollment is None:enrollment=authenticate_owner_setup(value)
     challenge=enrollment['challenge'];actual=enrollment['identity'];response=enrollment
-    if challenge['configuration_digest']!=digest(config) or challenge['expires']<=time.time() or not native.verify_root_signature(bytes.fromhex(response['public_key']),canonical(challenge),bytes.fromhex(response['signature'])):raise AXRError('wechat_owner_enrollment_signature_invalid')
+    verify=native.verify_owner_signature if os.name=='nt' else native.verify_root_signature
+    if challenge['configuration_digest']!=digest(config) or challenge['expires']<=time.time() or not verify(bytes.fromhex(response['public_key']),canonical(challenge),bytes.fromhex(response['signature'])):raise AXRError('wechat_owner_enrollment_signature_invalid')
+    if os.name=='nt':
+        from .windows_enrollment import validate_enrollment
+        validate_enrollment(config,enrollment,resources_root())
     with __import__('contextlib').closing(OwnerStore(directory,provision=True,authority_service=True)) as store:
         if not store.journal.verify_audit() or store.journal.checkpoint.read()['sequence']!=0:raise AXRError('wechat_empty_initialization_checkpoint_required')
         application=config['application']
         from . import _wechat_credentials
         if config.get('legacy_namespace'):
-            _wechat_credentials.import_legacy_credentials(canonical(application).decode(),config['legacy_namespace'])
+            if os.name=='nt':
+                importer=getattr(_wechat_credentials,'import_legacy_owner_credentials',None)
+                if not callable(importer):raise AXRError('wechat_windows_owner_credential_migration_required')
+                importer(canonical(application).decode(),config['legacy_namespace'],actual['user'])
+            else:_wechat_credentials.import_legacy_credentials(canonical(application).decode(),config['legacy_namespace'])
         if config.get('credential_import'):
+            if os.name=='nt' and not hasattr(_wechat_credentials,'import_owner_credentials'):
+                raise AXRError('wechat_windows_owner_credential_migration_required')
             _wechat_credentials.import_owner_credentials(canonical(application).decode(),canonical(config['credential_import']).decode())
         # This first-setup metadata read is part of the authenticated setup
         # review. No message body or prior permission is imported.
@@ -236,6 +265,9 @@ def initialize_owner(value, signer, enrollment=None):
         store.seal_config({'version':2,'application':application,'owner_public_key':response['public_key'],
                            'owner_user':actual['user'],'enrollment':digest(challenge)})
         finish_initialization(store,signer)
+    if os.name=='nt':
+        from .windows_enrollment import persist_pin
+        persist_pin(resources_root(),response['public_key'])
     return {'state':str(directory),'endpoint':config['endpoint'],'owner_public_key':response['public_key']}
 
 def finish_initialization(store,signer):
@@ -247,7 +279,9 @@ def finish_initialization(store,signer):
         deployment=OwnerDeployment(store.secrets,store.vault,revoke_for_update=lambda:
             empty_initialization(store.directory) and store.journal.verify_audit() and store.journal.checkpoint.read()['sequence']==0)
         assets=_build_assets(application)
-        deployment.enroll(BASE,assets,lambda:store.config()==config and config['owner_user']==process_identity(os.getpid())['user'])
+        install=resources_root().parent if os.name=='nt' else BASE
+        deployment.enroll(install,assets,lambda:store.config()==config and
+            (os.name=='nt' or config['owner_user']==process_identity(os.getpid())['user']))
         kernel,registry=_kernel(store,signer,config['owner_public_key'],initialize=True)
         try:kernel.integrity.persist()
         finally:kernel.close()
@@ -261,6 +295,7 @@ def resume_owner_setup(value):
     """
     config=_configuration(value);directory=Path(config['state'])
     if not (directory/'policy.sealed.json').exists():return None
+    if os.name=='nt':raise AXRError('wechat_initialization_recovery_requires_review')
     from axr.initialization import empty_initialization
     if not empty_initialization(directory):raise AXRError('wechat_initialization_recovery_requires_review')
     with __import__('contextlib').closing(OwnerStore(directory,authority_service=True)) as store:

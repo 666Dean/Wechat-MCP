@@ -3,6 +3,7 @@
 // script, executable or startup arguments enter the authority interpreter.
 #include "axr/ProtectedStore.hpp"
 #include "axr/Security.hpp"
+#include "axr/WindowsInstallation.hpp"
 #include <Python.h>
 #include <iostream>
 #include <atomic>
@@ -20,25 +21,6 @@
 using namespace Stellaria::AXR;
 namespace {
 std::atomic<bool> stopRequested=false;
-#if defined(_WIN32)
-void ProtectedPath(const std::filesystem::path& path){
-    auto attributes=GetFileAttributesW(path.c_str());
-    if(attributes==INVALID_FILE_ATTRIBUTES)throw std::runtime_error("authority_installation_unavailable");
-    if(attributes&FILE_ATTRIBUTE_REPARSE_POINT)throw std::runtime_error("authority_installation_reparse_denied");
-    PSID owner=nullptr;PACL acl=nullptr;PSECURITY_DESCRIPTOR descriptor=nullptr;
-    if(GetNamedSecurityInfoW(path.c_str(),SE_FILE_OBJECT,OWNER_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION,&owner,nullptr,&acl,nullptr,&descriptor)!=ERROR_SUCCESS||!acl)throw std::runtime_error("authority_installation_acl_unavailable");
-    auto trusted=[](PSID sid){return IsWellKnownSid(sid,WinLocalSystemSid)||IsWellKnownSid(sid,WinBuiltinAdministratorsSid);};
-    bool safe=trusted(owner);
-    for(DWORD i=0;i<acl->AceCount&&safe;++i){void* raw=nullptr;if(!GetAce(acl,i,&raw)){safe=false;break;}
-        auto header=static_cast<ACE_HEADER*>(raw);
-        if(header->AceType==ACCESS_DENIED_ACE_TYPE)continue;
-        if(header->AceType!=ACCESS_ALLOWED_ACE_TYPE){safe=false;break;}
-        auto ace=static_cast<ACCESS_ALLOWED_ACE*>(raw);DWORD writes=FILE_WRITE_DATA|FILE_APPEND_DATA|FILE_WRITE_EA|FILE_WRITE_ATTRIBUTES|DELETE|WRITE_DAC|WRITE_OWNER|GENERIC_WRITE|GENERIC_ALL;
-        if((ace->Mask&writes)&&!trusted(&ace->SidStart))safe=false;
-    }
-    LocalFree(descriptor);if(!safe)throw std::runtime_error("authority_installation_not_protected");
-}
-#endif
 void Installed(const std::filesystem::path& root,bool requireOwnership=true){
 #if defined(__APPLE__)
     SecCodeRef dynamic=nullptr;SecStaticCodeRef code=nullptr;
@@ -61,8 +43,7 @@ void Installed(const std::filesystem::path& root,bool requireOwnership=true){
         if(parent==parent.root_path())break;
     }
 #elif defined(_WIN32)
-    ProtectedPath(root);ProtectedPath(root.parent_path());
-    for(const auto& entry:std::filesystem::recursive_directory_iterator(root))ProtectedPath(entry.path());
+    VerifyWindowsInstallation(root.parent_path());
 #else
     (void)root;throw std::runtime_error("authority_platform_unavailable");
 #endif

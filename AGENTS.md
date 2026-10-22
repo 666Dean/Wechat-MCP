@@ -4,6 +4,14 @@ The owner requests that each completed update be synchronized to this GitHub
 repository and documented in CHANGELOG.md. Treat this as an ongoing maintenance
 preference when working in this repository.
 
+Current owner-directed scope is Windows adaptation. Use the project's latest
+macOS implementation as the functional baseline and replace its OS interfaces
+for Windows; keep platform progress and device evidence separate. Before edits,
+fetch/review remote updates and read this file, CONTRIBUTING.md, the relevant
+update guide, recent Git history and CHANGELOG.md. Avoid repeating already
+successful device experiments. Use Computer Use only for necessary device tests;
+finish the complete Windows software/offline stage before new WeChat testing.
+
 For each authorized update:
 
 1. Implement the change and run tests appropriate to the behavior changed.
