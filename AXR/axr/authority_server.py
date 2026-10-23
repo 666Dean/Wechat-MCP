@@ -87,10 +87,12 @@ class AuthorityServer:
         with self.lock:self.windows_thread=thread
         listener=None
         try:
+            sandbox_sids=tuple(getattr(self.registry,'public_sandbox_sids',()))
+            pipe_sids=(self.registry.user,*sandbox_sids)
             # Keep a live instance continuously. Only the first creation may
             # acquire a new pipe name; replacements never abandon that name
             # while an accepted helper/client connection is still in use.
-            listener=create_pipe(self.endpoint,(self.registry.user,),
+            listener=create_pipe(self.endpoint,pipe_sids,allow_low_integrity=bool(sandbox_sids),
                 maximum_instances=self.maximum_connections+1)
             self.listener=listener
             while not self.stop_event.is_set():
@@ -105,7 +107,7 @@ class AuthorityServer:
                         continue
                     accepted=listener
                     try:
-                        listener=create_pipe(self.endpoint,(self.registry.user,),first_instance=False,
+                        listener=create_pipe(self.endpoint,pipe_sids,allow_low_integrity=bool(sandbox_sids),first_instance=False,
                             maximum_instances=self.maximum_connections+1)
                         self.listener=listener
                     except BaseException:

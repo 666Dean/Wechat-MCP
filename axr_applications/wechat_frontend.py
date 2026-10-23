@@ -26,6 +26,16 @@ def connect(endpoint):
         return AuthorityClient(SecureSession.client_handshake(transport,actual))
     except BaseException:sock.close();raise
 
+
+def connect_windows(runtime_root):
+    from axr import _axr_native as native
+    from axr_integration.authority_frontend import load_connection
+    connection=load_connection(Path(runtime_root)/'owner-connection.json')
+    server=connection['server'];expected=Path(native.windows_installation_root())/'axr-authority.exe'
+    if server['user']!='S-1-5-18' or Path(server['image'])!=expected or server['app_container'] is not False:
+        raise AXRError('authority_installed_identity_required')
+    return AuthorityClient.connect(connection['endpoint'],server)
+
 def tool(name,description,properties=None,required=()):
     return {'name':name,'description':description,'inputSchema':{'type':'object','properties':properties or {},
         'required':list(required),'additionalProperties':False}}
@@ -53,12 +63,15 @@ def validate_arguments(name,args):
     return args
 
 def main(runtime_root):
-    from axr.deployment_configuration import read
-    configuration=read(runtime_root)
-    endpoint=configuration['deployment']['endpoint']
+    if os.name!='nt':
+        from axr.deployment_configuration import read
+        configuration=read(runtime_root)
+        endpoint=configuration['deployment']['endpoint']
     # Initialization/discovery succeed while the independent authority is off.
     # Operational requests connect lazily and never recover another executor.
-    for raw in sys.stdin.buffer:
+    while True:
+        raw=sys.stdin.buffer.readline(1024*1024+1)
+        if not raw:break
         if len(raw)>1024*1024:break
         request=None
         try:
@@ -72,7 +85,7 @@ def main(runtime_root):
             elif method=='tools/call':
                 name=params['name'];args=validate_arguments(name,params.get('arguments',{}))
                 try:
-                    client=connect(endpoint)
+                    client=connect_windows(runtime_root) if os.name=='nt' else connect(endpoint)
                     try:value=client.request('WeChat',method=name,arguments=args)
                     finally:client.close()
                     result={'content':[{'type':'text','text':canonical(value).decode()}],'isError':False}

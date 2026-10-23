@@ -19,6 +19,18 @@ def peer_identity(handle,*,server=False):
     try:return json.loads(native.peer_identity(handle,server))
     except Exception:raise AXRError('native_peer_identity_unavailable') from None
 
+def windows_client_sandbox(actual):
+    """Actual no-network native-client token; caller booleans are not evidence."""
+    try:
+        if actual.get('platform')!='windows' or actual.get('app_container') is not True:raise ValueError()
+        value=json.loads(native.windows_frontend_identity(actual['pid']))
+        if (set(value)!={'pid','birth','image_sha256','appcontainer_sid','profile','network_allowed','all_application_packages_access'} or
+                value['pid']!=actual['pid'] or value['birth']!=actual['birth'] or value['image_sha256']!=actual['image_sha256'] or
+                value['profile']!='windows-appcontainer-mcp-v2' or value['network_allowed'] is not False or value['all_application_packages_access'] is not False or
+                type(value['appcontainer_sid']) is not str or not value['appcontainer_sid'].startswith('S-1-15-2-')):raise ValueError()
+        return value
+    except Exception:raise AXRError('peer_managed_sandbox_required') from None
+
 @dataclass(frozen=True)
 class PeerContext:
     role:str
@@ -59,6 +71,10 @@ class PeerRegistry:
             # scoped to this exact birth instance. A self-reported flag is useless.
             if role=='client' and (not managed_sandbox or managed_sandbox.get('pid')!=actual['pid'] or managed_sandbox.get('birth')!=actual['birth']):
                 raise AXRError('peer_managed_sandbox_required')
+            if role=='client' and actual['platform']=='windows':
+                witness=windows_client_sandbox(actual)
+                if managed_sandbox.get('appcontainer_sid')!=witness['appcontainer_sid']:
+                    raise AXRError('peer_managed_sandbox_required')
         if authenticate_owner()!=self.user:raise AXRError('peer_owner_authentication_required')
         self.rows=[r for r in self.rows if not (r['identity']['pid']==actual['pid'] and r['identity']['birth']==actual['birth'])]
         self.rows.append({'identity':actual,'role':role,'principal':principal,'sandbox':managed_sandbox})
@@ -71,6 +87,9 @@ class PeerRegistry:
             if actual!=expected:continue
             if self.owner_deployment is not None and self.owner_deployment.verify_process(actual,row['role']) is not True:continue
             if actual['user'] not in self._users(row['role']):continue
+            if not self.development_fixture and row['role']=='client' and actual['platform']=='windows':
+                witness=windows_client_sandbox(actual)
+                if (row.get('sandbox') or {}).get('appcontainer_sid')!=witness['appcontainer_sid']:continue
             return PeerContext(row['role'],row['principal'],digest(actual),actual['pid'],actual['birth'])
         raise AXRError('ipc_peer_not_enrolled')
     def retire(self,identity):
@@ -164,7 +183,7 @@ class SecureSession:
     def close(self):
         if not self.closed:self.closed=True;self.transport.close()
 
-def create_pipe(name,allowed_sids=(),*,first_instance=True,maximum_instances=1):
+def create_pipe(name,allowed_sids=(),*,first_instance=True,maximum_instances=1,allow_low_integrity=False):
     """Current-user/SYSTEM plus explicit managed AppContainer SIDs only."""
     import win32api,win32con,win32file,win32pipe,win32security,pywintypes
     token=win32security.OpenProcessToken(win32api.GetCurrentProcess(),win32con.TOKEN_QUERY)
@@ -174,6 +193,9 @@ def create_pipe(name,allowed_sids=(),*,first_instance=True,maximum_instances=1):
     for sid in [user,win32security.CreateWellKnownSid(win32security.WinLocalSystemSid),*[win32security.ConvertStringSidToSid(s) for s in allowed_sids]]:
         acl.AddAccessAllowedAce(win32security.ACL_REVISION,win32con.GENERIC_READ|win32con.GENERIC_WRITE,sid)
     descriptor=win32security.SECURITY_DESCRIPTOR();descriptor.SetSecurityDescriptorDacl(1,acl,0)
+    if allow_low_integrity:
+        label=win32security.ConvertStringSecurityDescriptorToSecurityDescriptor('S:(ML;;NW;;;LW)',1)
+        descriptor.SetSecurityDescriptorSacl(1,label.GetSecurityDescriptorSacl(),0)
     attrs=pywintypes.SECURITY_ATTRIBUTES();attrs.SECURITY_DESCRIPTOR=descriptor
     if type(maximum_instances) is not int or not 1<=maximum_instances<=65:
         raise AXRError('ipc_pipe_instance_budget')

@@ -19,7 +19,7 @@ from axr.aet import AXRError, Action, Resource, canonical, digest
 from axr.authority import AuthorityKernel
 from axr.authority_server import AuthorityServer
 from axr.deployment import OwnerDeployment
-from axr.ipc import PeerContext, PeerRegistry, process_identity
+from axr.ipc import PeerContext, PeerRegistry, process_identity,windows_client_sandbox
 from axr.policy import OwnerStore
 from axr.release import ReleaseGate
 from axr.security import SecurityService
@@ -210,9 +210,9 @@ def _build_assets(application):
             relative=helper.relative_to(install)
             if not helper.is_absolute() or '..' in relative.parts:raise ValueError()
         except ValueError:raise AXRError('wechat_deployment_native_helper_required') from None
-        # The native Windows frontend remains unavailable until OS isolation is ported.
         return [{'path':'axr-authority.exe','roles':['server','handler']},
-            {'path':'axr-owner.exe','roles':['owner']},{'path':relative.as_posix(),'roles':['handler']}]
+            {'path':'axr-owner.exe','roles':['owner']},{'path':'axr-frontend.exe','roles':['client']},
+            {'path':relative.as_posix(),'roles':['handler']}]
     return [{'path':'AXR Authority.app/Contents/MacOS/axr-authority','roles':['server','handler']},
             {'path':'AXR Owner.app/Contents/MacOS/axr-owner','roles':['owner']},
             {'path':'AXR MCP.app/Contents/MacOS/axr-frontend','roles':['client']},
@@ -310,6 +310,9 @@ def resume_owner_setup(value):
 def _windows_kernel(store,signer,owner_public_key,*,initialize=False):
     config=store.config();application=config['application'];deployment=OwnerDeployment(store.secrets,store.vault)
     registry=PeerRegistry(store,owner_user=config['owner_user'],owner_deployment=deployment)
+    # LPAC clients can reach the pipe, but receive no handshake bytes until the
+    # fixed enrolled image, owner user and actual no-network token are checked.
+    registry.public_sandbox_sids=('S-1-15-2-2',)
     # The controller is trusted root code; native database operations stay in the
     # same protected process. It is registered as a handler, never as a model.
     actual=process_identity(os.getpid())
@@ -339,18 +342,22 @@ def _windows_kernel(store,signer,owner_public_key,*,initialize=False):
     def accept(candidate):
         try:return original_accept(candidate)
         except AXRError:
-            # Owner role only. Windows clients still require separately managed
-            # AppContainer registration; a pinned file alone is insufficient.
-            image=resources_root().parent/'axr-owner.exe'
-            if candidate.get('image')!=str(image) or not deployment.verify_process(candidate,'owner'):
+            root=resources_root().parent
+            role='owner' if candidate.get('image')==str(root/'axr-owner.exe') else 'client'
+            expected=root/('axr-owner.exe' if role=='owner' else 'axr-frontend.exe')
+            if candidate.get('image')!=str(expected) or not deployment.verify_process(candidate,role):
                 raise AXRError('ipc_peer_not_enrolled') from None
+            sandbox=None
+            if role=='client':
+                witness=windows_client_sandbox(candidate)
+                sandbox={**witness,'native_profile':witness['profile'],'profile':BOUNDARY}
             with kernel.lock:
                 kernel._check_integrity()
                 def alive(row):
                     try:return process_identity(row['identity']['pid'])==row['identity']
                     except AXRError:return False
                 registry.rows=[r for r in registry.rows if alive(r)]
-                registry.enroll(candidate,'owner','wechat:owner',lambda:config['owner_user'])
+                registry.enroll(candidate,role,'wechat:owner' if role=='owner' else PRINCIPAL,lambda:config['owner_user'],managed_sandbox=sandbox)
                 return original_accept(candidate)
     registry.accept=accept
     kernel.wechat_registry=registry;kernel.wechat_handlers=pending
@@ -438,6 +445,11 @@ def create_authority(value):
     try:
         signer=native.HardwareSigningKey('Stellaria.AXR.Root.v2')
         kernel,registry=_kernel(store,signer,value['owner_public_key'])
+        if os.name=='nt' and native.security_release:
+            native.expose_windows_authority_identity(registry.user)
+            connection={'version':2,'endpoint':value['endpoint'],'server':process_identity(os.getpid())}
+            if not native.durable_write(str(resources_root()/'owner-connection.json'),canonical(connection)+b'\n'):
+                raise AXRError('wechat_owner_connection_publish_failed')
         if os.name=='nt':
             from .wechat_mcp import attach_windows_mcp
             attach_windows_mcp(kernel,store.config()['application'])

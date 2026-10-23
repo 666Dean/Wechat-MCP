@@ -324,3 +324,17 @@ integrity alone never establishes trust in the supplied AIK. Certificate trust
 uses a private Windows exclusive-root engine, explicit AIK EKU, validity and
 revocation checks without error suppression. Missing roots/evidence or unknown
 revocation fails closed. See [Windows enrollment limits](../docs/WINDOWS_HELLO_ENROLLMENT.md).
+
+
+Windows MCP clients now enter through a fixed native self-launcher. Each client
+has a new AppContainer SID, AAP access opt-out, no capabilities, a one-process
+kill job and all job UI restrictions. Only stdio handles and an OS-derived
+environment cross into the client. The authority verifies the actual token,
+image and birth before sending handshake material and again on acceptance.
+The low-integrity pipe grants transport access to restricted packages, not an
+authority role. The protected System host grants only process limited-query
+and token-query rights so the owner/LPAC can independently verify server identity.
+Installation must make public immutable runtime files readable to restricted
+packages while excluding account configuration, credentials and authority state.
+Actual fixture tests prove no loopback/other-source reads and identity-checked
+pipe transport; they do not prove a deployed System service or hardware consent.

@@ -17,7 +17,7 @@
 | 范围 | 现有实现或 Mac 参考 | Windows 代码状态 |
 | --- | --- | --- |
 | 固定 WCDB 读取、分页、缓存见证 | `wechat_database.py`、`wechat_chat_state.py` | 已有原生只读消费者与加密合成库回归；原生凭据迁移及部署入口仍见下项 |
-| 独立 MCP 读取、披露、草稿 | `wechat_mcp.py`、`authority_frontend.py` | 已接通真实认证管道与 stdio 的合成闭环 |
+| 独立 MCP 读取、披露、草稿 | `wechat_mcp.py`、`authority_frontend.py` | 已接通真实认证管道与 stdio 的合成闭环；固定原生前端已接零网络 LPAC、实际令牌客户端登记及共享六工具协议，正式安装闭环另验 |
 | 精确发送计划、审批和异步执行 | 新 `wechat_controller.py` | 已接入 MCP 和 owner 审查；审批开关独立于完整签名任务范围，每个原生阶段派生精确单次权限 |
 | 选聊到独立记录观察 | 新 `wechat_reply.py`，参考 Mac `chat_executor.py` | 已接通固定选聊、空草稿保护、缓存切换见证、精确比较、永久尝试及独立观察；合成端到端通过 |
 | Windows 主窗口原生导航 | `adapters/windows/WeChatUIA.cpp` | 已编译 UIA 固定选择器的 binding/navigate/stage/read/send 路径；实际客户端控件可用性仍待代码阶段结束后验证 |
@@ -26,7 +26,7 @@
 | 认证配置与资源固定 | `wechat.py` | 已补 Windows runtime 和固定本机管道解析、资源相对路径包含检查、重复范围和 helper/endpoint 一致性；初始化已复用最新 Mac 硬件登记/空账本/资产固定流程，Windows 使用固定跨会话原生管道及 exe 资产；安装、迁移和恢复仍缺失 |
 | 新入站分页、追赶和去重 | 最新 Mac `wechat_service.py` 的 `scan_targets` / `finish_scan` / `loop` | 已将共享 Mac 调度挂载到 Windows authority，合成验证追赶、分页/批次去重、审批前不推理及额度占位；真实跨会话 UI handler、推理提供方与安装仍见下项 |
 | 有限/不限所有者自动会话 | 最新 Mac `wechat_service.py` 的 `review` / `activate` / `derive_contract` | 共享内存会话、限时/限次及不限模式、按来源有限子任务已接入；Windows 使用 RSA owner 验签、双时钟和精确待办审批，停止/重启清除未完成披露；无实机结论 |
-| Codex 对话选择与忙闲交接 | Mac `codex_bridge.py`、`wechat_service.py` 及 `desktop/owner_agent.py` | 桌面本人任务桥已有 Windows 原生匿名管道接收、协议往返、停止及预算测试；新 owner 控制已接共享对话偏好、生命周期和本人任务方法；固定 owner 映像可按真实 birth 登记，Windows 客户端隔离/登记及公开 CLI 环境接线仍缺失；来源推理不能继承父对话历史 |
+| Codex 对话选择与忙闲交接 | Mac `codex_bridge.py`、`wechat_service.py` 及 `desktop/owner_agent.py` | 桌面本人任务桥已有 Windows 原生匿名管道接收、协议往返、停止及预算测试；新 owner 控制已接共享对话偏好、生命周期和本人任务方法；固定 owner 映像可按真实 birth 登记，Windows 原生客户端隔离/登记已接线，公开 CLI 环境安装仍待接通；来源推理不能继承父对话历史 |
 | 单来源推理与 Windows 隔离 | `IncomingActor`、Mac `codex_source.py` | Windows 原生来源执行器已接 `WeChatService.infer`，每批使用新 AppContainer SID、AAP 访问退出与真实令牌/映像核对；固定 CLI/CA、无父历史/工具/继承环境、原生私有登录副本、单进程/UI 限制、有界双时钟/事件及取消清理已有实际合成程序验证；共享 Guard/审批到草稿的原生链路通过。正式接口拒绝普通 Python。安装后的真实 Codex/LocalSystem 与联网模型仍待验收；JobObject 仅约束进程/UI，OS 数据隔离来自 AppContainer |
 | 全部/指定私聊及新联系人 | Mac `authorization_requests.py`、联系人快照 | 现有登记目录内全部/指定私聊范围已接共享签名会话；**新服务目录刷新、模型申请和所有者签名扩围仍未接通**；申请本身没有权限 |
 | 人设、风格及署名设置 | Mac `assistant_settings.py` | 最终回复支持所有者配置的署名要求；共享偏好保存、运行中禁止修改和会话固定已接新 owner；Windows 桌面范围控制、待办审批及独立审批开关已有合成/Qt 接线，安装向导及完整发行仍缺失 |
@@ -47,12 +47,12 @@
 
 ## 后续代码工作顺序
 
-后续仍以共享 Mac 调度、桌面及初始化为基线，完成原生 MCP 前端、受保护安装/服务/客户端登记、原生凭据导入、联系人申请/扩围及恢复。补齐空闲/前台策略、显式草稿覆盖与完整安装向导。上述代码及软件回归全部完成后，才进入单独的实机阶段。[旧设备证据](WINDOWS_WCDB_ACCEPTANCE.md)不会因这里的代码增加而自动更新。2026-10-24 已接来源原生隔离并通过共享审批到草稿的合成链路；整体代码阶段仍未完成，继续推进。
+后续仍以共享 Mac 调度、桌面及初始化为基线，完成受保护安装/服务、原生凭据导入、联系人申请/扩围及恢复。补齐空闲/前台策略、显式草稿覆盖与完整安装向导。上述代码及软件回归全部完成后，才进入单独的实机阶段。[旧设备证据](WINDOWS_WCDB_ACCEPTANCE.md)不会因这里的代码增加而自动更新。2026-10-24 已接来源原生隔离并通过共享审批到草稿的合成链路；整体代码阶段仍未完成，继续推进。
 
 ## 当前 Windows 原生边界缺口
 
 共享调度已接线，不等于 Windows 的交互进程、模型或安装已可用。`AuthorityNavigation` 已新增固定原生跨会话通道：受保护的 LocalSystem authority 选择唯一活动 owner 会话，暂停启动已安装且哈希固定的 `wechat-uia.exe`，核对真实映像/birth/用户后再恢复；无继承句柄或调用者环境。单次命名管道只允许 System/指定 owner，双方核对 OS 身份，结果接收确认不发放权限。共享调度和八工具事务均传入登记 owner SID；System 缺少 owner 绑定时拒绝回退普通 `Popen`。
 
-本轮仅验证了构建、普通进程拒绝、合成通道接线及 Unknown 不重发。没有取得 System token 或实际启动跨会话 helper。预授权 `readiness` 已改为固定交互通道，核对 helper/微信映像固定及实际 UIA 根，不读取控件值、正文或账号，不创建 TaskContract、登记执行者或认领权限。元数据不是账号/收件人见证；普通 stdin/v2 请求、身份变化、取消、额外正文及无效返回均拒绝。该软件接线不能证明部署后的 UIA 已就绪。Mac 继续使用 Seatbelt，Windows 已有独立 AppContainer 来源执行器；原生 MCP 前端、安装与客户端登记尚未完成，准入仍关闭。
+本轮仅验证了构建、普通进程拒绝、合成通道接线及 Unknown 不重发。没有取得 System token 或实际启动跨会话 helper。预授权 `readiness` 已改为固定交互通道，核对 helper/微信映像固定及实际 UIA 根，不读取控件值、正文或账号，不创建 TaskContract、登记执行者或认领权限。元数据不是账号/收件人见证；普通 stdin/v2 请求、身份变化、取消、额外正文及无效返回均拒绝。该软件接线不能证明部署后的 UIA 已就绪。Mac 继续使用 Seatbelt，Windows 已有独立 AppContainer 来源执行器；原生 MCP 前端和实际令牌登记已接线；安装仍未完成，准入仍关闭。
 
 Windows 回复复用已有 `ReplyExecutor`，保留用户草稿、精确缓存/搜索见证、原生精确比较、永久尝试和独立观察；Mac 的所有者显式覆盖草稿行为尚未移植到此事务。后续还需 Windows 空闲/前台策略的原生系统接口、原生凭据导入、安装/服务/客户端登记和恢复。不能把这些代码缺口描述成只差设备测试。

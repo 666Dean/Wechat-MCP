@@ -28,6 +28,7 @@ class WindowsFormalCredentials(unittest.TestCase):
         self.assertTrue(report['ordinary_store_denied'])
         self.assertTrue(report['ordinary_consumer_denied'])
         self.assertTrue(report['ordinary_source_denied'])
+        self.assertTrue(report['ordinary_frontend_acl_change_denied'])
         self.assertFalse(report['credentials_read'])
         self.assertFalse(report['authority_started'])
 

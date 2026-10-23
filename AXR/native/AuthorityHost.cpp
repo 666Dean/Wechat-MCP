@@ -4,6 +4,7 @@
 #include "axr/ProtectedStore.hpp"
 #include "axr/Security.hpp"
 #include "axr/WindowsInstallation.hpp"
+#include "axr/WindowsFrontend.hpp"
 #include <Python.h>
 #include <iostream>
 #include <atomic>
@@ -127,6 +128,10 @@ int Serve(bool initialize=false,bool ownerControl=false,bool refresh=false){
       "(allow network-outbound (remote unix-socket (literal "+quote(endpoint)+")))";
     char* error=nullptr;
     if(sandbox_init(profile.c_str(),0,&error)){if(error)sandbox_free_error(error);throw std::runtime_error("frontend_os_sandbox_required");}
+#elif defined(_WIN32)
+    // The unsandboxed entry only starts the fixed sandboxed self. Verify the
+    // real token before importing Python or reading the first MCP request.
+    WindowsFrontendIdentity(GetCurrentProcessId());
 #else
     throw std::runtime_error("frontend_os_sandbox_unavailable");
 #endif
@@ -197,7 +202,12 @@ int main(int argc,char** argv){
         if(argc!=2||std::string_view(argv[1])!="--owner-enroll")throw std::runtime_error("owner_fixed_entrypoint_required");
         return Serve(true);
 #elif defined(AXR_FRONTEND_HOST)
+#if defined(_WIN32)
+        if(argc==2&&std::string_view(argv[1])=="--mcp")return RunWindowsFrontend();
+        if(argc!=2||std::string_view(argv[1])!="--sandbox-mcp")throw std::runtime_error("frontend_fixed_entrypoint_required");
+#else
         if(argc!=2||std::string_view(argv[1])!="--mcp")throw std::runtime_error("frontend_fixed_entrypoint_required");
+#endif
         return Serve(true);
 #elif defined(AXR_VALIDATION_HOST)
         if(argc!=2||std::string_view(argv[1])!="--validate-runtime")throw std::runtime_error("validation_fixed_entrypoint_required");

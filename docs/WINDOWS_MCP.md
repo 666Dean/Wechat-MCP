@@ -1,5 +1,7 @@
 # Windows 独立服务 MCP 接口
 
+2026-10-24：固定原生 `axr-frontend.exe --mcp` 已实现独立零网络 LPAC、真实令牌登记和共享 Mac 六工具协议（status/conversations/read/send/job/prepare）。以下八工具为保留的独立 Windows 事务入口。原生前端的实际合成文件/网络隔离、管道身份与固定协议通过；正式安装闭环仍需安装器的不可写公开运行时及只读 ACL，不能称为已部署上线。
+
 当前八工具接入新独立服务；新增精确发送计划及异步状态，读取、披露和人工草稿仍单独保留。Windows 整个项目的实现仍按[代码完成清单](WINDOWS_CODE_COMPLETION.md)推进，软件链路全部完成前不开展新的微信实机测试，不能把这里的合成闭环当作全部自动回复已实现。
 
 本轮接线把 MCP 前端接到独立 authority 的 v2 认证管道，不再调用旧 bearer Broker 或在前端打开所有者数据库、凭据和业务适配器。入口为 `server.py --authority-profile <所有者提供的本机配置>`，配置示例见 [Codex MCP 模板](../codex-authority.example.toml)。此模板不安装服务、不登记进程、不签发权限，也不修改 Codex 全局设置。
