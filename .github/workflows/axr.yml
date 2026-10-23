@@ -96,6 +96,7 @@ jobs:
           python scripts/build_axr.py --toolchain "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" --config Release --wechat-native-credentials
           if ($LASTEXITCODE -ne 0) { throw 'Native WCDB consumer build failed' }
           "WECHAT_TEST_WINDOWS_UIA=$env:GITHUB_WORKSPACE/.local-private/build/Release/wechat-uia.exe" >> $env:GITHUB_ENV
+          "WECHAT_TEST_WINDOWS_SOURCE=$env:GITHUB_WORKSPACE/.local-private/build/Release/wechat-source-probe.exe" >> $env:GITHUB_ENV
           $consumer = @(Get-ChildItem -LiteralPath "$env:GITHUB_WORKSPACE/.local-private/build/Release" -Filter '_wechat_credentials*.pyd')
           if ($consumer.Count -ne 1) { throw 'Expected exactly one Windows native WCDB consumer' }
           "WECHAT_TEST_NATIVE_CONSUMER=$($consumer[0].FullName)" >> $env:GITHUB_ENV

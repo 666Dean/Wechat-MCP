@@ -291,8 +291,29 @@ the readiness mode and pinned WeChat image hash. It verifies that image and a
 UIA root/walker, returning boolean metadata without reading values, changing
 focus, enrolling a handler or preparing/claiming a task. Stdin/v2-only requests
 cannot invoke this path. Metadata is never an account or recipient witness.
-Windows source isolation, native frontend/deployment and migration/recovery
-remain code gaps.
+Windows source inference now uses a fixed native executor with a new AppContainer
+SID for every batch and the all-application-packages opt-out. Before resume it
+checks the real token, exact package SID, internet-client-only capabilities and
+image hash. Independent AccessCheck probes require AAP-only access to fail and
+the exact package grant to succeed; this witnesses the opt-out semantics on the
+tested build, rather than relying on the unavailable user-mode class-46 query.
+A bounded runtime is copied into a private area without altering live ACLs;
+native code alone copies the login into a separate transport home. The source
+workspace has no parent conversation/history, user configuration or model tools.
+Only private source directories receive low-integrity write grants. Fixed stdin,
+stdout and stderr handles are inherited with an explicit handle list; environment
+entries come from fixed OS/profile paths and this source's private directories.
+The non-breakaway single-process job denies children and restricts desktop,
+clipboard and USER handles; it supplements, never replaces, token isolation.
+Dual clocks, cancellation, event/type budgets, source-bound typed results and
+reparse-safe cleanup preserve the one-claim/no-retry boundary. Formal bindings
+require the protected System authority before reading configuration or launching.
+Real synthetic executable tests cover denial, cleanup and the shared approved
+batch-to-draft chain; they are not installed System/Codex/network qualification.
+The AppContainer launch and job UI mechanisms follow Microsoft's
+[launch documentation](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer)
+and [UI restriction API](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_ui_restrictions).
+Native frontend/deployment and migration/recovery remain code gaps.
 Reusing the Mac scheduler does not open the release gate.
 
 The bounded PCP KADS profile accepts TPM2 SHA-256 names and RSA-2048 owner

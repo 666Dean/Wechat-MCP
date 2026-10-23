@@ -27,6 +27,7 @@ class WindowsFormalCredentials(unittest.TestCase):
         self.assertTrue(report['fixture_key_constructor_absent'])
         self.assertTrue(report['ordinary_store_denied'])
         self.assertTrue(report['ordinary_consumer_denied'])
+        self.assertTrue(report['ordinary_source_denied'])
         self.assertFalse(report['credentials_read'])
         self.assertFalse(report['authority_started'])
 

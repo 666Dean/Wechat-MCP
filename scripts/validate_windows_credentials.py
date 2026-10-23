@@ -31,11 +31,11 @@ if Path(native.__file__).parent != root / 'axr':
     raise RuntimeError('selected_native_not_loaded')
 if Path(consumer.__file__).parent != root / 'axr_applications':
     raise RuntimeError('selected_consumer_not_loaded')
-def refused(operation):
+def refused(operation, expected='protected_service_identity_required'):
     try:
         operation()
     except RuntimeError as error:
-        if str(error) == 'protected_service_identity_required':
+        if str(error) == expected:
             return True
         raise
     raise RuntimeError('ordinary_process_accepted_as_authority')
@@ -48,8 +48,11 @@ configuration = {'account_id':'fixture-self', 'resources':[resource],
 instance = consumer.WeChatConsumer('fixture-handler', json.dumps(configuration))
 consumer_denied = refused(lambda: native.CredentialConsumer.use(instance,
     json.dumps(resource), 'database.query', json.dumps({'kind':'messages'}), lambda:None))
+source_denied = refused(lambda: native.windows_source_readiness('{}'), 'windows_source_protected_authority_required')
+source_denied = refused(lambda: native.run_windows_source('{}', '{}', lambda:None), 'windows_source_protected_authority_required') and source_denied
 print(json.dumps({'formal_native':True, 'fixture_key_constructor_absent':True,
     'ordinary_store_denied':store_denied, 'ordinary_consumer_denied':consumer_denied,
+    'ordinary_source_denied':source_denied,
     'credentials_read':False, 'authority_started':False}))
 '''
 
@@ -91,6 +94,7 @@ def validate(build, library):
         report = json.loads(result.stdout)
         expected = {'formal_native':True, 'fixture_key_constructor_absent':True,
             'ordinary_store_denied':True, 'ordinary_consumer_denied':True,
+            'ordinary_source_denied':True,
             'credentials_read':False, 'authority_started':False}
         if report != expected:
             raise ValueError('formal_windows_credential_validation_failed')

@@ -7,6 +7,7 @@
 #include "axr/WindowsOwnerSetup.hpp"
 #include "axr/WindowsInstallation.hpp"
 #include "axr/WindowsNavigation.hpp"
+#include "axr/WindowsSource.hpp"
 #include "axr/ProtectedStore.hpp"
 #include "axr/Credentials.hpp"
 #include <pybind11/functional.h>
@@ -55,6 +56,8 @@ PYBIND11_MODULE(_axr_native,m) {
     m.def("provision_windows_hello_owner",&WindowsHelloOwnerKey::Provision,py::arg("review"),py::arg("expires"),py::call_guard<py::gil_scoped_release>());
     m.def("review_windows_owner",&ReviewWindowsOwner,py::arg("review"),py::arg("expires"),py::call_guard<py::gil_scoped_release>());
     m.def("windows_installation_root",[]{auto path=WindowsInstallationRoot().u8string();return std::string(path.begin(),path.end());});
+    m.def("windows_source_readiness",[](const std::string& configuration){auto value=ParseBounded(configuration);py::gil_scoped_release release;WindowsSourceReadiness(value);});
+    m.def("run_windows_source",[](const std::string& configuration,const std::string& input,const std::function<void()>& check){auto value=ParseBounded(configuration);py::gil_scoped_release release;return RunWindowsSource(value,input,check).dump();});
     py::class_<WindowsNavigation>(m,"WindowsNavigation")
       .def(py::init<std::string,std::string,std::string,const std::function<void()>&>(),py::call_guard<py::gil_scoped_release>())
       .def_property_readonly("identity",[](const WindowsNavigation& process){return process.Identity().dump();})

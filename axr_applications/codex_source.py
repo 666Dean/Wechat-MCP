@@ -8,6 +8,7 @@ well as Codex's own sandbox; unexpected tools or outputs fail the batch closed.
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import subprocess
@@ -35,7 +36,12 @@ class CodexSourceProvider:
     def _verify_image(self):
         if hashlib.sha256(self.binary.read_bytes()).hexdigest()!=self.sha:
             raise AXRError('codex_provider_build_changed')
-        if sys.platform!='darwin' or not Path('/usr/bin/sandbox-exec').is_file():
+        if sys.platform=='win32':
+            from axr import _axr_native as native
+            if not hasattr(native,'windows_source_readiness'):raise AXRError('codex_provider_os_sandbox_unavailable')
+            try:native.windows_source_readiness(canonical(self._windows_configuration()).decode())
+            except RuntimeError as error:raise AXRError(self._windows_error(error)) from None
+        elif sys.platform!='darwin' or not Path('/usr/bin/sandbox-exec').is_file():
             raise AXRError('codex_provider_os_sandbox_unavailable')
         if self.tls_bundle.stat().st_size>2*1024*1024 or hashlib.sha256(self.tls_bundle.read_bytes()).hexdigest()!=self.tls_sha:
             raise AXRError('codex_provider_trust_bundle_changed')
@@ -58,6 +64,13 @@ class CodexSourceProvider:
         for path in [self.binary,self.auth,self.tls_bundle,Path(directory)]:
             for ancestor in path.parents:rules.append('(allow file-read-metadata (literal '+q(ancestor)+'))')
         return ''.join(rules)
+    def _windows_configuration(self):
+        return {'binary':str(self.binary),'sha256':self.sha,'auth_file':str(self.auth),'workspace':str(self.workspace),
+            'tls_bundle':str(self.tls_bundle),'tls_sha256':self.tls_sha,'timeout':int(self.timeout)}
+    @staticmethod
+    def _windows_error(error):
+        code=str(error)
+        return code if re.fullmatch(r'[a-z][a-z0-9_]{0,127}',code) else 'codex_provider_native_failed'
     def complete(self,action,request,proof,check):
         with self.lock:
             if self.used:raise AXRError('codex_source_context_already_consumed')
@@ -74,6 +87,18 @@ class CodexSourceProvider:
             self.observe(action,proof,digest(result));return result
     def _run(self,request,check):
         contract={'outputs':request['allowed_outputs'],'sources':request['source_keys']}
+        if sys.platform=='win32':
+            from axr import _axr_native as native
+            try:result=json.loads(native.run_windows_source(canonical(self._windows_configuration()).decode(),canonical(request).decode(),check))
+            except RuntimeError as error:raise AXRError(self._windows_error(error)) from None
+            sandbox=result.get('sandbox',{})
+            if (sandbox.get('app_container') is not True or sandbox.get('desktop_and_clipboard_restricted') is not True or
+                    sandbox.get('all_application_packages_access') is not False or
+                    sandbox.get('child_processes_allowed') is not False or sandbox.get('network')!='internet-client' or
+                    result.get('identity',{}).get('image_sha256')!=self.sha):raise AXRError('codex_provider_os_sandbox_unavailable')
+            value=validate_output(result['output'],contract)
+            if value['sources']!=request['source_keys']:raise AXRError('codex_provider_source_binding_changed')
+            check();return value
         schema={'type':'object','additionalProperties':False,'properties':{
             'kind':{'type':'string','enum':request['allowed_outputs']},
             'content':{'type':'string'},'sources':{'type':'array','items':{'type':'string','enum':request['source_keys']}}},

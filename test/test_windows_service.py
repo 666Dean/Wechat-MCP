@@ -233,8 +233,9 @@ class WindowsService(unittest.TestCase):
         self.service.config['codex_provider']={'binary':str(root/'synthetic-cli'),'auth_file':str(root/'synthetic-auth'),
             'tls_bundle':str(root/'synthetic-ca'),'workspace':str(root),'sha256':hashlib.sha256((root/'synthetic-cli').read_bytes()).hexdigest(),
             'tls_sha256':hashlib.sha256((root/'synthetic-ca').read_bytes()).hexdigest()}
-        with patch.object(self.kernel,'development_fixture',False):
-            self.assertEqual(self.service.provider_readiness(),{'ready':False,'code':'codex_provider_os_sandbox_unavailable'})
+        with patch.object(self.kernel,'development_fixture',False),patch.object(native,'windows_source_readiness',side_effect=RuntimeError('windows_source_lpac_required')) as readiness:
+            self.assertEqual(self.service.provider_readiness(),{'ready':False,'code':'windows_source_lpac_required'})
+            readiness.assert_called_once()
             with patch.object(implementation,'CodexSourceProvider') as provider:
                 self.assertFalse(self.service.provider_readiness()['ready']);provider.assert_not_called()
     def test_preconsent_readiness_routes_pinned_metadata_to_owner_session(self):
