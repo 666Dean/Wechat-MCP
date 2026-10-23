@@ -277,9 +277,17 @@ the independent approval setting is enabled. Disabling it does not approve old
 pending work. MCP page disclosure is bound to the original client process witness,
 consumed once and erased before delivery; stop/restart never resumes pending pages.
 These are software/fixture checks, not Windows UI/Hello/device qualification.
-LocalSystem-to-interactive UIA execution, Windows source-provider isolation,
-native frontend/deployment and migration/recovery remain code gaps. Reusing the
-Mac scheduler does not make those OS boundaries operational or open the release gate.
+The UIA execution channel now selects the unique active enrolled-owner session
+from the protected LocalSystem host. It starts only an installed `wechat-uia.exe`,
+checks its hash and OS identity while suspended, and inherits no handles or caller
+environment. System/owner-only message pipes verify both peer identities; a bounded
+receipt acknowledgment keeps the helper alive through the last identity check and
+restores no authority. Pending I/O checks cancellation at most every 50 ms. Both
+application controllers use this channel; System without owner binding cannot fall
+back to an ordinary subprocess. Synthetic routing/Unknown and native temporary-pipe
+checks do not prove cross-session launch. Pre-consent readiness, Windows source
+isolation, native frontend/deployment and migration/recovery remain code gaps.
+Reusing the Mac scheduler does not open the release gate.
 
 The bounded PCP KADS profile accepts TPM2 SHA-256 names and RSA-2048 owner
 keys, requiring fixedTPM, fixedParent, sensitiveDataOrigin and signing attributes.

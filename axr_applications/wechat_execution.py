@@ -18,16 +18,36 @@ from axr.aet import AXRError, canonical, digest
 from axr.ipc import process_identity
 from .attempts import claim_attempt
 
+class _WindowsNavigationProcess:
+    """Fixed native cross-session channel; no subprocess handles are inherited."""
+    stdin=stdout=None
+    def __init__(self,owner_user,helper,sha,check):
+        from axr import _axr_native as native
+        self.channel=native.WindowsNavigation(owner_user,str(helper),sha,check)
+        self.actual=json.loads(self.channel.identity);self.pid=self.actual['pid'];self.ready=False;self.closed=False
+    def read_frame(self,check):
+        method=self.channel.result if self.ready else self.channel.ready
+        self.ready=True
+        return json.loads(method(check))
+    def write_frame(self,frame,check):self.channel.submit(frame.decode('utf-8'),check)
+    def poll(self):return 0 if self.closed else None
+    def terminate(self):
+        self.channel.close();self.closed=True
+    kill=terminate
+    def wait(self,timeout=None):return None
+
 class AuthorityNavigation:
     def __init__(self, helper, helper_sha256, endpoint, attempt_directory,
-                 *, enroll_handler, prepare, receipt, release_handler=lambda actual:None):
+                 *, enroll_handler, prepare, receipt, release_handler=lambda actual:None,owner_user=None):
         self.helper=Path(helper).resolve(strict=True);self.sha=helper_sha256
         self.endpoint=str(endpoint);self.attempts=Path(attempt_directory)
         self.enroll=enroll_handler;self.prepare=prepare;self.receipt=receipt
         self.release=release_handler
+        self.owner_user=owner_user
         self.attempts.mkdir(mode=0o700,parents=True,exist_ok=True)
     @staticmethod
     def _frame(process, timeout, check=lambda:None):
+        if isinstance(process,_WindowsNavigationProcess):return process.read_frame(check)
         if os.name=='nt':return AuthorityNavigation._windows_frame(process,timeout,check)
         deadline=time.monotonic()+timeout;raw=bytearray()
         with selectors.DefaultSelector() as selector:
@@ -81,6 +101,7 @@ class AuthorityNavigation:
         return value
     @staticmethod
     def _write_frame(process, frame, check, timeout=5):
+        if isinstance(process,_WindowsNavigationProcess):return process.write_frame(frame,check)
         completed=queue.Queue(maxsize=1)
         def write():
             try:
@@ -107,8 +128,13 @@ class AuthorityNavigation:
         if hashlib.sha256(self.helper.read_bytes()).hexdigest()!=self.sha:raise AXRError('wechat_native_bridge_build_changed')
         marker=self.attempts/('send-'+digest([action.resource.key,action.execution_id])+'.json')
         if mode=='send' and (marker.exists() or marker.is_symlink()):raise AXRError('previous_attempt_never_retry')
-        process=subprocess.Popen([str(self.helper),'--authority-v2'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,bufsize=0,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+        if os.name=='nt' and self.owner_user is not None:
+            process=_WindowsNavigationProcess(self.owner_user,self.helper,self.sha,check)
+        else:
+            if os.name=='nt' and process_identity(os.getpid())['user']=='S-1-5-18':
+                raise AXRError('wechat_interactive_owner_user_required')
+            process=subprocess.Popen([str(self.helper),'--authority-v2'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,bufsize=0,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
         proof=None;submitted=False;actual=None
         try:
             if self._frame(process,5,check)!={'version':2,'ready':True,'input_received':False}:raise AXRError('wechat_native_bridge_ready_required')

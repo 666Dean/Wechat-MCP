@@ -24,7 +24,7 @@ class AuthorityBridgeTests(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.helper=Path(self.tmp.name)/'helper';self.helper.write_bytes(b'synthetic helper image, never executed')
         self.sha=hashlib.sha256(self.helper.read_bytes()).hexdigest();self.proc=Process(self.helper)
-        self.identity={'pid':79,'birth':'fixture-birth','image':str(self.helper),'image_sha256':self.sha}
+        self.identity={'pid':79,'birth':'fixture-birth','image':str(self.helper),'image_sha256':self.sha,'user':'synthetic-user'}
         self.action=Action('fixture-controller',Resource('wechat','fixture-owner','fixture-peer'),'messages.send','fixture',{'mode':'send','text':'fixture only','visual_binding':{'fixture':True}})
         self.events=[]
         def enroll(actual):self.events.append('enroll');self.assertEqual(actual,self.identity)

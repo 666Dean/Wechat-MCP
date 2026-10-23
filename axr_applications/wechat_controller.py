@@ -8,6 +8,7 @@ the helper, selectors, parking conversation and labels; a model selects none.
 from dataclasses import asdict, replace
 from pathlib import Path
 import json
+import os
 import re
 import threading
 import time
@@ -234,7 +235,8 @@ class AuthorityReplyController:
             config = self.configuration
             bridge = self.bridge_factory(config['helper'],config['helper_sha256'],config['endpoint'],
                 kernel.store.directory/'native-attempts',enroll_handler=enroll,prepare=prepare,
-                receipt=receipt,release_handler=release)
+                receipt=receipt,release_handler=release,
+                **({'owner_user':kernel.wechat_registry.user} if os.name=='nt' and self.bridge_factory is AuthorityNavigation else {}))
             def native(action,active):return bridge.invoke(action,check=active)
             def binding(cid,active):
                 visual = config['profiles'][cid]['visual_binding']

@@ -21,7 +21,7 @@
 | 精确发送计划、审批和异步执行 | 新 `wechat_controller.py` | 已接入 MCP 和 owner 审查；审批开关独立于完整签名任务范围，每个原生阶段派生精确单次权限 |
 | 选聊到独立记录观察 | 新 `wechat_reply.py`，参考 Mac `chat_executor.py` | 已接通固定选聊、空草稿保护、缓存切换见证、精确比较、永久尝试及独立观察；合成端到端通过 |
 | Windows 主窗口原生导航 | `adapters/windows/WeChatUIA.cpp` | 已编译 UIA 固定选择器的 binding/navigate/stage/read/send 路径；实际客户端控件可用性仍待代码阶段结束后验证 |
-| helper 回连与停止 | `authority_server.py`、`wechat_execution.py` | 已支持并发认证连接、有界管道读写、取消和精确进程登记清理；不在持有 authority 锁时等待 UI |
+| helper 回连与停止 | `authority_server.py`、`wechat_execution.py` | 已支持并发认证连接、有界读写、取消和精确进程登记清理；新增受保护 LocalSystem 到唯一活动 owner 会话的固定 UIA helper 启动与双向身份命名管道，代码已接共享调度和八工具事务；真实跨会话及预授权就绪检查仍待验收/适配 |
 | 发送、观察及重复调用 | `attempts.py`、独立 authority ledger | 已接通；输入回执保留 Unknown，数据库观察不改变原回执，不确定不重发 |
 | 认证配置与资源固定 | `wechat.py` | 已补 Windows runtime 和固定本机管道解析、资源相对路径包含检查、重复范围和 helper/endpoint 一致性；初始化已复用最新 Mac 硬件登记/空账本/资产固定流程，Windows 使用固定跨会话原生管道及 exe 资产；安装、迁移和恢复仍缺失 |
 | 新入站分页、追赶和去重 | 最新 Mac `wechat_service.py` 的 `scan_targets` / `finish_scan` / `loop` | 已将共享 Mac 调度挂载到 Windows authority，合成验证追赶、分页/批次去重、审批前不推理及额度占位；真实跨会话 UI handler、推理提供方与安装仍见下项 |
@@ -47,10 +47,12 @@
 
 ## 后续代码工作顺序
 
-继续以共享 Mac 调度、桌面及初始化为基线，优先补齐 LocalSystem 到交互 UIA helper 的原生执行器和单来源 Windows 推理隔离；随后完成受保护安装/服务/客户端登记、原生凭据导入、联系人申请/扩围及恢复。补齐原生 MCP 前端、空闲/前台策略、显式草稿覆盖与完整安装向导。上述代码及软件回归全部完成后，才进入单独的实机阶段。[旧设备证据](WINDOWS_WCDB_ACCEPTANCE.md)不会因这里的代码增加而自动更新。
+后续仍以共享 Mac 调度、桌面及初始化为基线，完成 Windows 单来源推理隔离、UIA 预授权就绪检查、受保护安装/服务/客户端登记、原生凭据导入、联系人申请/扩围及恢复。补齐原生 MCP 前端、空闲/前台策略、显式草稿覆盖与完整安装向导。上述代码及软件回归全部完成后，才进入单独的实机阶段。[旧设备证据](WINDOWS_WCDB_ACCEPTANCE.md)不会因这里的代码增加而自动更新。当前按所有者要求仅收尾验证、文档与 GitHub 同步，不在此期间启动新功能迭代。
 
 ## 当前 Windows 原生边界缺口
 
-共享调度已接线，不等于 Windows 的交互进程、模型或安装已可用。authority 运行于 LocalSystem；现有 `AuthorityNavigation` 的普通 `Popen` 不会自动进入所有者桌面。初始化用的固定 owner 跨会话交换也不等于 UIA helper 的跨会话执行器，后者仍需单独实现及离线验证。来源提供方仍依赖 Mac Seatbelt，Windows AppContainer 提供方与原生 MCP 前端尚未适配；准入仍关闭，不能在这些边界完成前直接启用真实调度。
+共享调度已接线，不等于 Windows 的交互进程、模型或安装已可用。`AuthorityNavigation` 已新增固定原生跨会话通道：受保护的 LocalSystem authority 选择唯一活动 owner 会话，暂停启动已安装且哈希固定的 `wechat-uia.exe`，核对真实映像/birth/用户后再恢复；无继承句柄或调用者环境。单次命名管道只允许 System/指定 owner，双方核对 OS 身份，结果接收确认不发放权限。共享调度和八工具事务均传入登记 owner SID；System 缺少 owner 绑定时拒绝回退普通 `Popen`。
+
+本轮仅验证了构建、普通进程拒绝、合成通道接线、实际临时管道取消及 Unknown 不重发。没有取得 System token 或实际启动跨会话 helper。预授权 `readiness` 仍是旧同会话检查，需要独立适配；不能据此宣布部署后的 UIA 已就绪。来源提供方仍依赖 Mac Seatbelt，Windows AppContainer 提供方与原生 MCP 前端尚未适配；准入仍关闭，不能在这些边界完成前直接启用真实调度。
 
 Windows 回复复用已有 `ReplyExecutor`，保留用户草稿、精确缓存/搜索见证、原生精确比较、永久尝试和独立观察；Mac 的所有者显式覆盖草稿行为尚未移植到此事务。后续还需 Windows 空闲/前台策略的原生系统接口、原生凭据导入、安装/服务/客户端登记和恢复。不能把这些代码缺口描述成只差设备测试。

@@ -15,6 +15,7 @@
 #include <userenv.h>
 #include <shlobj.h>
 #include "WindowsSetupTransport.hpp"
+#include "WindowsInteractiveHost.hpp"
 #endif
 namespace Stellaria::AXR {
 namespace {
@@ -29,15 +30,11 @@ void ValidateChallenge(const Json& value){
         throw std::runtime_error("windows_owner_setup_challenge_invalid");
 }
 #if defined(_WIN32)
-struct Handle {
-    HANDLE value=nullptr;
-    Handle()=default;explicit Handle(HANDLE handle):value(handle){}
-    Handle(const Handle&)=delete;Handle& operator=(const Handle&)=delete;
-    Handle(Handle&& other)noexcept:value(other.value){other.value=nullptr;}
-    Handle& operator=(Handle&& other)noexcept{if(this!=&other){Reset();value=other.value;other.value=nullptr;}return *this;}
-    ~Handle(){Reset();}
-    void Reset(){if(value&&value!=INVALID_HANDLE_VALUE)CloseHandle(value);value=nullptr;}
-};
+using WindowsInteractiveHost::Handle;
+using WindowsInteractiveHost::Sid;
+using WindowsInteractiveHost::Child;
+using WindowsInteractiveHost::Launch;
+using WindowsInteractiveHost::Pipe;
 [[noreturn]] void Denied(){throw std::runtime_error("windows_owner_setup_denied");}
 std::filesystem::path InstalledRoot(){PWSTR path=nullptr;
     if(FAILED(SHGetKnownFolderPath(FOLDERID_ProgramFiles,KF_FLAG_DEFAULT,nullptr,&path)))Denied();
@@ -60,78 +57,6 @@ std::string Read(const std::filesystem::path& path,size_t maximum){
     stream.read(raw.data(),std::streamsize(raw.size()));auto count=stream.gcount();
     if(count>std::streamsize(maximum)||stream.bad())Denied();raw.resize(size_t(count));return raw;
 }
-struct Sid {
-    PSID value=nullptr;
-    explicit Sid(const std::string& text){auto wide=Utf8Path(text).wstring();
-        if(!ConvertStringSidToSidW(wide.c_str(),&value)||!IsValidSid(value))Denied();}
-    ~Sid(){if(value)LocalFree(value);}
-};
-struct Privilege {
-    Handle token;TOKEN_PRIVILEGES previous{};bool changed=false;
-    explicit Privilege(const wchar_t* name){
-        if(!OpenProcessToken(GetCurrentProcess(),TOKEN_ADJUST_PRIVILEGES|TOKEN_QUERY,&token.value))Denied();
-        TOKEN_PRIVILEGES next{};next.PrivilegeCount=1;next.Privileges[0].Attributes=SE_PRIVILEGE_ENABLED;
-        if(!LookupPrivilegeValueW(nullptr,name,&next.Privileges[0].Luid))Denied();DWORD size=sizeof(previous);SetLastError(ERROR_SUCCESS);
-        if(!AdjustTokenPrivileges(token.value,FALSE,&next,sizeof(previous),&previous,&size)||GetLastError()!=ERROR_SUCCESS)Denied();changed=true;
-    }
-    ~Privilege(){if(changed)AdjustTokenPrivileges(token.value,FALSE,&previous,0,nullptr,nullptr);}
-};
-Handle UserToken(const Sid& expected){
-    PWTS_SESSION_INFOW sessions=nullptr;DWORD count=0;
-    if(!WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE,0,1,&sessions,&count))Denied();
-    struct Free {PWTS_SESSION_INFOW value;~Free(){WTSFreeMemory(value);}} free{sessions};Handle selected;
-    for(DWORD i=0;i<count;++i){if(sessions[i].State!=WTSActive||!sessions[i].SessionId)continue;
-        Handle token;if(!WTSQueryUserToken(sessions[i].SessionId,&token.value))continue;
-        DWORD size=0;GetTokenInformation(token.value,TokenUser,nullptr,0,&size);if(!size||size>4096)Denied();
-        std::vector<unsigned char> data(size);if(!GetTokenInformation(token.value,TokenUser,data.data(),size,&size))Denied();
-        if(EqualSid(reinterpret_cast<TOKEN_USER*>(data.data())->User.Sid,expected.value)){
-            if(selected.value)throw std::runtime_error("windows_owner_setup_multiple_active_sessions");selected=std::move(token);}
-    }
-    if(!selected.value)throw std::runtime_error("windows_owner_setup_owner_not_active");return selected;
-}
-std::vector<wchar_t> Environment(HANDLE token,const std::filesystem::path& root){
-    std::wstring windows(32768,L'\0'),system(32768,L'\0'),profile(32768,L'\0');DWORD size=DWORD(profile.size());
-    auto wn=GetWindowsDirectoryW(windows.data(),DWORD(windows.size())),sn=GetSystemDirectoryW(system.data(),DWORD(system.size()));
-    if(!wn||wn>=windows.size()||!sn||sn>=system.size()||!GetUserProfileDirectoryW(token,profile.data(),&size)||!size||size>profile.size())Denied();
-    windows.resize(wn);system.resize(sn);profile.resize(size-1);
-    std::vector<std::wstring> entries={L"APPDATA="+profile+L"\\AppData\\Roaming",L"LOCALAPPDATA="+profile+L"\\AppData\\Local",
-        L"PATH="+system+L";"+root.wstring(),L"SystemRoot="+windows,L"TEMP="+profile+L"\\AppData\\Local\\Temp",
-        L"TMP="+profile+L"\\AppData\\Local\\Temp",L"USERPROFILE="+profile,L"WINDIR="+windows};
-    std::sort(entries.begin(),entries.end());std::vector<wchar_t> block;
-    for(const auto& entry:entries){block.insert(block.end(),entry.begin(),entry.end());block.push_back(0);}block.push_back(0);return block;
-}
-struct Child {
-    Handle process,thread,job;DWORD pid=0;Json identity;
-    ~Child(){if(process.value){if(WaitForSingleObject(process.value,0)!=WAIT_OBJECT_0)TerminateProcess(process.value,1);
-        job.Reset();WaitForSingleObject(process.value,5000);}}
-};
-void Launch(Child& child,const Sid& owner,const std::filesystem::path& root,const Deadline& deadline){
-    Privilege tcb(L"SeTcbPrivilege"),assign(L"SeAssignPrimaryTokenPrivilege"),quota(L"SeIncreaseQuotaPrivilege");
-    auto token=UserToken(owner);auto environment=Environment(token.value,root);
-    child.job=Handle(CreateJobObjectW(nullptr,nullptr));if(!child.job.value)Denied();
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};limits.BasicLimitInformation.LimitFlags=JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-    if(!SetInformationJobObject(child.job.value,JobObjectExtendedLimitInformation,&limits,sizeof(limits)))Denied();
-    auto executable=root/L"axr-owner.exe";auto command=L"\""+executable.wstring()+L"\" --owner-enroll";
-    std::wstring desktop=L"winsta0\\default";STARTUPINFOW startup{};startup.cb=sizeof(startup);startup.lpDesktop=desktop.data();PROCESS_INFORMATION info{};
-    deadline.Remaining();
-    if(!CreateProcessAsUserW(token.value,executable.c_str(),command.data(),nullptr,nullptr,FALSE,
-            CREATE_SUSPENDED|CREATE_NO_WINDOW|CREATE_UNICODE_ENVIRONMENT,environment.data(),root.c_str(),&startup,&info))Denied();
-    child.process=Handle(info.hProcess);child.thread=Handle(info.hThread);child.pid=info.dwProcessId;
-    if(!AssignProcessToJobObject(child.job.value,child.process.value))Denied();
-    child.identity=ProcessIdentity(child.pid);if(Utf8Path(child.identity.at("image").get<std::string>())!=executable)Denied();
-    DWORD size=0;GetTokenInformation(token.value,TokenUser,nullptr,0,&size);std::vector<unsigned char> user(size);
-    if(!GetTokenInformation(token.value,TokenUser,user.data(),size,&size)||!EqualSid(reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid,owner.value))Denied();
-    if(ResumeThread(child.thread.value)==DWORD(-1))Denied();child.thread.Reset();
-}
-Handle Pipe(const std::wstring& endpoint,const std::string& ownerSid){
-    auto text=L"D:P(A;;GRGW;;;SY)(A;;GRGW;;;"+Utf8Path(ownerSid).wstring()+L")";PSECURITY_DESCRIPTOR descriptor=nullptr;
-    if(!ConvertStringSecurityDescriptorToSecurityDescriptorW(text.c_str(),SDDL_REVISION_1,&descriptor,nullptr))Denied();
-    struct Free {PSECURITY_DESCRIPTOR value;~Free(){LocalFree(value);}} free{descriptor};
-    SECURITY_ATTRIBUTES attributes{sizeof(attributes),descriptor,FALSE};
-    Handle pipe(CreateNamedPipeW(endpoint.c_str(),PIPE_ACCESS_DUPLEX|FILE_FLAG_OVERLAPPED|FILE_FLAG_FIRST_PIPE_INSTANCE,
-        PIPE_TYPE_MESSAGE|PIPE_READMODE_MESSAGE|PIPE_WAIT|PIPE_REJECT_REMOTE_CLIENTS,1,300001,300001,5000,&attributes));
-    if(pipe.value==INVALID_HANDLE_VALUE)Denied();return pipe;
-}
 struct Descriptor {
     Handle lock;std::filesystem::path path;std::string raw;
     explicit Descriptor(const std::filesystem::path& root):path(root/L"runtime"/L"owner-bootstrap.json"){
@@ -153,7 +78,7 @@ Json ExchangeWindowsOwnerSetup(std::string ownerSid,const Json& challenge){
     auto pipe=Pipe(Utf8Path(endpoint).wstring(),ownerSid);
     descriptor.Write({{"version",2},{"kind","windows-owner-setup"},{"endpoint",endpoint},{"nonce",nonce},
         {"expires",challenge.at("expires")},{"server",server},{"owner_user",ownerSid},{"configuration_digest",challenge.at("configuration_digest")}});
-    Child child;Launch(child,sid,root,deadline);if(child.identity.at("user")!=ownerSid)Denied();
+    Child child;Launch(child,sid,root,root/L"axr-owner.exe",L"--owner-enroll",deadline);if(child.identity.at("user")!=ownerSid)Denied();
     Connect(pipe.value,deadline);Stable(pipe.value,false,child.identity);
     if(Receive(pipe.value,32768,deadline,false,child.identity)!=Json{{"version",2},{"kind","owner-setup.open"},{"nonce",nonce}})Denied();
     Send(pipe.value,{{"version",2},{"kind","owner-setup.challenge"},{"nonce",nonce},{"challenge",challenge}},deadline,false,child.identity);

@@ -12,6 +12,7 @@
 #include <map>
 #include "axr/Core.hpp"
 #include "axr/Commit.h"
+#include "axr/WindowsNavigation.hpp"
 using Microsoft::WRL::ComPtr;
 using Stellaria::AXR::Json;
 static std::string Utf8(const std::wstring& s){if(s.empty())return {};int n=WideCharToMultiByte(CP_UTF8,0,s.data(),int(s.size()),nullptr,0,nullptr,nullptr);std::string v(n,'\0');WideCharToMultiByte(CP_UTF8,0,s.data(),int(s.size()),v.data(),n,nullptr,nullptr);return v;}
@@ -205,13 +206,21 @@ static Json V2(const Json& request){
     if(mode!="navigate")req["expected_identity"]=request.at("identity");
     return Main(req,&request);
 }
-int main(int argc,char** argv){HRESULT initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);Json result,request;bool v2=argc==2&&std::string(argv[1])=="--authority-v2";
-    if(v2)std::cout<<Json{{"version",2},{"ready",true},{"input_received",false}}.dump()<<std::endl;
-    try{if(argc!=1&&!v2)throw std::runtime_error("fixed_entrypoint_required");if(FAILED(initialized))throw std::runtime_error("sta_initialization_failed");std::string line;char ch;while(std::cin.get(ch)&&ch!='\n'){if(line.size()>=1024*1024)throw std::runtime_error("request_too_large");line.push_back(ch);}request=Json::parse(line);result=v2?V2(request):Main(request);}
+int main(int argc,char** argv){HRESULT initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);Json result,request;
+    bool pipeMode=argc==3&&std::string(argv[1])=="--authority-pipe",v2=pipeMode||(argc==2&&std::string(argv[1])=="--authority-v2");
+    std::unique_ptr<Stellaria::AXR::WindowsNavigationPeer> peer;
+    if(v2&&!pipeMode)std::cout<<Json{{"version",2},{"ready",true},{"input_received",false}}.dump()<<std::endl;
+    try{if(argc!=1&&!v2)throw std::runtime_error("fixed_entrypoint_required");
+        if(pipeMode)peer=std::make_unique<Stellaria::AXR::WindowsNavigationPeer>(argv[2]);
+        if(FAILED(initialized))throw std::runtime_error("sta_initialization_failed");
+        if(peer)request=peer->Request();else{std::string line;char ch;while(std::cin.get(ch)&&ch!='\n'){if(line.size()>=1024*1024)throw std::runtime_error("request_too_large");line.push_back(ch);}request=Json::parse(line);}
+        result=v2?V2(request):Main(request);}
     catch(const nlohmann::json::exception&){result={{"error","invalid_request"}};}
     catch(const std::exception& e){result={{"error",e.what()}};}
     if(v2){result["send_invoked"]=sendInvoked;result["content_disclosed"]=false;
         if(authorityClaimed){auto& context=request.at("guard_context");auto endpoint=context.at("authority_endpoint").get<std::string>(),proof=context.at("proof").get<std::string>(),evidence=Stellaria::AXR::Digest(result.dump());
             bool verified=!sendInvoked&&!result.contains("error")&&(result.value("draft_match",false)||result.value("main_window_verified",false));
             result["authority_receipt_recorded"]=axr_authority_observe(endpoint.c_str(),proof.c_str(),verified?1:0,evidence.c_str())==1;}}
-    std::cout<<result.dump()<<std::endl;if(SUCCEEDED(initialized))CoUninitialize();return 0;}
+    if(peer){try{peer->Respond(result);}catch(...){if(SUCCEEDED(initialized))CoUninitialize();return 2;}}
+    else std::cout<<result.dump()<<std::endl;
+    if(SUCCEEDED(initialized))CoUninitialize();return 0;}

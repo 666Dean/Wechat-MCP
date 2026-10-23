@@ -6,6 +6,7 @@
 #include "axr/WindowsAttestation.hpp"
 #include "axr/WindowsOwnerSetup.hpp"
 #include "axr/WindowsInstallation.hpp"
+#include "axr/WindowsNavigation.hpp"
 #include "axr/ProtectedStore.hpp"
 #include "axr/Credentials.hpp"
 #include <pybind11/functional.h>
@@ -54,6 +55,13 @@ PYBIND11_MODULE(_axr_native,m) {
     m.def("provision_windows_hello_owner",&WindowsHelloOwnerKey::Provision,py::arg("review"),py::arg("expires"),py::call_guard<py::gil_scoped_release>());
     m.def("review_windows_owner",&ReviewWindowsOwner,py::arg("review"),py::arg("expires"),py::call_guard<py::gil_scoped_release>());
     m.def("windows_installation_root",[]{auto path=WindowsInstallationRoot().u8string();return std::string(path.begin(),path.end());});
+    py::class_<WindowsNavigation>(m,"WindowsNavigation")
+      .def(py::init<std::string,std::string,std::string,const std::function<void()>&>(),py::call_guard<py::gil_scoped_release>())
+      .def_property_readonly("identity",[](const WindowsNavigation& process){return process.Identity().dump();})
+      .def("ready",[](WindowsNavigation& process,const std::function<void()>& check){py::gil_scoped_release release;return process.Ready(check).dump();})
+      .def("submit",[](WindowsNavigation& process,const std::string& request,const std::function<void()>& check){auto value=ParseBounded(request);py::gil_scoped_release release;process.Submit(value,check);})
+      .def("result",[](WindowsNavigation& process,const std::function<void()>& check){py::gil_scoped_release release;return process.Result(check).dump();})
+      .def("close",&WindowsNavigation::Close,py::call_guard<py::gil_scoped_release>());
     m.def("exchange_windows_owner_setup",[](const std::string& sid,const std::string& challenge){
         auto value=ParseBounded(challenge);py::gil_scoped_release release;return ExchangeWindowsOwnerSetup(sid,value).dump();});
     py::class_<WindowsOwnerSetupClient>(m,"WindowsOwnerSetupClient")

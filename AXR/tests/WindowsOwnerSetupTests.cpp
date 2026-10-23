@@ -35,6 +35,10 @@ int main(){
      assert(denied);}
     {Pair pair;pair.Open();Deadline budget(Now()+2);Connect(pair.server,budget);auto wrong=actual;wrong["birth"]="different";bool denied=false;
      try{Receive(pair.server,1024,budget,false,wrong);}catch(...){denied=true;}assert(denied);}
+    {Pair pair;pair.Open();Deadline budget(Now()+2);Connect(pair.server,budget);bool denied=false;auto start=GetTickCount64();
+     auto check=[&]{if(GetTickCount64()-start>100)throw std::runtime_error("synthetic_scope_stopped");};
+     try{Receive(pair.server,1024,Deadline(Now()+5,check),false,actual);}catch(const std::exception& error){denied=std::string(error.what())=="synthetic_scope_stopped";}
+     assert(denied&&GetTickCount64()-start<1000);}
     {Pair pair;pair.Open();Deadline budget(Now()+2);Connect(pair.server,budget);std::string raw(256,'x');
      assert(Transfer(pair.client,raw.data(),DWORD(raw.size()),true,budget)==raw.size());bool denied=false;
      try{Receive(pair.server,100,budget,false,actual);}catch(...){denied=true;}assert(denied);}

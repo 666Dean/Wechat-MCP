@@ -86,7 +86,7 @@ class WeChatService:
         helper=Path(application['navigation_helper'])
         self.navigation=AuthorityNavigation(helper,hashlib.sha256(helper.read_bytes()).hexdigest(),endpoint,
             kernel.store.directory/'attempts',enroll_handler=self.enroll_handler,prepare=self.prepare_native,
-            receipt=self.receipt)
+            receipt=self.receipt,owner_user=registry.user if os.name=='nt' else None)
         self.cursors={};self.baseline=0;self.reply_count=0;self.poll_position=0
         self.activity_after=[0,''];self.activity_seen={};self.activity_pending={}
         self.activity_stamp=None;self.activity_checked=0;self.poll_delay=2
