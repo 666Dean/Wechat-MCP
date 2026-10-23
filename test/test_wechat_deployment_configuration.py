@@ -45,6 +45,13 @@ class DeploymentConfiguration(unittest.TestCase):
         for changes in ({'endpoint':'untrusted'},{'helper':'untrusted'}):
             with self.subTest(changes=changes),self.assertRaisesRegex(AXRError,'navigation_mismatch'):
                 wechat._configuration({**value,'application':{**value['application'],'reply_navigation':{**navigation,**changes}}})
+    def test_provider_binary_and_ca_share_the_same_resource_containment_rules(self):
+        value={**self.config,'application':{**self.config['application'],'codex_provider':{
+            'binary':'@resources/helper','tls_bundle':'@resources/helper'}}}
+        result=wechat._configuration(value)['application']['codex_provider']
+        self.assertEqual(result,{'binary':str(self.resources/'helper'),'tls_bundle':str(self.resources/'helper')})
+        value['application']['codex_provider']['tls_bundle']='@resources/../outside'
+        with self.assertRaisesRegex(AXRError,'asset_invalid'):wechat._configuration(value)
     @unittest.skipUnless(os.name=='nt','Windows named pipe configuration')
     def test_network_pipe_arbitrary_name_and_path_endpoint_are_rejected(self):
         for endpoint in (r'\\remote\pipe\Stellaria.AXR.fixture',r'\\.\pipe\other',str(self.root/'socket')):

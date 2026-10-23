@@ -51,10 +51,13 @@ consumer_denied = refused(lambda: native.CredentialConsumer.use(instance,
 source_denied = refused(lambda: native.windows_source_readiness('{}'), 'windows_source_protected_authority_required')
 source_denied = refused(lambda: native.run_windows_source('{}', '{}', lambda:None), 'windows_source_protected_authority_required') and source_denied
 frontend_acl_denied = refused(lambda: native.expose_windows_authority_identity('S-1-5-21-1-2-3-4'), 'windows_frontend_authority_required')
+import_denied = refused(lambda: consumer.import_owner_credentials(json.dumps(configuration), '{}'))
+import_denied = refused(lambda: consumer.import_legacy_owner_credentials(json.dumps(configuration), 'Stellaria.AXR.FixtureNeverUsed', 'S-1-5-21-1-2-3-4')) and import_denied
 print(json.dumps({'formal_native':True, 'fixture_key_constructor_absent':True,
     'ordinary_store_denied':store_denied, 'ordinary_consumer_denied':consumer_denied,
     'ordinary_source_denied':source_denied,
     'ordinary_frontend_acl_change_denied':frontend_acl_denied,
+    'ordinary_credential_import_denied':import_denied,
     'credentials_read':False, 'authority_started':False}))
 '''
 
@@ -98,6 +101,7 @@ def validate(build, library):
             'ordinary_store_denied':True, 'ordinary_consumer_denied':True,
             'ordinary_source_denied':True,
             'ordinary_frontend_acl_change_denied':True,
+            'ordinary_credential_import_denied':True,
             'credentials_read':False, 'authority_started':False}
         if report != expected:
             raise ValueError('formal_windows_credential_validation_failed')
@@ -113,12 +117,12 @@ def build_formal(build, toolchain):
     # Construct Unicode arguments in Python; piping paths through legacy shell
     # encodings can corrupt a Chinese Python or pybind11 installation path.
     subprocess.run(['cmake', '-S', str(project), '-B', str(build),
-        '-DAXR_SECURITY_RELEASE=ON', '-DAXR_PYTHON=ON',
+        '-DAXR_SECURITY_RELEASE=ON', '-DAXR_PYTHON=ON', '-DAXR_AUTHORITY_HOST=ON',
         '-DWECHAT_NATIVE_CREDENTIALS=ON', '-DBUILD_TESTING=OFF',
         '-DPython_EXECUTABLE='+sys.executable, '-Dpybind11_DIR='+pybind11.get_cmake_dir(),
         '-DCMAKE_TOOLCHAIN_FILE='+str(toolchain)], check=True)
     subprocess.run(['cmake', '--build', str(build), '--config', 'Release',
-        '--target', '_axr_native', '_wechat_credentials', '--parallel', '4'], check=True)
+        '--target', '_axr_native', '_wechat_credentials', 'axr-authority', 'axr-owner', 'axr-frontend', 'axr-runtime-check', 'wechat-uia', '--parallel', '4'], check=True)
 
 
 def main():

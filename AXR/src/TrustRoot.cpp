@@ -110,6 +110,7 @@ HardwareSigningKey::HardwareSigningKey(std::string name,bool create,bool userPre
 #elif defined(AXR_SECURITY_RELEASE) && defined(_WIN32)
     if(!userPresence&&ProcessIdentity(GetCurrentProcessId()).at("user")!="S-1-5-18")
         throw std::runtime_error("trust_root_process_identity_required");
+    RequireProtectedHost(ProcessIdentity(GetCurrentProcessId()),userPresence);
 #endif
 #if defined(__APPLE__)
     // Separate names prevent silently reopening a background key as an owner

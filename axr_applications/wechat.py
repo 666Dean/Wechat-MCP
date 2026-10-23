@@ -67,7 +67,8 @@ def _configuration(value):
         if field in application:application[field]=asset(application[field])
     if 'codex_provider' in application:
         provider=dict(application['codex_provider'])
-        if 'binary' in provider:provider['binary']=asset(provider['binary'])
+        for field in ('binary','tls_bundle'):
+            if field in provider:provider[field]=asset(provider[field])
         application['codex_provider']=provider
     state=Path(value['state'])
     if not state.is_absolute() or str(state)==str(Path.home()) or state.is_symlink():raise AXRError('wechat_deployment_state_invalid')
@@ -160,7 +161,7 @@ def refresh_owner_build(value,bootstrap):
     Runs only in the root-owned fixed native host with its existing bootstrap.
     The journal lease excludes a live server. No action contract is issued.
     """
-    if os.name=='nt':raise AXRError('wechat_build_update_platform_unavailable')
+    if os.name=='nt':return _refresh_windows_owner_build(value,bootstrap)
     config=_configuration(value)
     if (config['state']!=bootstrap.get('state') or config['endpoint']!=bootstrap.get('endpoint') or
         Path(config['endpoint']).exists() or Path(config['endpoint']).is_symlink()):
@@ -212,6 +213,7 @@ def _build_assets(application):
         except ValueError:raise AXRError('wechat_deployment_native_helper_required') from None
         return [{'path':'axr-authority.exe','roles':['server','handler']},
             {'path':'axr-owner.exe','roles':['owner']},{'path':'axr-frontend.exe','roles':['client']},
+            {'path':'installation-review.json','roles':['handler']},
             {'path':relative.as_posix(),'roles':['handler']}]
     return [{'path':'AXR Authority.app/Contents/MacOS/axr-authority','roles':['server','handler']},
             {'path':'AXR Owner.app/Contents/MacOS/axr-owner','roles':['owner']},
@@ -267,6 +269,7 @@ def initialize_owner(value, signer, enrollment=None):
         finish_initialization(store,signer)
     if os.name=='nt':
         from .windows_enrollment import persist_pin
+        _windows_source_workspace(application)
         persist_pin(resources_root(),response['public_key'])
     return {'state':str(directory),'endpoint':config['endpoint'],'owner_public_key':response['public_key']}
 
@@ -295,7 +298,7 @@ def resume_owner_setup(value):
     """
     config=_configuration(value);directory=Path(config['state'])
     if not (directory/'policy.sealed.json').exists():return None
-    if os.name=='nt':raise AXRError('wechat_initialization_recovery_requires_review')
+    if os.name=='nt':return _resume_windows_owner_setup(config)
     from axr.initialization import empty_initialization
     if not empty_initialization(directory):raise AXRError('wechat_initialization_recovery_requires_review')
     with __import__('contextlib').closing(OwnerStore(directory,authority_service=True)) as store:
@@ -307,7 +310,91 @@ def resume_owner_setup(value):
         finish_initialization(store,signer)
         return {'state':str(directory),'endpoint':config['endpoint'],'owner_public_key':approved['owner_public_key']}
 
-def _windows_kernel(store,signer,owner_public_key,*,initialize=False):
+def _windows_setup_review(config,key,build,kind):
+    from .windows_enrollment import exchange
+    challenge={'version':2,'kind':kind,'configuration_digest':digest(config),'expected_public_key':key,
+        'build_digest':build['build'],'nonce':secrets.token_hex(32),'expires':time.time()+180}
+    response,actual=exchange(config,challenge,resources_root())
+    if response['public_key']!=key or response['challenge']!=challenge or actual['user']!=config['owner_user']:
+        raise AXRError('wechat_initialization_approval_changed')
+    return challenge
+
+
+def _windows_source_workspace(application):
+    provider=application.get('codex_provider')
+    if provider is not None:
+        path=Path(native.windows_data_root())/'source'
+        if Path(provider.get('workspace',''))!=path:raise AXRError('windows_source_fixed_workspace_required')
+        from axr.storage import private_directory
+        private_directory(path)
+
+
+def _resume_windows_owner_setup(config):
+    from axr.initialization import empty_initialization
+    directory=Path(config['state']);early=empty_initialization(directory)
+    allowed={'guard.sqlite3','journal.sqlite3','policy.sealed.json','peer-registry.sealed','security-state.sealed'}
+    allowed|={n+s for n in ('guard.sqlite3','journal.sqlite3') for s in ('-shm','-wal')}
+    if (not early and (not all((directory/n).is_file() for n in ('guard.sqlite3','journal.sqlite3','security-state.sealed')) or
+        any(p.name not in allowed or p.is_symlink() or p.is_junction() for p in directory.iterdir()))):
+        raise AXRError('wechat_initialization_recovery_requires_review')
+    with __import__('contextlib').closing(OwnerStore(directory,authority_service=True)) as store:
+        approved=store.config();strip=lambda app:{k:v for k,v in app.items() if k not in ('resources','conversations')}
+        if (approved.get('version')!=2 or strip(approved.get('application',{}))!=strip(config['application']) or
+            approved.get('owner_user')!=config['owner_user'] or re.fullmatch('[0-9a-f]{64}',approved.get('enrollment','')) is None or
+            re.fullmatch('[0-9a-f]{588}',approved.get('owner_public_key','')) is None):raise AXRError('wechat_initialization_approval_changed')
+        if not store.journal.verify_audit():raise AXRError('wechat_initialization_recovery_requires_review')
+        if not early:
+            from axr.integrity import AuthorityIntegrity
+            AuthorityIntegrity(store,application_tables={'wechat_state':'name'}).verify()
+            # A fully persisted first setup may have state checkpoints but must
+            # never have issued a task, accessed/disclosed content or executed.
+            empty=('jobs','contexts','events','telemetry','results','disclosed_scopes','execution_claims',
+                'security_contracts','security_claims','security_events','security_execution_reviews','authority_commits','wechat_state')
+            if any(store.journal.db.execute('SELECT 1 FROM '+table+' LIMIT 1').fetchone() for table in empty):
+                raise AXRError('wechat_initialization_recovery_requires_review')
+            import sqlite3
+            with __import__('contextlib').closing(sqlite3.connect((directory/'guard.sqlite3').as_uri()+'?mode=ro',uri=True)) as db:
+                if db.execute('SELECT 1 FROM grants LIMIT 1').fetchone():raise AXRError('wechat_initialization_recovery_requires_review')
+        deployment=OwnerDeployment(store.secrets,store.vault);assets=_build_assets(approved['application']);root=resources_root().parent
+        build=deployment.review(root,assets)
+        challenge=_windows_setup_review(config,approved['owner_public_key'],build,'wechat-owner-recovery')
+        if store.config()!=approved or deployment.review(root,assets)!=build or time.time()>=challenge['expires']:
+            raise AXRError('wechat_initialization_approval_changed')
+        if early:finish_initialization(store,native.HardwareSigningKey('Stellaria.AXR.Root.v2'))
+        elif deployment._load()!=build:raise AXRError('wechat_initialization_approval_changed')
+    from .windows_enrollment import persist_pin
+    _windows_source_workspace(approved['application'])
+    persist_pin(resources_root(),approved['owner_public_key'])
+    return {'state':str(directory),'endpoint':config['endpoint'],'owner_public_key':approved['owner_public_key']}
+
+
+def _refresh_windows_owner_build(value,bootstrap):
+    config=_configuration(value)
+    if config['state']!=bootstrap.get('state') or config['endpoint']!=bootstrap.get('endpoint'):
+        raise AXRError('wechat_build_update_configuration_changed')
+    with __import__('contextlib').closing(OwnerStore(config['state'],authority_service=True)) as store:
+        approved=store.config();strip=lambda app:{k:v for k,v in app.items() if k not in ('resources','conversations')}
+        old,new=strip(approved['application']),strip(config['application']);root=resources_root().parent
+        if (approved['owner_user']!=config.get('owner_user') or approved['owner_public_key']!=bootstrap.get('owner_public_key') or
+            not provider_build_update(old,new,bundled_path=root/'runtime/provider/codex.exe')):
+            raise AXRError('wechat_build_update_configuration_changed')
+        kernel,registry=_windows_kernel(store,native.HardwareSigningKey('Stellaria.AXR.Root.v2'),approved['owner_public_key'],enroll_current=False)
+        try:
+            kernel.security.revoke('kernel');kernel.integrity.persist()
+            def revoked():return kernel.integrity.verify() and not kernel.db.execute('SELECT 1 FROM security_contracts WHERE revoked=0 LIMIT 1').fetchone()
+            deployment=OwnerDeployment(store.secrets,store.vault,revoke_for_update=revoked);assets=_build_assets(approved['application']);build=deployment.review(root,assets)
+            challenge=_windows_setup_review(config,approved['owner_public_key'],build,'wechat-owner-build-update')
+            def authenticated():return store.config()==approved and time.time()<challenge['expires'] and deployment.review(root,assets)==build and revoked()
+            result=deployment.enroll(root,assets,authenticated)
+            if old!=new:store.seal_config({**approved,'application':{**approved['application'],'codex_provider':new['codex_provider']}})
+            registry.rows=[]
+            if not native.durable_write(str(registry.path),store.vault.seal([],'axr-peer-registry-v2')):raise AXRError('peer_registry_write_failed')
+            store.journal.security_event('owner-build-update',{'build':result['build'],'authority_restored':False});kernel.integrity.persist()
+            return {**result,'updated':True,'credentials_retained':True,'ledger_retained':True}
+        finally:kernel.close()
+
+
+def _windows_kernel(store,signer,owner_public_key,*,initialize=False,enroll_current=True):
     config=store.config();application=config['application'];deployment=OwnerDeployment(store.secrets,store.vault)
     registry=PeerRegistry(store,owner_user=config['owner_user'],owner_deployment=deployment)
     # LPAC clients can reach the pipe, but receive no handshake bytes until the
@@ -337,7 +424,7 @@ def _windows_kernel(store,signer,owner_public_key,*,initialize=False):
             application_tables={'wechat_state':'name'})
     kernel.controller_peer=credential_peer
     registry.on_change=kernel.integrity.persist
-    registry.enroll(actual,'handler',PRINCIPAL,lambda:config['owner_user'])
+    if enroll_current:registry.enroll(actual,'handler',PRINCIPAL,lambda:config['owner_user'])
     original_accept=registry.accept
     def accept(candidate):
         try:return original_accept(candidate)
@@ -501,6 +588,8 @@ def validate_runtime():
     from .wechat_execution import AuthorityNavigation
     import zstandard
     import sqlite3
+    if os.name=='nt':
+        import win32api,win32security,win32file,win32pipe,win32event,win32process,win32service,pywintypes
     # No live file, credential lookup, service, GUI or model call is used.
     return {'formal_native':native.security_release is True,
         'utf8_runtime':__import__('sys').getfilesystemencoding()=='utf-8' and __import__('sys').stdout.encoding.lower().replace('-','')=='utf8',

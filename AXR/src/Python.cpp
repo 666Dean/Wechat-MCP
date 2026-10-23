@@ -57,6 +57,10 @@ PYBIND11_MODULE(_axr_native,m) {
     m.def("provision_windows_hello_owner",&WindowsHelloOwnerKey::Provision,py::arg("review"),py::arg("expires"),py::call_guard<py::gil_scoped_release>());
     m.def("review_windows_owner",&ReviewWindowsOwner,py::arg("review"),py::arg("expires"),py::call_guard<py::gil_scoped_release>());
     m.def("windows_installation_root",[]{auto path=WindowsInstallationRoot().u8string();return std::string(path.begin(),path.end());});
+    m.def("windows_data_root",[]{auto path=WindowsDataRoot().u8string();return std::string(path.begin(),path.end());});
+    m.def("windows_deployment_configuration",[]{auto path=WindowsDeploymentConfiguration().u8string();return std::string(path.begin(),path.end());});
+    m.def("verify_windows_installation",[](const std::string& path){VerifyWindowsInstallation(Utf8Path(path));});
+    m.def("verify_windows_runtime_files",[](const std::string& path){VerifyWindowsRuntimeFiles(Utf8Path(path));},py::call_guard<py::gil_scoped_release>());
     m.def("windows_frontend_identity",[](unsigned long pid){return WindowsFrontendIdentity(pid).dump();},py::call_guard<py::gil_scoped_release>());
     m.def("expose_windows_authority_identity",&ExposeWindowsAuthorityIdentity,py::call_guard<py::gil_scoped_release>());
     m.def("windows_source_readiness",[](const std::string& configuration){auto value=ParseBounded(configuration);py::gil_scoped_release release;WindowsSourceReadiness(value);});

@@ -46,6 +46,9 @@ void ProtectedStore::Identity() const {
     DWORD length=0;GetTokenInformation(token,TokenUser,nullptr,0,&length);std::vector<unsigned char> buffer(length);
     bool valid=length&&GetTokenInformation(token,TokenUser,buffer.data(),length,&length)&&IsWellKnownSid(reinterpret_cast<TOKEN_USER*>(buffer.data())->User.Sid,WinLocalSystemSid);
     CloseHandle(token);if(!valid)throw std::runtime_error("protected_service_identity_required");
+#ifdef AXR_SECURITY_RELEASE
+    RequireProtectedHost(ProcessIdentity(GetCurrentProcessId()));
+#endif
 #else
     throw std::runtime_error("protected_store_platform_unavailable");
 #endif

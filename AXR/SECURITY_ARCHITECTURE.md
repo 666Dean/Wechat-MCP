@@ -338,3 +338,21 @@ Installation must make public immutable runtime files readable to restricted
 packages while excluding account configuration, credentials and authority state.
 Actual fixture tests prove no loopback/other-source reads and identity-checked
 pipe transport; they do not prove a deployed System service or hardware consent.
+
+
+Formal Windows stores and hardware roots now require the protected fixed System
+authority image, not just a System user token. The independently runnable runtime
+validator cannot open either. Installed code is checked against the complete
+installation manifest, and owner deployment separately pins that manifest hash.
+The native digest cache uses actual file identity and change time, so equal size
+and restored mtime do not bypass validation. Content-only staged-tree checks do
+not convey protected-installation trust. Account sidecars are fixed under the OS
+ProgramData folder, outside the public immutable runtime.
+
+Windows legacy credential migration is native-only, explicitly bound to the
+enrolled owner's unique active logon token. CredRead executes only in a scoped
+thread impersonation, without a Python callback; it reverts before returning to
+the application. Missing owner credentials never fall back to System's vault.
+The public Python surface returns only verified counts, never credential bytes.
+Selected-file migration validates every encrypted database and existing conflict
+before provisioning; identical partial OS writes may continue, conflicts cannot.

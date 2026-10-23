@@ -44,6 +44,7 @@ void Installed(const std::filesystem::path& root,bool requireOwnership=true){
         if(parent==parent.root_path())break;
     }
 #elif defined(_WIN32)
+    if(!requireOwnership)return; // Separate validator cannot open formal keys/stores.
     VerifyWindowsInstallation(root.parent_path());
 #else
     (void)root;throw std::runtime_error("authority_platform_unavailable");
@@ -95,7 +96,11 @@ int Serve(bool initialize=false,bool ownerControl=false,bool refresh=false){
 #endif
     );
 #else
+#ifdef AXR_VALIDATION_HOST
+    Installed(root,false);
+#else
     Installed(root);
+#endif
 #endif
 #ifdef AXR_FRONTEND_HOST
 #if defined(__APPLE__)
@@ -183,12 +188,12 @@ int Serve(bool initialize=false,bool ownerControl=false,bool refresh=false){
 #endif
 }
 #if defined(_WIN32)
-SERVICE_STATUS_HANDLE serviceHandle=nullptr;SERVICE_STATUS serviceStatus{};
+SERVICE_STATUS_HANDLE serviceHandle=nullptr;SERVICE_STATUS serviceStatus{};int serviceAction=0;
 void WINAPI Control(DWORD code){if(code==SERVICE_CONTROL_STOP){serviceStatus.dwCurrentState=SERVICE_STOP_PENDING;SetServiceStatus(serviceHandle,&serviceStatus);stopRequested=true;if(Py_IsInitialized())PyErr_SetInterrupt();}}
 void WINAPI ServiceMain(DWORD,LPWSTR*){
     serviceHandle=RegisterServiceCtrlHandlerW(L"StellariaAXRAuthority",Control);if(!serviceHandle)return;
     serviceStatus.dwServiceType=SERVICE_WIN32_OWN_PROCESS;serviceStatus.dwControlsAccepted=SERVICE_ACCEPT_STOP;serviceStatus.dwCurrentState=SERVICE_RUNNING;SetServiceStatus(serviceHandle,&serviceStatus);
-    try{Serve();}catch(...){serviceStatus.dwWin32ExitCode=ERROR_SERVICE_SPECIFIC_ERROR;}
+    try{Serve(serviceAction==1,false,serviceAction==2);}catch(...){serviceStatus.dwWin32ExitCode=ERROR_SERVICE_SPECIFIC_ERROR;serviceStatus.dwServiceSpecificExitCode=1;}
     serviceStatus.dwCurrentState=SERVICE_STOPPED;SetServiceStatus(serviceHandle,&serviceStatus);
 }
 #endif
@@ -214,13 +219,14 @@ int main(int argc,char** argv){
         return Serve(true);
 #else
 #if defined(_WIN32)
-        if(argc==2&&std::string_view(argv[1])=="--service"){
+        if(argc==2&&(std::string_view(argv[1])=="--service"||std::string_view(argv[1])=="--initialize-service"||std::string_view(argv[1])=="--refresh-service")){
+            serviceAction=std::string_view(argv[1])=="--initialize-service"?1:std::string_view(argv[1])=="--refresh-service"?2:0;
             SERVICE_TABLE_ENTRYW table[]={{const_cast<LPWSTR>(L"StellariaAXRAuthority"),ServiceMain},{nullptr,nullptr}};
             if(!StartServiceCtrlDispatcherW(table))throw std::runtime_error("authority_service_dispatch_failed");return 0;
         }
 #endif
         if(argc==2&&std::string_view(argv[1])=="--initialize-owner")return Serve(true);
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
         if(argc==2&&std::string_view(argv[1])=="--refresh-owner-build")return Serve(true,false,true);
 #endif
         if(argc!=2||std::string_view(argv[1])!="--serve")throw std::runtime_error("authority_fixed_entrypoint_required");

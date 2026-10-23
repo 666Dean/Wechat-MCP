@@ -47,6 +47,14 @@ class OwnerDeployment:
         return {'build':value['build'],'vendor_certificate_required':False,'authority_restored':False}
     def verify_process(self,actual,role):
         value=self._load()
+        if not self.fixture and actual.get('platform')=='windows':
+            root=Path(native.windows_installation_root())
+            if Path(actual.get('image','')).parent!=root:return False
+            native.verify_windows_installation(str(root))
+            directory=RootedDirectory(root)
+            try:manifest=directory.read('installation-review.json',2*1024*1024)
+            finally:directory.close()
+            if not any(row['path']==str(root/'installation-review.json') and row['sha256']==hashlib.sha256(manifest).hexdigest() for row in value['assets']):return False
         for row in value['assets']:
             if role not in row['roles'] or actual.get('image')!=row['path'] or actual.get('image_sha256')!=row['sha256']:continue
             # Native peer identity and an independently launched sandbox are

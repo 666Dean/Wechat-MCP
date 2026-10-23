@@ -20,7 +20,13 @@ def path(runtime_root):
         raise AXRError('authority_deployment_configuration_invalid')
     marker=json.loads(source.read_bytes())
     if 'deployment_source' not in marker:return source
-    if marker!=MARKER or sys.platform!='darwin':raise AXRError('authority_deployment_configuration_invalid')
+    if marker!=MARKER:raise AXRError('authority_deployment_configuration_invalid')
+    if sys.platform=='win32':
+        from . import _axr_native as native
+        if root!=Path(native.windows_installation_root())/'runtime':raise AXRError('authority_installation_not_protected')
+        try:return Path(native.windows_deployment_configuration())
+        except RuntimeError:raise AXRError('authority_installation_not_protected') from None
+    if sys.platform!='darwin':raise AXRError('authority_deployment_configuration_invalid')
     target=root.parents[2]/'deployment.json'
     # Neither same-user replacement nor a symlink can redirect the privileged
     # bootstrap. Recheck the whole protected path before reading any sidecar.

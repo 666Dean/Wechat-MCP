@@ -18,9 +18,10 @@ def protocol_check():
     import asyncio
     from mcp import ClientSession,StdioServerParameters
     from mcp.client.stdio import stdio_client
+    from .codex_config import native_frontend
     async def check():
         async with asyncio.timeout(20):
-            params=StdioServerParameters(command='/Library/Application Support/Stellaria AXR/AXR MCP.app/Contents/MacOS/axr-frontend',args=['--mcp'])
+            params=StdioServerParameters(command=native_frontend(),args=['--mcp'])
             async with stdio_client(params) as (read,write):
                 async with ClientSession(read,write) as session:
                     await session.initialize();tools=await session.list_tools();status=await session.call_tool('wechat_status',{})

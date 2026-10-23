@@ -135,6 +135,18 @@ jobs:
         run: cmake --build .local-private/security-release --config Release --target axr-owner --parallel 4
       - name: Qt Quick desktop runtime
         run: python -m pip install PySide6-Essentials==6.10.2
+      - name: Stage isolated formal Windows authority runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $installation = & $vswhere -latest -property installationPath
+          $crt = Get-ChildItem -Path "$installation/VC/Redist/MSVC/*/x64/Microsoft.VC*.CRT" -Directory | Sort-Object FullName | Select-Object -Last 1
+          $notice = Get-ChildItem -Path "$installation/Licenses/*/Redist.txt" -File | Select-Object -First 1
+          if (-not $crt -or -not $notice) { throw 'Reviewed VC redistributable and notice required' }
+          python -m scripts.package_authority_windows --build .local-private/windows-production --dependencies "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows" --output "$env:RUNNER_TEMP/windows-formal-authority" --vc-runtime $crt.FullName --vc-notice $notice.FullName
+          if ($LASTEXITCODE -ne 0) { throw 'Formal Windows runtime packaging failed' }
+          "WECHAT_TEST_FORMAL_PACKAGE=$env:RUNNER_TEMP/windows-formal-authority" >> $env:GITHUB_ENV
       - name: Security and legacy regressions
         run: python -m unittest discover -q
       - name: Desktop 125 and 150 percent render simulation
@@ -160,6 +172,14 @@ jobs:
         with:
           name: windows-axr-runtime-${{ github.sha }}
           path: ${{ runner.temp }}/windows-axr-runtime
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload account-free formal Windows authority runtime
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-formal-authority-${{ github.sha }}
+          path: ${{ runner.temp }}/windows-formal-authority
           if-no-files-found: error
           retention-days: 7
 

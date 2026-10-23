@@ -22,11 +22,17 @@ namespace {
 bool Hex64(const Json& value){return value.is_string()&&value.get_ref<const std::string&>().size()==64&&
     value.get_ref<const std::string&>().find_first_not_of("0123456789abcdef")==std::string::npos;}
 void ValidateChallenge(const Json& value){
-    if(!value.is_object()||value.size()!=5||!value.contains("version")||!value.at("version").is_number_integer()||value.at("version")!=2||
-       !value.contains("kind")||!value.at("kind").is_string()||value.at("kind")!="wechat-owner-enrollment"||!value.contains("nonce")||!Hex64(value.at("nonce"))||
+    bool initial=value.is_object()&&value.value("kind",Json{})=="wechat-owner-enrollment";
+    bool reviewed=value.is_object()&&(value.value("kind",Json{})=="wechat-owner-recovery"||value.value("kind",Json{})=="wechat-owner-build-update");
+    if((!initial&&!reviewed)||value.size()!=(initial?5:7)||!value.contains("version")||!value.at("version").is_number_integer()||value.at("version")!=2||
+       !value.contains("nonce")||!Hex64(value.at("nonce"))||
        !value.contains("configuration_digest")||!Hex64(value.at("configuration_digest"))||!value.contains("expires")||
        !value.at("expires").is_number()||!std::isfinite(value.at("expires").get<double>())||
        value.at("expires").get<double>()<=Now()||value.at("expires").get<double>()>Now()+180)
+        throw std::runtime_error("windows_owner_setup_challenge_invalid");
+    if(reviewed&&(!value.contains("build_digest")||!Hex64(value.at("build_digest"))||!value.contains("expected_public_key")||
+        !value.at("expected_public_key").is_string()||value.at("expected_public_key").get_ref<const std::string&>().size()!=588||
+        value.at("expected_public_key").get_ref<const std::string&>().find_first_not_of("0123456789abcdef")!=std::string::npos))
         throw std::runtime_error("windows_owner_setup_challenge_invalid");
 }
 #if defined(_WIN32)

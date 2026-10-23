@@ -11,10 +11,10 @@ from axr_applications import wechat
 from test.test_security_authority import ProtectedStore
 
 class BuildUpdate(unittest.TestCase):
-    @unittest.skipUnless(sys.platform=='win32','Windows update remains separately unavailable')
-    def test_windows_cannot_enter_the_mac_hardware_build_update(self):
+    @unittest.skipUnless(sys.platform=='win32','Windows stopped hardware build update')
+    def test_invalid_windows_update_does_not_enter_mac_hardware_or_open_state(self):
         with patch.object(wechat,'_hardware_enrollment') as auth,patch.object(wechat,'OwnerStore') as store:
-            with self.assertRaisesRegex(AXRError,'platform_unavailable'):wechat.refresh_owner_build({}, {})
+            with self.assertRaisesRegex(AXRError,'deployment_configuration_invalid'):wechat.refresh_owner_build({}, {})
             auth.assert_not_called();store.assert_not_called()
     def test_only_fixed_provider_code_can_migrate_not_login_or_sources(self):
         provider={'binary':'old-external','sha256':'a'*64,'auth_file':'fixture-login','workspace':'fixture-work','tls_bundle':'fixture-trust','tls_sha256':'b'*64}

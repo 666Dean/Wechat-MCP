@@ -5,6 +5,7 @@ import json
 import re
 import time
 import tomllib
+import sys
 from pathlib import Path
 from axr.aet import AXRError
 from axr.storage import private_directory
@@ -12,18 +13,22 @@ from axr import _axr_native as native
 
 NAME='wechat_axr'
 
+def native_frontend():
+    if sys.platform=='win32':return str(Path(native.windows_installation_root())/'axr-frontend.exe')
+    return '/Library/Application Support/Stellaria AXR/AXR MCP.app/Contents/MacOS/axr-frontend'
+
 def native_registered(config=None):
     path=Path(config or Path.home()/'.codex/config.toml')
     try:
         if path.is_symlink():return False
         value=tomllib.loads(path.read_text()).get('mcp_servers',{}).get(NAME,{})
-        return (value.get('command')=='/Library/Application Support/Stellaria AXR/AXR MCP.app/Contents/MacOS/axr-frontend'
+        return (value.get('command')==native_frontend()
                 and value.get('args')==['--mcp'] and value.get('enabled',True) is True and value.get('required',False) is False)
     except (OSError,ValueError,AttributeError):return False
 
 def native_snippet():
     return '\n'.join(['[mcp_servers.wechat_axr]',
-        'command = '+json.dumps('/Library/Application Support/Stellaria AXR/AXR MCP.app/Contents/MacOS/axr-frontend'),
+        'command = '+json.dumps(native_frontend()),
         'args = ["--mcp"]','enabled = true','required = false','startup_timeout_sec = 15','tool_timeout_sec = 90',''])
 
 

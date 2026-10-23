@@ -130,7 +130,7 @@ CREATE TABLE SearchRecent(username TEXT,query TEXT,last_click_time INTEGER);INSE
             self.assertEqual(set(Path('/private/tmp').glob('axr-encrypted-wcdb-*')),before)
         finally:self.api.sqlite3_close_v2(handle)
     def test_owner_selected_file_validates_encrypted_database_without_key_export(self):
-        if not hasattr(self.module,'fixture_verify_owner_file'):self.skipTest('macOS fixture importer required')
+        if not hasattr(self.module,'fixture_verify_owner_file'):self.skipTest('reference fixture importer required')
         source=Path(self.temp.name).resolve()/'owner-selected.txt';source.write_text(self.key.hex())
         config={**self.config,'shards':[{**s,'salt':self.path.read_bytes()[:16].hex()} for s in self.config['shards']]}
         reference={'path':str(source),'sha256':hashlib.sha256(source.read_bytes()).hexdigest()}
@@ -143,7 +143,7 @@ CREATE TABLE SearchRecent(username TEXT,query TEXT,last_click_time INTEGER);INSE
         reference['sha256']=hashlib.sha256(source.read_bytes()).hexdigest()
         with self.assertRaises(RuntimeError):self.module.fixture_verify_owner_file(canonical(config).decode(),canonical(reference).decode())
     def test_owner_selected_salt_map_and_redirect_rejection(self):
-        if not hasattr(self.module,'fixture_verify_owner_file'):self.skipTest('macOS fixture importer required')
+        if not hasattr(self.module,'fixture_verify_owner_file'):self.skipTest('reference fixture importer required')
         salt=self.path.read_bytes()[:16].hex();source=Path(self.temp.name).resolve()/'owner-selected.json'
         source.write_text(json.dumps({'keys':{salt:self.key.hex()}}))
         config={**self.config,'shards':[{**s,'salt':salt} for s in self.config['shards']]}
@@ -153,6 +153,38 @@ CREATE TABLE SearchRecent(username TEXT,query TEXT,last_click_time INTEGER);INSE
         link=source.with_name('redirect.json');link.symlink_to(source);reference['path']=str(link)
         with self.assertRaisesRegex(RuntimeError,'path_invalid'):
             self.module.fixture_verify_owner_file(canonical(config).decode(),canonical(reference).decode())
+    def test_native_import_bounds_mode_and_single_link_file(self):
+        if not hasattr(self.module,'fixture_verify_owner_file'):self.skipTest('reference fixture importer required')
+        salt=self.path.read_bytes()[:16].hex();source=Path(self.temp.name).resolve()/'owner-file.json'
+        config={**self.config,'shards':[{**s,'salt':salt} for s in self.config['shards']]}
+        def verify(raw):
+            source.write_bytes(raw)
+            return json.loads(self.module.fixture_verify_owner_file(canonical(config).decode(),canonical({
+                'path':str(source),'sha256':hashlib.sha256(raw).hexdigest()}).decode()))
+        for raw in (b'',b'x'*65537,b'{"keys":{}}',b'{"keys":{',canonical({'version':1,'key_mode':'guess','keys':{salt:self.key.hex()}})):
+            with self.subTest(size=len(raw)),self.assertRaises(RuntimeError):verify(raw)
+        raw=canonical({'version':1,'key_mode':'raw','keys':{salt:self.key.hex()}})
+        self.assertEqual(verify(raw)['verified_credentials'],4)
+        link=source.with_name('hard-link.json');os.link(source,link)
+        with self.assertRaisesRegex(RuntimeError,'file_invalid'):verify(raw)
+
+    def test_explicit_password_mode_derives_each_salt_in_native_code(self):
+        if not hasattr(self.module,'fixture_verify_owner_file'):self.skipTest('reference fixture importer required')
+        path=Path(self.temp.name)/'password-encrypted.db';password=b'\x29'*32;handle=C.c_void_p()
+        self.assertEqual(self.api.sqlite3_open_v2(os.fsencode(path),C.byref(handle),6,None),0)
+        try:
+            self.assertEqual(self.api.sqlite3_key(handle,password,len(password)),0)
+            self.assertEqual(self.api.sqlite3_exec(handle,b'CREATE TABLE fixture(value INTEGER)',None,None,None),0)
+        finally:self.api.sqlite3_close_v2(handle)
+        salt=path.read_bytes()[:16].hex();source=Path(self.temp.name).resolve()/'password-file.json'
+        config={**self.config,'shards':[{**self.config['shards'][0],'path':str(path),'salt':salt}]}
+        def verify(mode):
+            raw=canonical({'version':1,'key_mode':mode,'keys':{salt:password.hex()}});source.write_bytes(raw)
+            return json.loads(self.module.fixture_verify_owner_file(canonical(config).decode(),canonical({
+                'path':str(source),'sha256':hashlib.sha256(raw).hexdigest()}).decode()))
+        self.assertEqual(verify('password'),{'verified_credentials':1,'raw_keys_exported':False,'legacy_permissions_restored':False})
+        with self.assertRaises(RuntimeError):verify('raw')
+
     def test_scope_and_sql_export_denied(self):
         with self.assertRaises(RuntimeError):self.use({'kind':'messages'},Resource('wechat',self.account,'wxid_other'))
         for kind in ('sql','export','key','shell'):

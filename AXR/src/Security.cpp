@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "axr/Security.hpp"
+#include "axr/WindowsInstallation.hpp"
 #include <algorithm>
 #include <cmath>
 #include <set>
@@ -17,6 +18,12 @@ void RequireProtectedHost(const Json& actual,bool owner){
         if(lstat(path.c_str(),&info)||S_ISLNK(info.st_mode)||info.st_uid!=0||(info.st_mode&0022))throw std::runtime_error("protected_host_installation_required");
         if(path==path.root_path())break;
     }
+#elif defined(_WIN32)
+    auto root=WindowsInstallationRoot();auto expected=root/(owner?L"axr-owner.exe":L"axr-authority.exe");
+    if(Utf8Path(actual.at("image").get<std::string>())!=expected||actual.at("app_container")!=false||
+        (owner?(actual.at("user")=="S-1-5-18"):(actual.at("user")!="S-1-5-18")))
+        throw std::runtime_error("protected_host_installation_required");
+    VerifyWindowsInstallation(root);
 #else
     (void)actual;(void)owner;throw std::runtime_error("protected_host_platform_unavailable");
 #endif

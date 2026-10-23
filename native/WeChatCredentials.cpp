@@ -4,6 +4,7 @@
 #include "axr/Credentials.hpp"
 #include "axr/ProtectedStore.hpp"
 #include "axr/Security.hpp"
+#include "axr/WindowsInstallation.hpp"
 #include <pybind11/pybind11.h>
 #include <pybind11/functional.h>
 #include <pybind11/stl.h>
@@ -312,6 +313,7 @@ protected:
 };
 #if defined(__APPLE__)
 CFStringRef Text(const std::string& text){return CFStringCreateWithBytes(nullptr,reinterpret_cast<const UInt8*>(text.data()),text.size(),kCFStringEncodingUTF8,false);}
+#endif
 template<bool Fixture=false> Json ImportOwnerFile(const Json& configuration,const Json& source){
     std::unique_ptr<ProtectedStore> destination;
     if constexpr(!Fixture)destination=std::make_unique<ProtectedStore>(configuration.at("credential_namespace"));
@@ -321,6 +323,28 @@ template<bool Fixture=false> Json ImportOwnerFile(const Json& configuration,cons
     catch(const std::runtime_error& error){if(std::string_view(error.what())!="owner_secret_not_provisioned")throw;}
     auto path=Utf8Path(source.at("path").get<std::string>());
     if(!path.is_absolute())throw std::runtime_error("wcdb_import_path_invalid");
+#if defined(_WIN32)
+    if(path.wstring().rfind(L"\\\\",0)==0||path.lexically_normal()!=path)throw std::runtime_error("wcdb_import_path_invalid");
+    for(auto node=path;!node.empty();node=node.parent_path()){
+        auto attributes=GetFileAttributesW(node.c_str());
+        if(attributes==INVALID_FILE_ATTRIBUTES||(attributes&FILE_ATTRIBUTE_REPARSE_POINT))throw std::runtime_error("wcdb_import_path_invalid");
+        if(node==node.root_path())break;
+    }
+    // Deny concurrent mutation/rename for the complete native read. Never
+    // inherit this handle or expose file bytes to the Python caller.
+    auto handle=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
+    if(handle==INVALID_HANDLE_VALUE)throw std::runtime_error("wcdb_import_file_unavailable");
+    struct Close{HANDLE handle;~Close(){CloseHandle(handle);}} closeFile{handle};
+    BY_HANDLE_FILE_INFORMATION info{};
+    if(!GetFileInformationByHandle(handle,&info)||GetFileType(handle)!=FILE_TYPE_DISK||
+        (info.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT))||info.nNumberOfLinks!=1||
+        info.nFileSizeHigh||info.nFileSizeLow<1||info.nFileSizeLow>65536)throw std::runtime_error("wcdb_import_file_invalid");
+    std::string raw(info.nFileSizeLow,'\0');
+    struct Erase{std::string& value;~Erase(){OPENSSL_cleanse(value.data(),value.size());}} erase{raw};
+    DWORD received=0;
+    if(!ReadFile(handle,raw.data(),DWORD(raw.size()),&received,nullptr)||received!=raw.size()||Digest(raw)!=source.at("sha256").get<std::string>())
+        throw std::runtime_error("wcdb_import_file_changed");
+#else
     for(auto node=path;!node.empty();node=node.parent_path()){
         struct stat info{};if(lstat(node.c_str(),&info)||S_ISLNK(info.st_mode))throw std::runtime_error("wcdb_import_path_invalid");
         if(node==node.root_path())break;
@@ -334,15 +358,17 @@ template<bool Fixture=false> Json ImportOwnerFile(const Json& configuration,cons
     struct Erase{std::string& value;~Erase(){OPENSSL_cleanse(value.data(),value.size());}} erase{raw};
     if(read(fd,raw.data(),raw.size())!=ssize_t(raw.size())||Digest(raw)!=source.at("sha256").get<std::string>())
         throw std::runtime_error("wcdb_import_file_changed");
+#endif
     // Either one owner-supplied raw key, or {"keys": {salt_hex: key_hex}}.
     // No executable format, process inspection, key export or caller SQL.
-    std::map<std::string,std::string> values;
+    std::map<std::string,std::string> values;bool password=false;
     struct EraseValues{std::map<std::string,std::string>& values;~EraseValues(){for(auto& [_,v]:values)OPENSSL_cleanse(v.data(),v.size());}} eraseValues{values};
     if(raw.find_first_not_of("0123456789abcdefABCDEF\r\n \t")==std::string::npos){
         auto start=raw.find_first_not_of("\r\n \t"),end=raw.find_last_not_of("\r\n \t");
         if(start!=std::string::npos)values["*"]=raw.substr(start,end-start+1);
     }else{
-        auto decoded=Json::parse(raw);
+        Json decoded;
+        try{decoded=Json::parse(raw);}catch(...){throw std::runtime_error("wcdb_import_format_invalid");}
         struct EraseDecoded {
             Json& value;
             static void erase(Json& v){
@@ -351,27 +377,50 @@ template<bool Fixture=false> Json ImportOwnerFile(const Json& configuration,cons
             }
             ~EraseDecoded(){erase(value);}
         } eraseDecoded{decoded};
-        if(!decoded.is_object()||decoded.size()!=1||!decoded.contains("keys")||!decoded["keys"].is_object()||decoded["keys"].size()>128)
+        if(!decoded.is_object()||!decoded.contains("keys")||!decoded["keys"].is_object()||decoded["keys"].empty()||decoded["keys"].size()>128)
             throw std::runtime_error("wcdb_import_format_invalid");
+        if(decoded.size()!=1){
+            if(decoded.size()!=3||!decoded.contains("version")||decoded["version"]!=1||!decoded["version"].is_number_integer()||
+                !decoded.contains("key_mode")||(decoded["key_mode"]!="raw"&&decoded["key_mode"]!="password"))throw std::runtime_error("wcdb_import_format_invalid");
+            password=decoded["key_mode"]=="password";
+        }
         for(auto it=decoded["keys"].begin();it!=decoded["keys"].end();++it){
             if(it.key().size()!=32||!it.value().is_string())throw std::runtime_error("wcdb_import_format_invalid");
             values[it.key()]=it.value().get<std::string>();
         }
     }
+    std::map<std::string,std::string> verified;EraseValues eraseVerified{verified};
+    if(configuration.at("shards").empty()||configuration.at("shards").size()>128)throw std::runtime_error("wcdb_import_shard_budget");
     for(auto& shard:configuration.at("shards")){
         auto item=values.find(shard.at("salt").get<std::string>());if(item==values.end())item=values.find("*");
         if(item==values.end()||item->second.size()!=64||item->second.find_first_not_of("0123456789abcdefABCDEF")!=std::string::npos)
             throw std::runtime_error("wcdb_import_key_missing_or_invalid");
         std::string key(32,'\0');for(size_t i=0;i<32;++i)key[i]=char(std::stoul(item->second.substr(i*2,2),nullptr,16));
-        Erase eraseKey{key};auto verifyKey=key;Database verify(api,shard,verifyKey);
+        Erase eraseKey{key};
+        if(password){
+            auto saltHex=shard.at("salt").get<std::string>();
+            if(saltHex.size()!=32||saltHex.find_first_not_of("0123456789abcdef")!=std::string::npos)throw std::runtime_error("wcdb_import_salt_invalid");
+            std::string salt(16,'\0');for(size_t i=0;i<16;++i)salt[i]=char(std::stoul(saltHex.substr(i*2,2),nullptr,16));
+            std::string derived(32,'\0');Erase eraseDerived{derived};
+            if(!PKCS5_PBKDF2_HMAC(key.data(),int(key.size()),reinterpret_cast<const unsigned char*>(salt.data()),int(salt.size()),256000,EVP_sha512(),32,
+                reinterpret_cast<unsigned char*>(derived.data())))throw std::runtime_error("wcdb_import_derivation_failed");
+            key=derived;
+        }
+        auto verifyKey=key;Database verify(api,shard,verifyKey);
+        auto name=NativeKeyName(shard.at("key_reference"));
+        auto [entry,inserted]=verified.emplace(name,key);if(!inserted&&entry->second!=key)throw std::runtime_error("wcdb_import_existing_key_conflict");
         if constexpr(!Fixture){
-            try{auto existing=destination->Get(NativeKeyName(shard.at("key_reference")));Erase eraseExisting{existing};if(existing!=key)throw std::runtime_error("wcdb_import_existing_key_conflict");}
-            catch(const std::runtime_error& error){if(std::string_view(error.what())!="owner_secret_not_provisioned")throw;destination->Put(NativeKeyName(shard.at("key_reference")),key);}
+            try{auto existing=destination->Get(name);Erase eraseExisting{existing};if(existing!=key)throw std::runtime_error("wcdb_import_existing_key_conflict");}
+            catch(const std::runtime_error& error){if(std::string_view(error.what())!="owner_secret_not_provisioned")throw;}
         }
         ++count;
     }
+    // Validate every source/database and existing destination before writing.
+    // OS-store failures can leave identical partial keys; reruns never replace.
+    if constexpr(!Fixture)for(auto& [name,key]:verified)destination->Put(name,key);
     return Json{{"verified_credentials",count},{"raw_keys_exported",false},{"legacy_permissions_restored",false}};
 }
+#if defined(__APPLE__)
 Json ImportLegacy(const Json& configuration,const std::string& legacyNamespace){
     // Calling this is possible only inside the protected authority identity.
     // The owner setup review names the old service and exact enrolled files.
@@ -404,19 +453,46 @@ Json ImportLegacy(const Json& configuration,const std::string& legacyNamespace){
     return Json{{"verified_credentials",count},{"raw_keys_exported",false},{"legacy_permissions_restored",false}};
 }
 #endif
+#if defined(_WIN32)
+Json ImportWindowsLegacy(const Json& configuration,const std::string& space,const std::string& owner){
+    ProtectedStore destination(configuration.at("credential_namespace"));
+    Cipher api(configuration.at("sqlcipher_library"));unsigned count=0;
+    std::map<std::string,std::string> verified;
+    struct Erase{std::map<std::string,std::string>& values;~Erase(){for(auto& [_,v]:values)OPENSSL_cleanse(v.data(),v.size());}} erase{verified};
+    if(space.rfind("Stellaria.AXR.",0)!=0||configuration.at("shards").empty()||configuration.at("shards").size()>128)throw std::runtime_error("wcdb_import_request_invalid");
+    for(auto& shard:configuration.at("shards")){
+        auto reference=shard.at("key_reference").get<std::string>(),name=NativeKeyName(reference);std::string key;
+        struct Clean{std::string& v;~Clean(){OPENSSL_cleanse(v.data(),v.size());}} clean{key};
+        try{key=destination.Get(name);}
+        catch(const std::runtime_error& error){
+            if(std::string_view(error.what())!="owner_secret_not_provisioned")throw;
+            auto encoded=ReadWindowsOwnerCredential(owner,space,reference);Clean cleanEncoded{encoded};
+            if(encoded.size()!=44||encoded.back()!='='||encoded.substr(0,43).find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")!=std::string::npos)
+                throw std::runtime_error("wcdb_native_legacy_record_invalid");
+            key.resize(33);if(EVP_DecodeBlock(reinterpret_cast<unsigned char*>(key.data()),reinterpret_cast<const unsigned char*>(encoded.data()),44)!=33)
+                throw std::runtime_error("wcdb_native_legacy_record_invalid");key.resize(32);
+        }
+        auto copy=key;Database verify(api,shard,copy);auto [entry,inserted]=verified.emplace(name,key);
+        if(!inserted&&entry->second!=key)throw std::runtime_error("wcdb_import_existing_key_conflict");++count;
+    }
+    for(auto& [name,key]:verified)destination.Put(name,key);
+    return Json{{"verified_credentials",count},{"raw_keys_exported",false},{"legacy_permissions_restored",false}};
+}
+#endif
 }
 PYBIND11_MODULE(_wechat_credentials,m){
     py::module_::import("axr._axr_native");
     py::class_<WeChatConsumer,CredentialConsumer>(m,"WeChatConsumer").def(py::init([](const std::string& witness,const std::string& config){return std::make_unique<WeChatConsumer>(witness,ParseBounded(config));}));
 #if defined(__APPLE__)
     m.def("import_legacy_credentials",[](const std::string& config,const std::string& legacyNamespace){return ImportLegacy(ParseBounded(config),legacyNamespace).dump();});
-    m.def("import_owner_credentials",[](const std::string& config,const std::string& source){return ImportOwnerFile(ParseBounded(config),ParseBounded(source)).dump();});
 #endif
+#if defined(_WIN32)
+    m.def("import_legacy_owner_credentials",[](const std::string& config,const std::string& space,const std::string& owner){return ImportWindowsLegacy(ParseBounded(config),space,owner).dump();});
+#endif
+    m.def("import_owner_credentials",[](const std::string& config,const std::string& source){return ImportOwnerFile(ParseBounded(config),ParseBounded(source)).dump();});
 #ifndef AXR_SECURITY_RELEASE
-#if defined(__APPLE__)
     // Synthetic encrypted-file tests only; never compiled into release code.
     m.def("fixture_verify_owner_file",[](const std::string& config,const std::string& source){return ImportOwnerFile<true>(ParseBounded(config),ParseBounded(source)).dump();});
-#endif
     m.def("fixture_consumer",[](const std::string& witness,const std::string& config,const py::dict& values){std::map<std::string,std::string> keys;for(auto item:values)keys.emplace(py::cast<std::string>(item.first),py::cast<std::string>(item.second));return std::make_unique<WeChatConsumer>(witness,ParseBounded(config),std::move(keys));});
 #endif
 }
