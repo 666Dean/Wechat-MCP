@@ -8,6 +8,26 @@ from .windows_runtime import inventory,imports
 
 SERVICE='StellariaAXRAuthority'
 
+def running_fixed_hosts(root):
+    """Read image locations only; never terminate another program."""
+    from ctypes import wintypes
+    import win32process
+    kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+    kernel.OpenProcess.argtypes=[wintypes.DWORD,wintypes.BOOL,wintypes.DWORD];kernel.OpenProcess.restype=wintypes.HANDLE
+    kernel.QueryFullProcessImageNameW.argtypes=[wintypes.HANDLE,wintypes.DWORD,wintypes.LPWSTR,ctypes.POINTER(wintypes.DWORD)]
+    kernel.CloseHandle.argtypes=[wintypes.HANDLE]
+    names={'axr-authority.exe','axr-owner.exe','axr-frontend.exe','wechat-uia.exe'};result=[]
+    for pid in win32process.EnumProcesses():
+        handle=kernel.OpenProcess(0x1000,False,pid)
+        if not handle:continue
+        try:
+            size=wintypes.DWORD(32768);buffer=ctypes.create_unicode_buffer(size.value)
+            if kernel.QueryFullProcessImageNameW(handle,0,buffer,ctypes.byref(size)):
+                image=Path(buffer.value)
+                if image.parent==root and image.name.lower() in names:result.append(pid)
+        finally:kernel.CloseHandle(handle)
+    return result
+
 def administrator():
     if sys.platform!='win32' or not ctypes.windll.shell32.IsUserAnAdmin():raise AXRError('windows_administrator_install_required')
 
@@ -87,6 +107,7 @@ def install(package,*,configuration,local_assets,replace_stopped=False):
         if not replace_stopped:raise AXRError('windows_existing_install_requires_update')
         from .windows_service import ServiceController
         if ServiceController().status()['state']!='Stopped':raise AXRError('windows_install_stopped_service_required')
+        if running_fixed_hosts(root):raise AXRError('windows_update_close_fixed_clients_required')
         native.verify_windows_installation(str(root))
         current=json.loads(Path(native.windows_deployment_configuration()).read_bytes())
         from axr_applications.wechat import provider_build_update

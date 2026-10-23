@@ -319,11 +319,12 @@ ApplicationWindow {
                 self.assertLessEqual(popup.property('y')+popup.property('height'),height-12)
                 w.setWidth(width+60);QTest.qWait(30)
                 self.assertLessEqual(popup.property('x')+popup.property('width'),w.width()-12)
-                popup.close();w.setProperty('page',0);QTest.qWait(20)
+                popup.close();self.wait_until(lambda:not popup.property('visible'),'previous popup did not finish closing')
+                w.setProperty('page',0);QTest.qWait(20)
                 quick=self.visual(w,'quickAccessMenu');quick.forceActiveFocus();QTest.keyClick(w,Qt.Key_Space);QTest.qWait(25)
                 popup=quick.findChild(QObject,'glassChoicePopup');self.wait_open(popup);self.assertGreaterEqual(popup.property('height'),130)
                 self.assertGreaterEqual(popup.property('x'),12);self.assertLessEqual(popup.property('y')+popup.property('height'),height-12)
-                popup.close()
+                popup.close();self.wait_until(lambda:not popup.property('visible'),'quick popup did not finish closing')
         finally:self.dispose(c,e,w)
 
     def test_wrapped_messages_and_all_settings_categories_remain_scrollable(self):

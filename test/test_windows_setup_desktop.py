@@ -99,4 +99,3 @@ class Configuration(unittest.TestCase):
             self.assertEqual(value['credential_import']['key_mode'],'password');self.assertEqual(len(value['credential_import']['sha256']),64)
             self.assertEqual(len(value['application']['shards']),4);self.assertEqual(set(assets),{'codex','ca'})
             self.assertFalse((area/'private').exists());self.assertNotIn('synthetic login',str(config))
-

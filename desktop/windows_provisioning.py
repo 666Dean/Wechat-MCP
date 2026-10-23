@@ -17,6 +17,20 @@ def native_provider(candidate):
         raise AXRError('setup_codex_runtime_not_self_contained')
     return path
 
+def credential_source(root,shards,credential,*,index=False,key_mode='file'):
+    credential=regular(credential,128*1024 if index else 65536)
+    if index:
+        metadata=json.loads(credential.read_bytes())
+        if (metadata.get('version')!=1 or metadata.get('account_root')!=str(Path(root).absolute()) or
+            not isinstance(metadata.get('namespace'),str) or not metadata['namespace'].startswith('Stellaria.AXR.') or
+            any(metadata.get('keys',{}).get(Path(s['path']).relative_to(root).as_posix(),{}).get('key_reference')!=s['key_reference'] for s in shards)):
+            raise AXRError('setup_credential_index_mismatch')
+        return {'legacy_namespace':metadata['namespace']}
+    if key_mode not in ('file','raw','password'):raise AXRError('setup_credential_mode_required')
+    source={'path':str(credential),'sha256':fingerprint(credential,65536)}
+    if key_mode!='file':source['key_mode']=key_mode
+    return {'credential_import':source}
+
 def configuration(root,account,credential,provider,workspace,*,index=False,key_mode='file'):
     if sys.platform!='win32':raise AXRError('windows_setup_required')
     from .windows_setup import private_request_directory
@@ -34,20 +48,7 @@ def configuration(root,account,credential,provider,workspace,*,index=False,key_m
             'auth_file':str(auth),'workspace':str(data/'source'),'tls_bundle':'@resources/provider/ca-bundle.pem','tls_sha256':ca['sha256']}}
     value={'state':str(data/'state/wechat'),'endpoint':r'\\.\pipe\Stellaria.AXR.WeChat.'+digest([owner,account])[:32],
         'owner_user':owner,'application':application}
-    credential=regular(credential,128*1024 if index else 65536)
-    if index:
-        # A legacy index contains only references/salts. Raw credential files
-        # take the other path and are hashed by the native OS utility only.
-        metadata=json.loads(credential.read_bytes())
-        if (metadata.get('version')!=1 or metadata.get('account_root')!=str(Path(root).absolute()) or
-            not isinstance(metadata.get('namespace'),str) or not metadata['namespace'].startswith('Stellaria.AXR.') or
-            any(metadata.get('keys',{}).get(Path(s['path']).relative_to(root).as_posix(),{}).get('key_reference')!=s['key_reference'] for s in shards)):
-            raise AXRError('setup_credential_index_mismatch')
-        value['legacy_namespace']=metadata['namespace']
-    else:
-        value['credential_import']={'path':str(credential),'sha256':fingerprint(credential,65536)}
-        if key_mode not in ('file','raw','password'):raise AXRError('setup_credential_mode_required')
-        if key_mode!='file':value['credential_import']['key_mode']=key_mode
+    value.update(credential_source(root,shards,credential,index=index,key_mode=key_mode))
     result={'version':2,'application_module':'axr_applications.wechat','deployment':value}
     if len(canonical(result))>32768:raise AXRError('setup_account_budget')
     return result,{'codex':provider,'ca':Path(ca['path'])}

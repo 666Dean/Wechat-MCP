@@ -79,12 +79,30 @@ Dialog {
                             GlassButton { text: "初始化连接"; onClicked: initializeConfirm.open() }
                             GlassButton { objectName: "recoverWindowsSetup"; visible: setup.environment.platform==="windows"; text: "恢复中断的初始化"; onClicked: recoveryConfirm.open() }
                         }
+                        RowLayout { visible: setup.environment.platform==="windows" && setup.environment.installed===true; Layout.fillWidth: true
+                            GlassButton { objectName: "stopWindowsService"; text: "停止服务"; enabled: !setup.controller.data.loading; onClicked: setup.controller.stopWindowsService() }
+                            GlassButton { text: "选择更新组件"; onClicked: setup.controller.chooseSetupPackage() }
+                            GlassButton { objectName: "updateWindowsService"; text: "更新组件"; enabled: !setup.controller.data.loading; onClicked: updateConfirm.open() }
+                            GlassButton { objectName: "reviewWindowsBuild"; text: "核对新构建"; enabled: !setup.controller.data.loading; onClicked: setup.controller.refreshWindowsBuild() }
+                        }
                         Detail { Layout.fillWidth: true; text: "首次初始化需本机认证，建立连接后仍不会授予会话访问权限。" }
                     }
                     Card { Layout.fillWidth: true
                         StateRow { title: "微信数据访问"; ready: (setup.status.permissions || {}).database===true }
                         StateRow { title: "设备控制"; ready: (setup.status.permissions || {}).accessibility===true }
-                        RowLayout { GlassButton { text: "数据访问设置"; onClicked: setup.controller.openSystemPermission("database") } GlassButton { text: "设备控制设置"; onClicked: setup.controller.openSystemPermission("accessibility") } }
+                        RowLayout { visible: setup.environment.platform!=="windows"; GlassButton { text: "数据访问设置"; onClicked: setup.controller.openSystemPermission("database") } GlassButton { text: "设备控制设置"; onClicked: setup.controller.openSystemPermission("accessibility") } }
+                        Detail { visible: setup.environment.platform==="windows"; Layout.fillWidth: true; text: "请保持本人 Windows 会话已登录且解锁，打开微信主窗口。数据连接还须核对所选账号和凭据；这里的就绪检查不会读取正文。" }
+                    }
+                    Card { visible: setup.environment.platform==="windows" && setup.environment.installed===true; Layout.fillWidth: true
+                        Copy { text: "初始化前更正凭据"; font.weight: Font.Medium }
+                        Detail { Layout.fillWidth: true; text: "仅用于尚未批准完成的首次设置。保留现有账号、数据文件、密钥和历史；已有审批收据或运行记录时会拒绝，不重置部署。请先停止服务。" }
+                        GlassCombo { id: correctionSource; Layout.fillWidth: true; model: ["本人已有的数据凭据","已有 AXR 凭据索引"]; currentIndex: setup.environment.index ? 1 : 0; onActivated: setup.controller.setSetupCredentialSource(currentIndex===1) }
+                        GlassCombo { visible: correctionSource.currentIndex===0; Layout.fillWidth: true; model: ["按文件声明（纯 hex 视为页密钥）","原始页密钥","32 字节口令"]; currentIndex: ["file","raw","password"].indexOf(setup.environment.key_mode || "file"); onActivated: setup.controller.setSetupCredentialMode(["file","raw","password"][currentIndex]) }
+                        RowLayout { Layout.fillWidth: true
+                            GlassButton { text: "选择更正凭据"; onClicked: setup.controller.chooseWechatCredential(correctionSource.currentIndex===1) }
+                            Detail { Layout.fillWidth: true; text: setup.environment.credential || "未选择"; elide: Text.ElideMiddle }
+                            GlassButton { objectName: "correctWindowsCredential"; text: "更正引用"; enabled: !!setup.environment.credential && !setup.controller.data.loading; onClicked: sourceConfirm.open() }
+                        }
                     }
                     Card { Layout.fillWidth: true; visible: setup.environment.installed!==true
                         Copy { text: "安装本机安全服务"; font.weight: Font.Medium }
@@ -98,9 +116,10 @@ Dialog {
                             background: Rectangle { radius: 10; color: Theme.canvas; border.color: Theme.border }
                             color: Theme.ink; padding: 12; selectByMouse: true
                         }
-                        GlassCombo { id: credentialMode; Layout.fillWidth: true; model: ["导入本人已有的数据凭据","迁移已有 AXR 凭据索引"] }
+                        GlassCombo { id: credentialMode; Layout.fillWidth: true; model: ["导入本人已有的数据凭据","迁移已有 AXR 凭据索引"]; currentIndex: setup.environment.index ? 1 : 0; onActivated: setup.controller.setSetupCredentialSource(currentIndex===1) }
                         GlassCombo { objectName: "windowsCredentialMode"; visible: setup.environment.platform==="windows" && credentialMode.currentIndex===0; Layout.fillWidth: true
                             model: ["按文件声明（纯 hex 视为页密钥）","原始页密钥","32 字节口令"]
+                            currentIndex: ["file","raw","password"].indexOf(setup.environment.key_mode || "file")
                             onActivated: setup.controller.setSetupCredentialMode(["file","raw","password"][currentIndex]) }
                         RowLayout { Layout.fillWidth: true
                             GlassButton { text: "选择凭据"; onClicked: setup.controller.chooseWechatCredential(credentialMode.currentIndex===1) }
@@ -190,6 +209,30 @@ Dialog {
             RowLayout { Layout.alignment: Qt.AlignRight
                 GlassButton { text: "取消"; onClicked: initializeConfirm.close() }
                 GlassButton { text: "继续初始化"; primary: true; onClicked: {initializeConfirm.close();setup.controller.initializeSetup()} }
+            }
+        }
+    }
+    Dialog {
+        id: updateConfirm; objectName: "windowsUpdateConfirmation"; anchors.centerIn: parent; modal: true; header: null; padding: 24; width: Math.min(440,setup.width-32)
+        background: GlassPanel { radius: 22; tint: Theme.dark ? "#FA2B332E" : "#FCFFFFFF" }
+        contentItem: ColumnLayout { spacing: 18
+            Copy { text: "更新本机组件？"; font.pixelSize: 20; font.weight: Font.DemiBold }
+            Detail { Layout.fillWidth: true; text: "将停止服务并撤销活动访问，保留账号、密钥和历史。请先断开 Codex 中的微信 MCP 连接；仍有原生客户端运行时会拒绝更新。更新后需另行核对新构建并用本人身份确认，不恢复旧授权。" }
+            RowLayout { Layout.alignment: Qt.AlignRight
+                GlassButton { text: "取消"; onClicked: updateConfirm.close() }
+                GlassButton { text: "停止并更新"; primary: true; onClicked: {updateConfirm.close();setup.controller.updateWindowsService()} }
+            }
+        }
+    }
+    Dialog {
+        id: sourceConfirm; objectName: "windowsSourceConfirmation"; anchors.centerIn: parent; modal: true; header: null; padding: 24; width: Math.min(440,setup.width-32)
+        background: GlassPanel { radius: 22; tint: Theme.dark ? "#FA2B332E" : "#FCFFFFFF" }
+        contentItem: ColumnLayout { spacing: 18
+            Copy { text: "更正未批准的凭据引用？"; font.pixelSize: 20; font.weight: Font.DemiBold }
+            Detail { Layout.fillWidth: true; text: "服务会核对确实尚无生效部署、审批收据或历史记录。本次只更正所选文件引用或解释方式，不导入或替换密钥，不删除任何状态；已有批准配置会拒绝。之后仍须本人重新初始化确认。" }
+            RowLayout { Layout.alignment: Qt.AlignRight
+                GlassButton { text: "取消"; onClicked: sourceConfirm.close() }
+                GlassButton { text: "核对并更正"; primary: true; onClicked: {sourceConfirm.close();setup.controller.correctWindowsCredential()} }
             }
         }
     }

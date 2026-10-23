@@ -160,9 +160,11 @@ std::string WindowsMachineCABundle(){
     if(!roots.value)throw std::runtime_error("windows_public_roots_unavailable");
     std::string pem;PCCERT_CONTEXT certificate=nullptr;unsigned count=0;
     while((certificate=CertEnumCertificatesInStore(roots.value,certificate))){
-        if(++count>512||certificate->cbCertEncoded>8192){CertFreeCertificateContext(certificate);throw std::runtime_error("windows_public_roots_budget");}
+        // Managed/CI machines can carry more than 512 public machine roots.
+        // Retain the overall 2 MiB output cap; never truncate a trust bundle.
+        if(++count>4096||certificate->cbCertEncoded>65536){CertFreeCertificateContext(certificate);throw std::runtime_error("windows_public_roots_budget");}
         DWORD size=0;
-        if(!CryptBinaryToStringA(certificate->pbCertEncoded,certificate->cbCertEncoded,CRYPT_STRING_BASE64HEADER,nullptr,&size)||size>16384){CertFreeCertificateContext(certificate);throw std::runtime_error("windows_public_roots_invalid");}
+        if(!CryptBinaryToStringA(certificate->pbCertEncoded,certificate->cbCertEncoded,CRYPT_STRING_BASE64HEADER,nullptr,&size)||size>131072){CertFreeCertificateContext(certificate);throw std::runtime_error("windows_public_roots_invalid");}
         std::string text(size,'\0');
         if(!CryptBinaryToStringA(certificate->pbCertEncoded,certificate->cbCertEncoded,CRYPT_STRING_BASE64HEADER,text.data(),&size)){
             CertFreeCertificateContext(certificate);throw std::runtime_error("windows_public_roots_invalid");}

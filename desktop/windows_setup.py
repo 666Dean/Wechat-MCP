@@ -10,7 +10,7 @@ from axr import _axr_native as native
 from axr.aet import AXRError,canonical
 from axr.rooted import RootedDirectory
 
-OPERATIONS=('install','update','initialize','recover','refresh','start','stop')
+OPERATIONS=('install','update','initialize','recover','refresh','reconfigure','start','stop')
 
 def profile_for_sid(sid):
     if re.fullmatch(r'S-1-5-21-\d+-\d+-\d+-\d+',sid) is None:raise AXRError('windows_setup_owner_invalid')
@@ -92,8 +92,15 @@ def invoke(operation,payload=None,*,timeout=420):
 def execute(operation,payload):
     from scripts.install_authority_windows import install,administrator
     administrator()
+    if operation=='reconfigure':
+        if set(payload)!={'source','owner'}:raise AXRError('windows_setup_request_invalid')
+        from scripts.reconfigure_windows import correct
+        return correct(payload['source'],payload['owner'])
     if operation in ('install','update'):
         if set(payload)!={'package','configuration','local_assets'}:raise AXRError('windows_setup_request_invalid')
+        if operation=='update':
+            from scripts.windows_service import ServiceController
+            service=ServiceController();service.register();service.stop()
         return install(payload['package'],configuration=payload['configuration'],local_assets=payload['local_assets'],replace_stopped=operation=='update')
     if operation not in OPERATIONS or payload:raise AXRError('windows_setup_request_invalid')
     from scripts.windows_service import ServiceController
@@ -128,6 +135,7 @@ def admin_main(request_path,sha):
             raise AXRError('windows_setup_request_invalid')
         if value['operation'] in ('install','update') and value['payload'].get('configuration',{}).get('deployment',{}).get('owner_user')!=value['owner']:
             raise AXRError('windows_setup_owner_invalid')
+        if value['operation']=='reconfigure' and value['payload'].get('owner')!=value['owner']:raise AXRError('windows_setup_owner_invalid')
         try:result=execute(value['operation'],value['payload']);state='Completed';error=None
         except Exception as failure:
             code=str(failure) if isinstance(failure,AXRError) else ''

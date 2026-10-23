@@ -44,6 +44,32 @@ class WindowsServiceDesktop(unittest.TestCase):
             button.clicked.emit();run.call_args.args[1]()
         self.assertEqual(call.call_args.args[1],'control.approve_pending')
         self.assertEqual(call.call_args.args[2],('fixture-disclosure',));self.assertTrue(call.call_args.kwargs['owner'])
+    def test_windows_maintenance_has_fixed_buttons_and_cancel_does_not_elevate(self):
+        from PySide6.QtCore import QObject
+        c,w=self.controller,self.window
+        c._setup_environment={'platform':'windows','installed':True,'credential':'synthetic.key'};c.setupChanged.emit()
+        setup=w.findChild(QObject,'setupDialog');setup.open();setup.setProperty('step',1);QTest.qWait(40)
+        c.fixture=False
+        with patch.object(c,'run') as run:
+            for name,dialog in (('updateWindowsService','windowsUpdateConfirmation'),('correctWindowsCredential','windowsSourceConfirmation')):
+                button=self.fixture.visual(w,name);self.assertIsNotNone(button);self.assertTrue(button.isEnabled())
+                button.clicked.emit();QTest.qWait(20)
+                confirm=w.findChild(QObject,dialog);self.assertTrue(confirm.property('visible'));confirm.close()
+                run.assert_not_called()
+    def test_source_switch_clears_old_selection_and_late_inspection_cannot_change_visible_key_mode(self):
+        c=self.controller;c._setup_inputs={'credential':'synthetic.key','index':False}
+        c.setSetupCredentialMode('password');c.setSetupCredentialSource(True)
+        self.assertNotIn('credential',c._setup_inputs);self.assertEqual(c.setupEnvironment['credential'],'')
+        c.accept({'name':'setup_environment','error':None,'value':{'key_mode':'file','credential':'old.key','index':False}})
+        self.assertEqual(c.setupEnvironment['key_mode'],'password');self.assertTrue(c.setupEnvironment['index'])
+        self.assertEqual(c.setupEnvironment['credential'],'')
+    def test_explicit_stop_and_review_buttons_use_separate_fixed_service_actions(self):
+        from PySide6.QtCore import QObject
+        c,w=self.controller,self.window;c._setup_environment={'platform':'windows','installed':True};c.setupChanged.emit()
+        setup=w.findChild(QObject,'setupDialog');setup.open();setup.setProperty('step',1);QTest.qWait(40);c.fixture=False
+        with patch.object(c,'run') as run,patch('desktop.windows_setup.invoke',return_value={}) as invoke:
+            for name,operation in (('stopWindowsService','stop'),('reviewWindowsBuild','refresh')):
+                self.fixture.visual(w,name).clicked.emit();run.call_args.args[1]();invoke.assert_called_with(operation)
     def test_independent_approval_switch_tracks_authority_and_requests_owner_only(self):
         c,w=self.controller,self.window
         c._data.update(connected=True,status={'pending_review_supported':True,'manual_approval_required':True})

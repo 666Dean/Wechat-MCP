@@ -6,13 +6,15 @@ from axr import _axr_native as native
 from axr.aet import AXRError
 from .install_authority_windows import administrator,SERVICE
 
+MODES={'serve':'--service','initialize':'--initialize-service','refresh':'--refresh-service','recover':'--recover-service','reconfigure':'--reconfigure-service'}
+
 class ServiceController:
     def __init__(self):
         import win32service
         self.api=win32service;self.image=Path(native.windows_installation_root())/'axr-authority.exe'
     def command(self,mode):
-        if mode not in ('serve','initialize','refresh','recover'):raise AXRError('windows_service_fixed_mode_required')
-        return '"'+str(self.image)+'" '+{'serve':'--service','initialize':'--initialize-service','refresh':'--refresh-service','recover':'--recover-service'}[mode]
+        if mode not in MODES:raise AXRError('windows_service_fixed_mode_required')
+        return '"'+str(self.image)+'" '+MODES[mode]
     def _open(self,rights,*,create=False):
         api=self.api;manager=api.OpenSCManager(None,None,api.SC_MANAGER_CONNECT|(api.SC_MANAGER_CREATE_SERVICE if create else 0))
         try:service=api.OpenService(manager,SERVICE,rights)
@@ -22,7 +24,7 @@ class ServiceController:
         for handle in reversed(pair):self.api.CloseServiceHandle(handle)
     def _check(self,service):
         api=self.api;value=api.QueryServiceConfig(service)
-        if value[0]!=api.SERVICE_WIN32_OWN_PROCESS or value[1]!=api.SERVICE_DEMAND_START or value[3] not in tuple(self.command(m) for m in ('serve','initialize','refresh','recover')) or value[7] not in ('LocalSystem',r'NT AUTHORITY\SYSTEM'):
+        if value[0]!=api.SERVICE_WIN32_OWN_PROCESS or value[1]!=api.SERVICE_DEMAND_START or value[3] not in tuple(self.command(m) for m in MODES) or value[7] not in ('LocalSystem',r'NT AUTHORITY\SYSTEM'):
             raise AXRError('windows_service_configuration_changed')
     def status(self):
         api=self.api
@@ -89,7 +91,7 @@ class ServiceController:
         finally:self._close(pair)
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('operation',choices=('status','register','initialize','refresh','recover','start','stop'));a=p.parse_args()
-    controller=ServiceController();method={'start':lambda:controller.run(),'initialize':lambda:controller.run('initialize'),'refresh':lambda:controller.run('refresh'),'recover':lambda:controller.run('recover')}.get(a.operation)
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('operation',choices=('status','register','initialize','refresh','recover','reconfigure','start','stop'));a=p.parse_args()
+    controller=ServiceController();method={'start':lambda:controller.run(),**{mode:lambda mode=mode:controller.run(mode) for mode in MODES if mode!='serve'}}.get(a.operation)
     print(json.dumps(method() if method else getattr(controller,a.operation)()))
 if __name__=='__main__':main()

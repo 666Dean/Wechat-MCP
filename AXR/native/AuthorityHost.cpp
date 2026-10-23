@@ -65,7 +65,7 @@ void Configure(PyConfig& config,const std::filesystem::path& root){
         auto value=path.wstring();if(PyStatus_Exception(PyWideStringList_Append(&config.module_search_paths,value.c_str())))throw std::runtime_error("authority_runtime_configuration_failed");
     }
 }
-int Serve(bool initialize=false,bool ownerControl=false,bool refresh=false,bool recover=false){
+int Serve(bool initialize=false,bool ownerControl=false,bool refresh=false,bool recover=false,bool reconfigure=false){
 #ifdef AXR_SECURITY_RELEASE
 #if !defined(AXR_OWNER_HOST) && !defined(AXR_VALIDATION_HOST) && !defined(AXR_FRONTEND_HOST)
     ProtectedStore bootstrap("Stellaria.AXR.Bootstrap");
@@ -153,7 +153,7 @@ int Serve(bool initialize=false,bool ownerControl=false,bool refresh=false,bool 
 #elif defined(AXR_FRONTEND_HOST)
         "axr.authority_frontend"
 #else
-        recover?"axr.authority_recover":refresh?"axr.authority_update":initialize?"axr.authority_setup":"axr.authority_main"
+        reconfigure?"axr.authority_reconfigure":recover?"axr.authority_recover":refresh?"axr.authority_update":initialize?"axr.authority_setup":"axr.authority_main"
 #endif
     );
     if(!module){
@@ -195,7 +195,7 @@ void WINAPI Control(DWORD code){if(code==SERVICE_CONTROL_STOP){serviceStatus.dwC
 void WINAPI ServiceMain(DWORD,LPWSTR*){
     serviceHandle=RegisterServiceCtrlHandlerW(L"StellariaAXRAuthority",Control);if(!serviceHandle)return;
     serviceStatus.dwServiceType=SERVICE_WIN32_OWN_PROCESS;serviceStatus.dwControlsAccepted=SERVICE_ACCEPT_STOP;serviceStatus.dwCurrentState=SERVICE_RUNNING;SetServiceStatus(serviceHandle,&serviceStatus);
-    try{Serve(serviceAction==1||serviceAction==3,false,serviceAction==2,serviceAction==3);}catch(...){
+    try{Serve(serviceAction==1||serviceAction==3||serviceAction==4,false,serviceAction==2,serviceAction==3,serviceAction==4);}catch(...){
         if(!(serviceAction==1&&lastErrorCode=="authority_already_initialized")){
             serviceStatus.dwWin32ExitCode=ERROR_SERVICE_SPECIFIC_ERROR;serviceStatus.dwServiceSpecificExitCode=1;}}
     serviceStatus.dwCurrentState=SERVICE_STOPPED;SetServiceStatus(serviceHandle,&serviceStatus);
@@ -223,8 +223,8 @@ int main(int argc,char** argv){
         return Serve(true);
 #else
 #if defined(_WIN32)
-        if(argc==2&&(std::string_view(argv[1])=="--service"||std::string_view(argv[1])=="--initialize-service"||std::string_view(argv[1])=="--refresh-service"||std::string_view(argv[1])=="--recover-service")){
-            serviceAction=std::string_view(argv[1])=="--initialize-service"?1:std::string_view(argv[1])=="--refresh-service"?2:std::string_view(argv[1])=="--recover-service"?3:0;
+        if(argc==2&&(std::string_view(argv[1])=="--service"||std::string_view(argv[1])=="--initialize-service"||std::string_view(argv[1])=="--refresh-service"||std::string_view(argv[1])=="--recover-service"||std::string_view(argv[1])=="--reconfigure-service")){
+            serviceAction=std::string_view(argv[1])=="--initialize-service"?1:std::string_view(argv[1])=="--refresh-service"?2:std::string_view(argv[1])=="--recover-service"?3:std::string_view(argv[1])=="--reconfigure-service"?4:0;
             SERVICE_TABLE_ENTRYW table[]={{const_cast<LPWSTR>(L"StellariaAXRAuthority"),ServiceMain},{nullptr,nullptr}};
             if(!StartServiceCtrlDispatcherW(table))throw std::runtime_error("authority_service_dispatch_failed");return 0;
         }

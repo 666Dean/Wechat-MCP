@@ -105,6 +105,7 @@ class Controller(QObject):
                    'platform':'windows' if sys.platform=='win32' else 'macos',
                    'folder':Path(self._setup_inputs['root']).name if self._setup_inputs.get('root') else '',
                    'credential':Path(self._setup_inputs['credential']).name if self._setup_inputs.get('credential') else '',
+                   'key_mode':self._setup_inputs.get('key_mode','file'),
                    'index':self._setup_inputs.get('index',False)}
             try:
                 if sys.platform=='win32' and self._setup_package:
@@ -142,7 +143,12 @@ class Controller(QObject):
     def setSetupAccount(self,value):self._setup_inputs['account']=value.strip()
     @Slot(str)
     def setSetupCredentialMode(self,value):
-        if value in ('file','raw','password'):self._setup_inputs['key_mode']=value
+        if value in ('file','raw','password'):
+            self._setup_inputs['key_mode']=value;self._setup_environment['key_mode']=value;self.setupChanged.emit()
+    @Slot(bool)
+    def setSetupCredentialSource(self,index):
+        self._setup_inputs.update(index=index);self._setup_inputs.pop('credential',None)
+        self._setup_environment.update(index=index,credential='');self.setupChanged.emit()
     @Slot()
     def chooseSetupCodex(self):
         if self.fixture or sys.platform!='win32':return
@@ -246,6 +252,34 @@ class Controller(QObject):
         if self.fixture or sys.platform!='win32':return
         from .windows_setup import invoke
         self.run('setup_start',lambda:invoke('start'))
+    @Slot()
+    def stopWindowsService(self):
+        if self.fixture or sys.platform!='win32':return
+        from .windows_setup import invoke
+        self.agent_bridge.stop()
+        self.run('setup_stop',lambda:invoke('stop'))
+    @Slot()
+    def updateWindowsService(self):
+        if self.fixture or sys.platform!='win32':return
+        from .windows_lifecycle import update_components
+        from .windows_provisioning import payload_location
+        package=self._setup_package;provider=self._setup_inputs.get('provider')
+        self.agent_bridge.stop()
+        self.run('setup_update',lambda:update_components(package or payload_location(),provider))
+    @Slot()
+    def refreshWindowsBuild(self):
+        if self.fixture or sys.platform!='win32':return
+        from .windows_setup import invoke
+        self.run('setup_refresh_build',lambda:invoke('refresh'))
+    @Slot()
+    def correctWindowsCredential(self):
+        if self.fixture or sys.platform!='win32':return
+        from .windows_lifecycle import correct_credential
+        inputs=dict(self._setup_inputs)
+        def correct():
+            if not inputs.get('credential'):raise AXRError('setup_account_and_credential_required')
+            return correct_credential(inputs['credential'],index=inputs.get('index',False),key_mode=inputs.get('key_mode','file'))
+        self.run('setup_correct_credential',correct)
     @Slot()
     def verifySetup(self):
         if self.fixture:return
@@ -447,6 +481,8 @@ class Controller(QObject):
                     'windows_service_operation_failed':'本机服务尚未就绪。初始化中断时，可选择显式恢复；不会自动替换密钥。',
                     'windows_service_must_be_stopped':'服务仍在运行，请先停止，再更新或初始化。',
                     'windows_install_local_asset_changed':'所选组件在审查后发生变化，请重新选择。'}.get(result['error'],'Windows 本机设置未完成，请检查组件、管理员权限和 Windows Hello。')
+                if result['error']=='windows_update_close_fixed_clients_required':self._notice='请先断开 Codex 中的微信 MCP 连接并关闭原生客户端，再更新组件。服务和旧状态已保留。'
+                if result['name']=='setup_correct_credential' and result['error']=='windows_service_operation_failed':self._notice='凭据更正未通过。请核对文件和解释方式；已有批准配置或历史不能在此修改，不会重置部署。'
             if result['error'].startswith('owner_os_authentication_failed'):
                 self._notice=('系统取消了身份认证，请保持认证窗口在前台后重试。'
                     if result['error']=='owner_os_authentication_failed:owner_auth_denied:os_error_-4' else
@@ -466,7 +502,18 @@ class Controller(QObject):
             if name=='setup_finish' and value.get('ready'):
                 self._preferences.setValue('setupVersion',1);self._onboarding_needed=False;self.setupChanged.emit();self.setupCompleted.emit()
             return
-        if name=='setup_environment':self._setup_environment=value;self.setupChanged.emit();return
+        if name=='setup_environment':
+            self._setup_environment={**value,'key_mode':self._setup_inputs.get('key_mode','file'),
+                'index':self._setup_inputs.get('index',False),
+                'credential':Path(self._setup_inputs['credential']).name if self._setup_inputs.get('credential') else ''}
+            self.setupChanged.emit();return
+        if name in ('setup_update','setup_stop','setup_refresh_build','setup_correct_credential'):
+            self._data.update(connected=False,status={'owner_authorized':False,'automatic_reply':False})
+            self._notice={'setup_update':'组件已更新。已有部署请核对新构建；首次设置请继续初始化。旧授权不会恢复。',
+                'setup_stop':'服务已停止，活动访问已撤销，历史状态已保留。',
+                'setup_refresh_build':'新构建审查完成。请连接服务，再重新批准所需范围。',
+                'setup_correct_credential':'凭据引用已更正。请重新初始化；本次没有导入密钥或授予访问。'}[name]
+            self.changed.emit();self.noticeChanged.emit();self.inspectSetupEnvironment();return
         if name in ('setup_install','setup_login','setup_connect_codex'):self.inspectSetupEnvironment()
         if name in ('setup_initialize','setup_connect_codex','setup_start'):
             if sys.platform=='win32':self.refresh()
@@ -540,6 +587,7 @@ class Controller(QObject):
         self.noticeChanged.emit()
     @Slot()
     def refresh(self):
+        if self.inflight & {'setup_update','setup_stop','setup_refresh_build','setup_correct_credential'}:return
         if self.fixture:
             self._data={'connected':False,'status':{'audit_valid':True,'policy_version':1,'listener':{'listen':False,'wake_agent':False,'auto_execute':False},
                 'platform':{'mode':'synthetic_preview','send_available':False}},'jobs':[], 'drafts':[], 'grants':[],

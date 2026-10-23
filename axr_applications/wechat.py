@@ -146,6 +146,35 @@ def authenticate_owner_recovery(value):
     if review_windows_build(config['application'])!=build:raise AXRError('wechat_owner_build_changed_during_review')
     return {**response,'identity':actual}
 
+
+def replace_uninitialized_source(value,source,runtime_root):
+    """Correct only a credential reference before any approved configuration.
+
+    Called solely by the fixed System one-shot entry after bootstrap absence
+    was checked natively. Preserve account, assets, state, keys and all files.
+    """
+    if os.name!='nt' or type(source) is not dict or set(source) not in ({'credential_import'},{'legacy_namespace'}):
+        raise AXRError('windows_setup_source_request_invalid')
+    if 'legacy_namespace' in source and (type(source['legacy_namespace']) is not str or
+        not source['legacy_namespace'].startswith('Stellaria.AXR.') or len(source['legacy_namespace'])>200):
+        raise AXRError('windows_setup_source_request_invalid')
+    candidate={**{k:v for k,v in value.items() if k not in ('credential_import','legacy_namespace')},**source}
+    config=_configuration(candidate);directory=Path(config['state'])
+    if directory.is_symlink() or directory.is_junction():raise AXRError('windows_setup_source_history_present')
+    for path in (directory/'policy.sealed.json',Path(runtime_root)/'owner-key.json'):
+        try:path.lstat()
+        except FileNotFoundError:continue
+        raise AXRError('windows_setup_source_already_reviewed')
+    from axr.initialization import empty_initialization
+    if directory.exists() and any(p.is_symlink() or p.is_junction() or not p.is_file() or p.stat().st_nlink!=1 for p in directory.iterdir()):
+        raise AXRError('windows_setup_source_history_present')
+    if not empty_initialization(directory):raise AXRError('windows_setup_source_history_present')
+    if directory.exists() and any(directory.iterdir()):
+        with __import__('contextlib').closing(OwnerStore(directory,authority_service=True)) as store:
+            if not store.journal.verify_audit() or store.journal.checkpoint.read()['sequence']!=0:
+                raise AXRError('windows_setup_source_history_present')
+    return candidate
+
 def _hardware_enrollment(configuration_digest):
     # The second process is a fixed protected owner identity. Its hardware key
     # can require user presence; the authority cannot open that private key.

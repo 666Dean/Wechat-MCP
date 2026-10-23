@@ -95,6 +95,19 @@ class RuntimePackage(unittest.TestCase):
             with patch.object(installer,'administrator'),patch.object(installer,'protect') as acl,patch.object(installer.native,'windows_installation_root',return_value=str(root)),patch.object(
                     installer.native,'windows_data_root',return_value=str(data)),patch.object(installer.native,'verify_windows_installation',side_effect=checked):
                 result=installer.install(self.package,configuration=config,local_assets={'codex':provider,'ca':ca,'hello_trust':trust})
+                pin=canonical({'version':2,'provider':'WindowsHello/RSA2048','public_key':'a1'*294})+b'\n'
+                (root/'runtime/owner-key.json').write_bytes(pin)
+                history=data/'state/wechat/history.marker';history.parent.mkdir(parents=True);history.write_bytes(b'synthetic retained history')
+                service=Mock();service.status.return_value={'state':'Stopped'}
+                with patch('scripts.windows_service.ServiceController',return_value=service),patch.object(installer,'running_fixed_hosts',return_value=[]),patch.object(
+                        native,'windows_deployment_configuration',return_value=str(data/'deployment.json')):
+                    updated=installer.install(self.package,configuration=config,local_assets={'codex':provider,'ca':ca,'hello_trust':trust},replace_stopped=True)
+                    self.assertTrue(updated['build_reenrollment_required']);self.assertFalse(updated['wechat_authorized'])
+                    self.assertEqual((root/'runtime/owner-key.json').read_bytes(),pin)
+                    self.assertEqual(history.read_bytes(),b'synthetic retained history')
+                    changed={**config,'deployment':{**config['deployment'],'credential_import':{'path':str(area/'different.key'),'sha256':'c3'*32}}}
+                    with self.assertRaisesRegex(AXRError,'update_configuration_changed'):
+                        installer.install(self.package,configuration=changed,local_assets={'codex':provider,'ca':ca,'hello_trust':trust},replace_stopped=True)
             self.assertTrue(result['installed']);self.assertFalse(result['wechat_authorized']);self.assertFalse(result['service_started'])
             self.assertEqual(json.loads((data/'deployment.json').read_bytes()),config)
             self.assertFalse((root/'deployment.json').exists());self.assertFalse((area/'never-read.key').exists())
