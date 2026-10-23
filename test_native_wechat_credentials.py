@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -184,6 +185,17 @@ CREATE TABLE SearchRecent(username TEXT,query TEXT,last_click_time INTEGER);INSE
                 'path':str(source),'sha256':hashlib.sha256(raw).hexdigest()}).decode()))
         self.assertEqual(verify('password'),{'verified_credentials':1,'raw_keys_exported':False,'legacy_permissions_restored':False})
         with self.assertRaises(RuntimeError):verify('raw')
+        if sys.platform=='win32':
+            # The owner can explicitly interpret a plain hex file as password
+            # material without Python rewriting or parsing the selected file.
+            raw=password.hex().encode();source.write_bytes(raw)
+            reference={'path':str(source),'sha256':hashlib.sha256(raw).hexdigest(),'key_mode':'password'}
+            result=json.loads(self.module.fixture_verify_owner_file(canonical(config).decode(),canonical(reference).decode()))
+            self.assertEqual(result['verified_credentials'],1)
+            source.write_bytes(canonical({'version':1,'key_mode':'raw','keys':{salt:password.hex()}}))
+            reference['sha256']=hashlib.sha256(source.read_bytes()).hexdigest()
+            with self.assertRaisesRegex(RuntimeError,'key_mode_conflict'):
+                self.module.fixture_verify_owner_file(canonical(config).decode(),canonical(reference).decode())
 
     def test_scope_and_sql_export_denied(self):
         with self.assertRaises(RuntimeError):self.use({'kind':'messages'},Resource('wechat',self.account,'wxid_other'))

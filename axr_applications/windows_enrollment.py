@@ -18,6 +18,8 @@ from axr.aet import AXRError, canonical, digest
 from axr.rooted import RootedDirectory
 from .windows_owner import enrolled_key,enrolled_public_key,frame
 
+MACHINE_TRUST={'version':2,'source':'local-machine-root'}
+
 
 def installed_json(runtime_root,name,maximum):
     directory=RootedDirectory(runtime_root)
@@ -43,6 +45,7 @@ def hex_bytes(value,maximum):
 def trust_roots(runtime_root):
     try:
         value=installed_json(runtime_root,'hello-trust.json',140000)
+        if value==MACHINE_TRUST and type(value.get('version')) is int:return 'local-machine-root'
         if (type(value) is not dict or set(value)!={'version','roots'} or
                 type(value['version']) is not int or value['version']!=2 or
                 type(value['roots']) is not list or not 1<=len(value['roots'])<=8):raise ValueError()
@@ -56,7 +59,9 @@ def trust_roots(runtime_root):
 def validate_attestation(key,evidence,roots):
     if type(evidence) is not dict or set(evidence)!={'statement','certificate_chain'}:raise ValueError()
     statement=hex_bytes(evidence['statement'],65536);chain=hex_bytes(evidence['certificate_chain'],65536)
-    if not native.verify_windows_hello_attestation(key,statement,chain,roots):raise ValueError()
+    valid=(native.verify_windows_hello_attestation_machine(key,statement,chain) if roots=='local-machine-root' else
+        native.verify_windows_hello_attestation(key,statement,chain,roots))
+    if not valid:raise ValueError()
 
 
 def validate_response(challenge,response,roots,*,clock=time.time):
@@ -87,6 +92,8 @@ def first_enrollment_review(configuration,challenge):
         '人工审批：'+('开启' if app.get('manual_approval_required',True) else '关闭'),
         '自动回复：未启用','',f"联系人范围（{len(app['resources'])} 项）："]
     lines.extend(quote(row['conversation_id']) for row in app['resources'])
+    source=configuration.get('credential_import')
+    if source:lines.extend(['','凭据解释：'+{'raw':'原始页密钥','password':'32 字节口令，按各分库 salt 派生'}.get(source.get('key_mode'),'按文件声明；纯 hex 视为原始页密钥')])
     lines.extend(['',f"配置指纹：{challenge['configuration_digest']}",
         '确认截止：'+datetime.fromtimestamp(challenge['expires']).astimezone().isoformat(timespec='seconds')])
     if 'build_digest' in challenge:lines.extend(['',f"构建指纹：{challenge['build_digest']}"])

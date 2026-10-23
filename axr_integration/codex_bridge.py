@@ -5,6 +5,17 @@ from pathlib import Path
 from axr.aet import AXRError
 
 def codex_binary():
+    if sys.platform=='win32':
+        binary=shutil.which('codex.exe')
+        if binary:return binary
+        from axr import _axr_native as native
+        installed=Path(native.windows_installation_root())/'runtime/provider/codex.exe'
+        if installed.is_file():return str(installed)
+        app=Path.home()/'AppData/Local/OpenAI/Codex/bin'
+        candidates=list(app.glob('*/codex.exe'))[:64] if app.is_dir() else []
+        for path in sorted(candidates,key=lambda p:p.stat().st_mtime_ns,reverse=True):
+            if path.is_file() and not path.is_symlink():return str(path)
+        raise AXRError('codex_cli_required')
     binary=shutil.which('codex')
     if binary:return binary
     # Finder launches do not inherit the interactive shell PATH. Reuse a

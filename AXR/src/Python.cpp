@@ -49,6 +49,10 @@ PYBIND11_MODULE(_axr_native,m) {
         std::vector<std::string> pins;for(const auto& root:roots)pins.emplace_back(root);
         auto key=std::string(owner),blob=std::string(statement),certificates=std::string(chain);
         py::gil_scoped_release release;return VerifyWindowsHelloAttestation(key,blob,certificates,pins);});
+    m.def("verify_windows_hello_attestation_machine",[](py::bytes owner,py::bytes statement,py::bytes chain){
+        auto key=std::string(owner),blob=std::string(statement),certificates=std::string(chain);
+        py::gil_scoped_release release;return VerifyWindowsHelloAttestationMachine(key,blob,certificates);});
+    m.def("windows_public_ca_bundle",&WindowsMachineCABundle,py::call_guard<py::gil_scoped_release>());
     py::class_<WindowsHelloOwnerKey>(m,"WindowsHelloOwnerKey")
       .def(py::init([](py::bytes key){auto value=std::string(key);py::gil_scoped_release release;return std::make_unique<WindowsHelloOwnerKey>(std::move(value));}),py::arg("expected_public_key"))
       .def_property_readonly("public_key",[](const WindowsHelloOwnerKey& key){return py::bytes(key.PublicKey());})

@@ -22,6 +22,7 @@
 using namespace Stellaria::AXR;
 namespace {
 std::atomic<bool> stopRequested=false;
+std::string lastErrorCode;
 void Installed(const std::filesystem::path& root,bool requireOwnership=true){
 #if defined(__APPLE__)
     SecCodeRef dynamic=nullptr;SecStaticCodeRef code=nullptr;
@@ -174,6 +175,7 @@ int Serve(bool initialize=false,bool ownerControl=false,bool refresh=false,bool 
         auto text=value?PyObject_Str(value):nullptr;auto raw=text?PyUnicode_AsUTF8(text):nullptr;
         std::string code=raw?raw:"authority_operation_failed";
         if(code.empty()||code.size()>100||code.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")!=std::string::npos)code="authority_operation_failed";
+        lastErrorCode=code;
         std::string kind=type&&PyType_Check(type)?reinterpret_cast<PyTypeObject*>(type)->tp_name:"RuntimeError";
         if(kind.size()>80||kind.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.")!=std::string::npos)kind="RuntimeError";
         std::cerr<<Json{{"error_code",code},{"exception_type",kind}}.dump()<<'\n';
@@ -193,7 +195,9 @@ void WINAPI Control(DWORD code){if(code==SERVICE_CONTROL_STOP){serviceStatus.dwC
 void WINAPI ServiceMain(DWORD,LPWSTR*){
     serviceHandle=RegisterServiceCtrlHandlerW(L"StellariaAXRAuthority",Control);if(!serviceHandle)return;
     serviceStatus.dwServiceType=SERVICE_WIN32_OWN_PROCESS;serviceStatus.dwControlsAccepted=SERVICE_ACCEPT_STOP;serviceStatus.dwCurrentState=SERVICE_RUNNING;SetServiceStatus(serviceHandle,&serviceStatus);
-    try{Serve(serviceAction==1||serviceAction==3,false,serviceAction==2,serviceAction==3);}catch(...){serviceStatus.dwWin32ExitCode=ERROR_SERVICE_SPECIFIC_ERROR;serviceStatus.dwServiceSpecificExitCode=1;}
+    try{Serve(serviceAction==1||serviceAction==3,false,serviceAction==2,serviceAction==3);}catch(...){
+        if(!(serviceAction==1&&lastErrorCode=="authority_already_initialized")){
+            serviceStatus.dwWin32ExitCode=ERROR_SERVICE_SPECIFIC_ERROR;serviceStatus.dwServiceSpecificExitCode=1;}}
     serviceStatus.dwCurrentState=SERVICE_STOPPED;SetServiceStatus(serviceHandle,&serviceStatus);
 }
 #endif

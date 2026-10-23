@@ -317,6 +317,10 @@ CFStringRef Text(const std::string& text){return CFStringCreateWithBytes(nullptr
 template<bool Fixture=false> Json ImportOwnerFile(const Json& configuration,const Json& source){
     std::unique_ptr<ProtectedStore> destination;
     if constexpr(!Fixture)destination=std::make_unique<ProtectedStore>(configuration.at("credential_namespace"));
+    if(!source.is_object()||(source.size()!=2&&source.size()!=3)||!source.contains("path")||!source.contains("sha256")||
+        (source.size()==3&&(!source.contains("key_mode")||(source.at("key_mode")!="raw"&&source.at("key_mode")!="password"))))
+        throw std::runtime_error("wcdb_import_format_invalid");
+    bool password=source.value("key_mode",Json("raw"))=="password";
     Cipher api(configuration.at("sqlcipher_library"));unsigned count=0;
     // Authenticate the native store identity before touching the selected file.
     try{if constexpr(!Fixture){auto existing=destination->Get(NativeKeyName(configuration.at("shards").at(0).at("key_reference")));OPENSSL_cleanse(existing.data(),existing.size());}}
@@ -361,7 +365,7 @@ template<bool Fixture=false> Json ImportOwnerFile(const Json& configuration,cons
 #endif
     // Either one owner-supplied raw key, or {"keys": {salt_hex: key_hex}}.
     // No executable format, process inspection, key export or caller SQL.
-    std::map<std::string,std::string> values;bool password=false;
+    std::map<std::string,std::string> values;
     struct EraseValues{std::map<std::string,std::string>& values;~EraseValues(){for(auto& [_,v]:values)OPENSSL_cleanse(v.data(),v.size());}} eraseValues{values};
     if(raw.find_first_not_of("0123456789abcdefABCDEF\r\n \t")==std::string::npos){
         auto start=raw.find_first_not_of("\r\n \t"),end=raw.find_last_not_of("\r\n \t");
@@ -382,6 +386,7 @@ template<bool Fixture=false> Json ImportOwnerFile(const Json& configuration,cons
         if(decoded.size()!=1){
             if(decoded.size()!=3||!decoded.contains("version")||decoded["version"]!=1||!decoded["version"].is_number_integer()||
                 !decoded.contains("key_mode")||(decoded["key_mode"]!="raw"&&decoded["key_mode"]!="password"))throw std::runtime_error("wcdb_import_format_invalid");
+            if(source.contains("key_mode")&&source.at("key_mode")!=decoded.at("key_mode"))throw std::runtime_error("wcdb_import_key_mode_conflict");
             password=decoded["key_mode"]=="password";
         }
         for(auto it=decoded["keys"].begin();it!=decoded["keys"].end();++it){

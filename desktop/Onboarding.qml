@@ -77,6 +77,7 @@ Dialog {
                         RowLayout { visible: setup.environment.installed===true; Layout.fillWidth: true
                             GlassButton { text: "连接服务"; onClicked: setup.controller.start() }
                             GlassButton { text: "初始化连接"; onClicked: initializeConfirm.open() }
+                            GlassButton { objectName: "recoverWindowsSetup"; visible: setup.environment.platform==="windows"; text: "恢复中断的初始化"; onClicked: recoveryConfirm.open() }
                         }
                         Detail { Layout.fillWidth: true; text: "首次初始化需本机认证，建立连接后仍不会授予会话访问权限。" }
                     }
@@ -88,6 +89,7 @@ Dialog {
                     Card { Layout.fillWidth: true; visible: setup.environment.installed!==true
                         Copy { text: "安装本机安全服务"; font.weight: Font.Medium }
                         StateRow { title: "随 App 提供的组件"; ready: setup.environment.components===true }
+                        GlassButton { visible: setup.environment.platform==="windows"; text: "选择本机组件"; onClicked: setup.controller.chooseSetupPackage() }
                         RowLayout { Layout.fillWidth: true
                             GlassButton { objectName: "chooseWechatData"; text: "选择微信数据"; onClicked: setup.controller.chooseWechatData() }
                             Detail { Layout.fillWidth: true; text: setup.environment.folder ? "已选择数据文件夹" : "选择本人账号的 db_storage 文件夹" }
@@ -97,6 +99,9 @@ Dialog {
                             color: Theme.ink; padding: 12; selectByMouse: true
                         }
                         GlassCombo { id: credentialMode; Layout.fillWidth: true; model: ["导入本人已有的数据凭据","迁移已有 AXR 凭据索引"] }
+                        GlassCombo { objectName: "windowsCredentialMode"; visible: setup.environment.platform==="windows" && credentialMode.currentIndex===0; Layout.fillWidth: true
+                            model: ["按文件声明（纯 hex 视为页密钥）","原始页密钥","32 字节口令"]
+                            onActivated: setup.controller.setSetupCredentialMode(["file","raw","password"][currentIndex]) }
                         RowLayout { Layout.fillWidth: true
                             GlassButton { text: "选择凭据"; onClicked: setup.controller.chooseWechatCredential(credentialMode.currentIndex===1) }
                             Detail { Layout.fillWidth: true; text: setup.environment.credential || "仅本机导入，不上传到模型"; elide: Text.ElideMiddle }
@@ -111,6 +116,7 @@ Dialog {
                         StateRow { title: "Codex 已登录"; ready: setup.environment.login===true }
                         RowLayout { Layout.fillWidth: true
                             GlassButton { text: "获取 Codex"; onClicked: setup.controller.openCodexDownload() }
+                            GlassButton { visible: setup.environment.platform==="windows"; text: "选择本机程序"; onClicked: setup.controller.chooseSetupCodex() }
                             GlassButton { text: "登录 Codex"; enabled: setup.environment.codex===true && setup.environment.login!==true && !setup.controller.data.loading; onClicked: setup.controller.loginCodex() }
                             GlassButton { text: "重新检查"; enabled: !setup.controller.data.loading; onClicked: setup.controller.inspectSetupEnvironment() }
                         }
@@ -184,6 +190,18 @@ Dialog {
             RowLayout { Layout.alignment: Qt.AlignRight
                 GlassButton { text: "取消"; onClicked: initializeConfirm.close() }
                 GlassButton { text: "继续初始化"; primary: true; onClicked: {initializeConfirm.close();setup.controller.initializeSetup()} }
+            }
+        }
+    }
+    Dialog {
+        id: recoveryConfirm; anchors.centerIn: parent; modal: true; header: null; padding: 24; width: Math.min(440,setup.width-32)
+        background: GlassPanel { radius: 22; tint: Theme.dark ? "#FA2B332E" : "#FCFFFFFF" }
+        contentItem: ColumnLayout { spacing: 18
+            Copy { text: "恢复未完成的初始化？"; font.pixelSize: 20; font.weight: Font.DemiBold }
+            Detail { Layout.fillWidth: true; text: "仅适用于首次设置中断。需要管理员确认，并由本人核对既有 Windows Hello 密钥和本次配置。不会创建或替换密钥、恢复旧授权或发送消息。已有正式部署会拒绝此操作。" }
+            RowLayout { Layout.alignment: Qt.AlignRight
+                GlassButton { text: "取消"; onClicked: recoveryConfirm.close() }
+                GlassButton { text: "审查并恢复"; primary: true; onClicked: {recoveryConfirm.close();setup.controller.recoverSetup()} }
             }
         }
     }

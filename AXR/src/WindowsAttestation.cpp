@@ -96,9 +96,10 @@ struct Store {HCERTSTORE value=nullptr;~Store(){if(value)CertCloseStore(value,0)
 struct Engine {HCERTCHAINENGINE value=nullptr;~Engine(){if(value)CertFreeCertificateChainEngine(value);}};
 struct Certificate {PCCERT_CONTEXT value=nullptr;~Certificate(){if(value)CertFreeCertificateContext(value);}};
 struct Chain {PCCERT_CHAIN_CONTEXT value=nullptr;~Chain(){if(value)CertFreeCertificateChain(value);}};
-bool Attestation(std::string_view publicKey,std::string_view statement,std::string_view encodedChain,const std::vector<std::string>& roots){
-    if(publicKey.size()!=294||statement.size()>65536||encodedChain.empty()||encodedChain.size()>65536||roots.empty()||roots.size()>8)return false;
-    Store trust{CertOpenStore(CERT_STORE_PROV_MEMORY,0,0,CERT_STORE_CREATE_NEW_FLAG,nullptr)};
+bool Attestation(std::string_view publicKey,std::string_view statement,std::string_view encodedChain,const std::vector<std::string>& roots,bool machine=false){
+    if(publicKey.size()!=294||statement.size()>65536||encodedChain.empty()||encodedChain.size()>65536||(!machine&&roots.empty())||roots.size()>8)return false;
+    Store trust{machine?CertOpenStore(CERT_STORE_PROV_SYSTEM_W,0,0,CERT_SYSTEM_STORE_LOCAL_MACHINE|CERT_STORE_READONLY_FLAG|CERT_STORE_OPEN_EXISTING_FLAG,L"ROOT"):
+        CertOpenStore(CERT_STORE_PROV_MEMORY,0,0,CERT_STORE_CREATE_NEW_FLAG,nullptr)};
     if(!trust.value)return false;
     for(const auto& root:roots){if(root.empty()||root.size()>8192||!CertAddEncodedCertificateToStore(trust.value,X509_ASN_ENCODING,
             reinterpret_cast<const BYTE*>(root.data()),DWORD(root.size()),CERT_STORE_ADD_NEW,nullptr))return false;}
@@ -144,6 +145,33 @@ bool VerifyWindowsHelloAttestation(std::string_view owner,std::string_view state
     try{return Attestation(owner,statement,chain,roots);}catch(...){return false;}
 #else
     (void)owner;(void)statement;(void)chain;(void)roots;return false;
+#endif
+}
+bool VerifyWindowsHelloAttestationMachine(std::string_view owner,std::string_view statement,std::string_view chain){
+#if defined(_WIN32)
+    try{return Attestation(owner,statement,chain,{},true);}catch(...){return false;}
+#else
+    (void)owner;(void)statement;(void)chain;return false;
+#endif
+}
+std::string WindowsMachineCABundle(){
+#if defined(_WIN32)
+    Store roots{CertOpenStore(CERT_STORE_PROV_SYSTEM_W,0,0,CERT_SYSTEM_STORE_LOCAL_MACHINE|CERT_STORE_READONLY_FLAG|CERT_STORE_OPEN_EXISTING_FLAG,L"ROOT")};
+    if(!roots.value)throw std::runtime_error("windows_public_roots_unavailable");
+    std::string pem;PCCERT_CONTEXT certificate=nullptr;unsigned count=0;
+    while((certificate=CertEnumCertificatesInStore(roots.value,certificate))){
+        if(++count>512||certificate->cbCertEncoded>8192){CertFreeCertificateContext(certificate);throw std::runtime_error("windows_public_roots_budget");}
+        DWORD size=0;
+        if(!CryptBinaryToStringA(certificate->pbCertEncoded,certificate->cbCertEncoded,CRYPT_STRING_BASE64HEADER,nullptr,&size)||size>16384){CertFreeCertificateContext(certificate);throw std::runtime_error("windows_public_roots_invalid");}
+        std::string text(size,'\0');
+        if(!CryptBinaryToStringA(certificate->pbCertEncoded,certificate->cbCertEncoded,CRYPT_STRING_BASE64HEADER,text.data(),&size)){
+            CertFreeCertificateContext(certificate);throw std::runtime_error("windows_public_roots_invalid");}
+        if(!text.empty()&&text.back()=='\0')text.pop_back();pem+=text;
+        if(pem.size()>2*1024*1024){CertFreeCertificateContext(certificate);throw std::runtime_error("windows_public_roots_budget");}
+    }
+    if(!count)throw std::runtime_error("windows_public_roots_unavailable");return pem;
+#else
+    throw std::runtime_error("windows_public_roots_platform_required");
 #endif
 }
 }

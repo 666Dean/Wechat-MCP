@@ -42,7 +42,9 @@ class Controller(QObject):
         self.completed.connect(self.accept)
         self._agent_approval={};self._agent_approvals=[];self.agent_bridge=OwnerAgentBridge(self.agentEvent.emit);self.agentEvent.connect(self.acceptAgent)
         self.timer=QTimer(self);self.timer.timeout.connect(self.refresh);self.timer.start(10000)
-        if not self.fixture and authority_installed():QTimer.singleShot(0,self.start)
+        # Windows elevation is reserved for an explicit service button. The
+        # normal refresh below connects read-only when the service is running.
+        if not self.fixture and sys.platform!='win32' and authority_installed():QTimer.singleShot(0,self.start)
         self.refresh()
         if not self.fixture:QTimer.singleShot(0,self.loadAssistant);QTimer.singleShot(0,self.loadModels)
     @Slot(str,str,str)
@@ -97,16 +99,23 @@ class Controller(QObject):
         if self.fixture:return
         def inspect():
             from axr_integration.codex_bridge import codex_binary
-            from .provisioning import payload_location
+            if sys.platform=='win32':from .windows_provisioning import payload_location
+            else:from .provisioning import payload_location
             value={'installed':authority_installed(),'account':self._setup_inputs.get('account',''),
+                   'platform':'windows' if sys.platform=='win32' else 'macos',
                    'folder':Path(self._setup_inputs['root']).name if self._setup_inputs.get('root') else '',
                    'credential':Path(self._setup_inputs['credential']).name if self._setup_inputs.get('credential') else '',
                    'index':self._setup_inputs.get('index',False)}
-            try:payload_location();value['components']=True
+            try:
+                if sys.platform=='win32' and self._setup_package:
+                    from scripts.install_authority_windows import review
+                    review(self._setup_package)
+                else:payload_location()
+                value['components']=True
             except Exception:value['components']=False
             try:
-                binary=codex_binary();value['codex']=True
-                result=subprocess.run([binary,'login','status'],capture_output=True,timeout=15)
+                binary=self._setup_inputs.get('provider') or codex_binary();value['codex']=True
+                result=subprocess.run([binary,'login','status'],capture_output=True,timeout=15,**({'creationflags':subprocess.CREATE_NO_WINDOW} if sys.platform=='win32' else {}))
                 value['login']=result.returncode==0 and (Path.home()/'.codex/auth.json').is_file()
             except Exception:value.update(codex=False,login=False)
             return value
@@ -115,6 +124,7 @@ class Controller(QObject):
     def chooseWechatData(self):
         if self.fixture:return
         start=Path.home()/'Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files'
+        if sys.platform=='win32':start=Path.home()/'Documents/xwechat_files'
         path=QFileDialog.getExistingDirectory(None,'选择本人微信的 db_storage 文件夹',str(start if start.is_dir() else Path.home()))
         if path:
             root=Path(path)
@@ -130,13 +140,32 @@ class Controller(QObject):
         if path:self._setup_inputs.update(credential=path,index=index);self.inspectSetupEnvironment()
     @Slot(str)
     def setSetupAccount(self,value):self._setup_inputs['account']=value.strip()
+    @Slot(str)
+    def setSetupCredentialMode(self,value):
+        if value in ('file','raw','password'):self._setup_inputs['key_mode']=value
+    @Slot()
+    def chooseSetupCodex(self):
+        if self.fixture or sys.platform!='win32':return
+        path,_=QFileDialog.getOpenFileName(None,'选择本机 Codex 原生程序',filter='原生程序 (*.exe)')
+        if path:self._setup_inputs['provider']=path;self.inspectSetupEnvironment()
     @Slot()
     def installBundledService(self):
         if self.fixture:return
-        inputs=dict(self._setup_inputs)
+        inputs=dict(self._setup_inputs);selected_package=self._setup_package
         def deploy():
             if authority_installed():raise AXRError('setup_service_already_installed')
             if not {'root','account','credential'}<=set(inputs):raise AXRError('setup_account_and_credential_required')
+            if sys.platform=='win32':
+                from .windows_provisioning import configuration,payload_location
+                from .windows_setup import invoke,cache_root,private_request_directory
+                from axr import _axr_native as native
+                from axr_integration.codex_bridge import codex_binary
+                import uuid
+                owner=json.loads(native.process_identity(os.getpid()))['user']
+                workspace=private_request_directory(cache_root(owner)/('local-'+uuid.uuid4().hex),owner)
+                package=selected_package or payload_location()
+                config,assets=configuration(inputs['root'],inputs['account'],inputs['credential'],inputs.get('provider') or codex_binary(),workspace,index=inputs.get('index',False),key_mode=inputs.get('key_mode','file'))
+                return invoke('install',{'package':str(package),'configuration':config,'local_assets':{k:str(v) for k,v in assets.items()}})
             import tempfile
             from axr.storage import private_directory
             from .provisioning import configuration,payload_location,unpack_payload
@@ -157,9 +186,10 @@ class Controller(QObject):
         if self.fixture:return
         def login():
             from axr_integration.codex_bridge import codex_binary
-            binary=codex_binary()
+            binary=self._setup_inputs.get('provider') or codex_binary()
             # Official browser login; no password/token is requested by AXR.
-            result=subprocess.run([binary,'login'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=240)
+            result=subprocess.run([binary,'login'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=240,
+                **({'creationflags':subprocess.CREATE_NO_WINDOW} if sys.platform=='win32' else {}))
             if result.returncode:raise AXRError('setup_codex_login_required')
             return {'login':True}
         self.run('setup_login',login)
@@ -176,10 +206,11 @@ class Controller(QObject):
         if self.fixture:return
         path=QFileDialog.getExistingDirectory(None,'选择本地服务安装包')
         if path:
-            self._setup_package=Path(path);self.setupChanged.emit()
+            self._setup_package=Path(path);self.setupChanged.emit();self.inspectSetupEnvironment()
     @Slot()
     def installSetupPackage(self):
         if self.fixture or not self._setup_package:return
+        if sys.platform=='win32':self.installBundledService();return
         package=self._setup_package
         def install_service():
             if authority_installed():raise AXRError('setup_service_already_installed')
@@ -191,6 +222,9 @@ class Controller(QObject):
         if self.fixture:return
         def initialize():
             if not authority_installed():raise AXRError('setup_service_required')
+            if sys.platform=='win32':
+                from .windows_setup import invoke
+                return invoke('initialize')
             binary='/Library/Application Support/Stellaria AXR/AXR Authority.app/Contents/MacOS/axr-authority'
             result=subprocess.run([binary,'--initialize-owner'],capture_output=True,timeout=200)
             if result.returncode:
@@ -202,6 +236,16 @@ class Controller(QObject):
             from scripts.register_authority_service import register
             return register()
         self.run('setup_initialize',initialize)
+    @Slot()
+    def recoverSetup(self):
+        if self.fixture or sys.platform!='win32':return
+        from .windows_setup import invoke
+        self.run('setup_initialize',lambda:invoke('recover'))
+    @Slot()
+    def startWindowsService(self):
+        if self.fixture or sys.platform!='win32':return
+        from .windows_setup import invoke
+        self.run('setup_start',lambda:invoke('start'))
     @Slot()
     def verifySetup(self):
         if self.fixture:return
@@ -397,6 +441,12 @@ class Controller(QObject):
                     'setup_components_changed':'安装组件校验未通过，请重新下载。','setup_credential_index_mismatch':'凭据索引不属于此账号或分库已变化，请重新核对。',
                     'setup_codex_login_required':'请先通过 Codex 官方窗口完成登录，再检查连接。',
                     'setup_codex_runtime_not_self_contained':'未找到可独立部署的签名 Codex 组件，请通过「获取 Codex」安装官方 App 后重试。'}.get(result['error'],'本机设置未完成，请核对所选文件、系统权限与 Codex 登录后重试。')
+            if result['error'].startswith('windows_'):
+                self._notice={'windows_setup_cancelled':'已取消管理员确认，本次未安装或初始化。',
+                    'windows_setup_outcome_unknown_no_retry':'尚不能确认安装操作结果。请检查本地服务状态，不要重复发起。',
+                    'windows_service_operation_failed':'本机服务尚未就绪。初始化中断时，可选择显式恢复；不会自动替换密钥。',
+                    'windows_service_must_be_stopped':'服务仍在运行，请先停止，再更新或初始化。',
+                    'windows_install_local_asset_changed':'所选组件在审查后发生变化，请重新选择。'}.get(result['error'],'Windows 本机设置未完成，请检查组件、管理员权限和 Windows Hello。')
             if result['error'].startswith('owner_os_authentication_failed'):
                 self._notice=('系统取消了身份认证，请保持认证窗口在前台后重试。'
                     if result['error']=='owner_os_authentication_failed:owner_auth_denied:os_error_-4' else
@@ -418,7 +468,13 @@ class Controller(QObject):
             return
         if name=='setup_environment':self._setup_environment=value;self.setupChanged.emit();return
         if name in ('setup_install','setup_login','setup_connect_codex'):self.inspectSetupEnvironment()
-        if name in ('setup_initialize','setup_connect_codex'):self.start();self.verifySetup()
+        if name in ('setup_initialize','setup_connect_codex','setup_start'):
+            if sys.platform=='win32':self.refresh()
+            else:self.start()
+            self.verifySetup()
+        if name=='setup_initialize' and sys.platform=='win32' and value.get('initialized'):
+            self._notice='初始化已完成。' + ('本地服务已启动，接下来核对连接和范围。' if value.get('service_started') else '服务尚未就绪，请查看连接检查。')
+            self.noticeChanged.emit()
         if name=='setup_install':self._notice='组件安装完成。请继续初始化，再授予系统权限。';self.noticeChanged.emit()
         if name=='chat_prompt' and self._submitted:
             submitted=self._submitted;self._submitted=None
@@ -515,7 +571,12 @@ class Controller(QObject):
         if self.fixture:return
         def launch():
             if authority_installed():
-                subprocess.run(['/bin/launchctl','kickstart','gui/'+str(os.getuid())+'/org.stellaria.axr.authority'],check=True,capture_output=True)
+                if sys.platform=='win32':
+                    try:return authority_call(self.state,'status')
+                    except AXRError:pass
+                    from .windows_setup import invoke
+                    invoke('start')
+                else:subprocess.run(['/bin/launchctl','kickstart','gui/'+str(os.getuid())+'/org.stellaria.axr.authority'],check=True,capture_output=True)
                 for _ in range(30):
                     try:return authority_call(self.state,'status')
                     except AXRError:time.sleep(.2)
@@ -661,7 +722,8 @@ class Controller(QObject):
             from mcp.client.stdio import stdio_client
             async def test():
                 async with asyncio.timeout(15):
-                    params=(StdioServerParameters(command='/Library/Application Support/Stellaria AXR/AXR MCP.app/Contents/MacOS/axr-frontend',args=['--mcp'])
+                    from .codex_config import native_frontend
+                    params=(StdioServerParameters(command=native_frontend(),args=['--mcp'])
                         if authority_installed() else StdioServerParameters(command=sys.executable,args=[str(Path(__file__).resolve().parent.parent/'server.py'),
                         '--axr-state',str(Path(self.state).resolve()),'--broker']))
                     async with stdio_client(params) as (r,w):
@@ -695,6 +757,8 @@ def main():
     if args.capture and not args.fixture:parser.error('Screenshots are supported only for the synthetic fixture')
     QQuickStyle.setStyle('Basic')
     app=QApplication(sys.argv);app.setApplicationName('WeChat MCP Developer Preview' if getattr(sys,'frozen',False) else 'WeChat MCP Desktop');app.setOrganizationName('Stellaria Studio')
+    from .fonts import configure
+    configure(app)
     app.setWindowIcon(QIcon(str(Path(__file__).with_name('icon.svg'))))
     app.styleHints().setColorScheme(Qt.ColorScheme.Dark if args.theme=='dark' else Qt.ColorScheme.Light)
     controller=Controller(args.state,args.helper,args.fixture,args.fixture_case)

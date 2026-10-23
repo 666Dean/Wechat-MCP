@@ -16,6 +16,20 @@ class WindowsServiceDesktop(unittest.TestCase):
     def setUp(self):
         self.fixture=fixtures.DesktopUI();self.controller,self.engine,self.window=self.fixture.create()
         self.controller.timer.stop();self.addCleanup(self.fixture.dispose,self.controller,self.engine,self.window)
+    def test_opening_desktop_only_schedules_read_only_connection_without_admin_start(self):
+        from desktop.app import Controller
+        with patch('desktop.app.authority_installed',return_value=True),patch('desktop.app.QTimer.singleShot') as schedule,patch.object(Controller,'run'):
+            c=Controller('/unused-synthetic-startup')
+        try:
+            self.assertNotIn('start',[call.args[1].__name__ for call in schedule.call_args_list])
+        finally:c.fixture=True;c.close()
+    def test_offscreen_fixture_registers_os_collection_fonts_with_real_chinese_glyph(self):
+        import os
+        from pathlib import Path
+        if not (Path(os.environ['SystemRoot'])/'Fonts/msyh.ttc').is_file():self.skipTest('optional Windows Chinese OS fonts')
+        from desktop.fonts import configure
+        from PySide6.QtWidgets import QApplication
+        self.assertTrue(configure(QApplication.instance()))
     def test_pending_disclosure_has_real_review_button_and_fixed_owner_route(self):
         c,w=self.controller,self.window
         c._data.update(connected=True,status={'pending_review_supported':True,'manual_approval_required':True},

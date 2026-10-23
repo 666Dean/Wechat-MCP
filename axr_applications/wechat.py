@@ -40,8 +40,11 @@ def _configuration(value):
     if value.get('legacy_namespace') and value.get('credential_import'):raise AXRError('wechat_deployment_configuration_invalid')
     if 'credential_import' in value:
         source=value['credential_import']
-        if (type(source) is not dict or set(source)!={'path','sha256'} or not Path(source['path']).is_absolute()
+        fields={'path','sha256'}
+        if os.name=='nt' and type(source) is dict and 'key_mode' in source:fields.add('key_mode')
+        if (type(source) is not dict or set(source)!=fields or not Path(source['path']).is_absolute()
             or re.fullmatch('[0-9a-f]{64}',source['sha256']) is None):raise AXRError('wechat_deployment_configuration_invalid')
+        if 'key_mode' in source and source['key_mode'] not in ('raw','password'):raise AXRError('wechat_deployment_configuration_invalid')
     root=resources_root();application=dict(value['application'])
     if type(application.get('manual_approval_required',True)) is not bool:raise AXRError('wechat_approval_setting_invalid')
     def asset(value):

@@ -84,7 +84,7 @@ def stage(root,build,dependencies,output,vc_runtime,vc_notice):
         if not found:raise ValueError('windows_dependency_license_missing_'+name)
     # Fresh isolated host: no site/env/PATH fallback, no authority/owner action.
     result=subprocess.run([str(output/'axr-runtime-check.exe'),'--validate-runtime'],capture_output=True,timeout=30,
-        env={k:v for k,v in os.environ.items() if k in ('SystemRoot','WINDIR','TEMP','TMP')})
+        env={k:v for k,v in os.environ.items() if k.upper() in ('SYSTEMROOT','WINDIR','TEMP','TMP')})
     if result.returncode:raise ValueError('windows_staged_runtime_validation_failed')
     report=json.loads(result.stdout)
     if report.get('runtime_valid') is not True or report.get('authority_started') is not False:raise ValueError('windows_staged_runtime_validation_failed')
