@@ -1,5 +1,10 @@
 # 更新日志
 
+## 2026-10-23 · 修复 Windows CI 临时目录短路径断言
+
+- `c55454f` 的 Windows Actions 完整回归仅有一项失败：runner 把临时目录的 `RUNNER~1` 短路径解析为 `runneradmin` 长路径，测试把这两种等价表示当成不同的 helper。断言改为核对 `AuthorityNavigation` 实际传给原生启动器的已解析路径；原生身份、映像哈希和权限检查未变。该运行的 macOS 与 native-fuzz 作业已通过。
+- 本机 Python 3.12 定向 6 项发现、5 项通过、1 项因未显式提供原生 helper 跳过；带原生组件的完整回归 727 项发现、685 项通过、42 项条件跳过（105.300 秒）。仍有退出时 19 个 GC 对象警告。修复提交的远端结果另行核对；本次没有微信实机操作。
+
 ## 2026-10-23 · Windows 交互 helper 通道验证与收尾
 
 - 将现有 owner 初始化中的会话选择、受控环境、暂停启动及 JobObject 清理抽为共用内部代码，新增受保护 LocalSystem authority 到固定已安装 `wechat-uia.exe` 的单次通道。仅选择登记 owner SID 的唯一活动会话，在恢复线程前核对映像、哈希和真实用户，不继承句柄、调用者环境或导出 token；普通 Python 在 token/启动前拒绝。JobObject 只管理生命周期，不作为模型隔离。

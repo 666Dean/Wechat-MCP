@@ -29,7 +29,7 @@ class WindowsInteractiveNavigation(unittest.TestCase):
                 'axr_applications.wechat_execution.process_identity',return_value=self.actual),patch(
                 'axr_applications.wechat_execution.subprocess.Popen') as popen:
             result=self.bridge.invoke(self.action(),check=lambda:None)
-        popen.assert_not_called();self.assertEqual(launch.call_args.args[:3],(self.actual['user'],str(self.helper),self.actual['image_sha256']))
+        popen.assert_not_called();self.assertEqual(launch.call_args.args[:3],(self.actual['user'],str(self.bridge.helper),self.actual['image_sha256']))
         self.assertEqual([name for name,value in self.events],['enroll','release'])
         submitted=json.loads(self.channel.submit.call_args.args[0]);self.assertEqual(submitted['mode'],'binding')
         self.assertEqual(submitted['guard_context']['authority_endpoint'],'unused')
