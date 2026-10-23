@@ -120,6 +120,50 @@ class AuthorityNavigation:
             try:error=completed.get(timeout=min(.05,remaining));break
             except queue.Empty:continue
         if error:raise error
+    def _instance(self,process):
+        actual=process_identity(process.pid)
+        if (actual['image_sha256']!=self.sha or Path(actual['image']).resolve()!=self.helper or
+                (os.name=='nt' and self.owner_user is not None and actual['user']!=self.owner_user)):
+            raise AXRError('wechat_native_bridge_instance_changed')
+        return actual
+    @staticmethod
+    def _close(process):
+        if process.poll() is None:
+            process.terminate()
+            try:process.wait(timeout=2)
+            except subprocess.TimeoutExpired:process.kill();process.wait()
+        for stream in (process.stdin,process.stdout):
+            if stream and not stream.closed:stream.close()
+    def readiness(self,executable_sha256,*,check=lambda:None):
+        """Content-free pre-consent probe in the fixed owner's interactive session.
+
+        Transport authentication permits only the fixed metadata request. It
+        never enrolls a handler, prepares a proof, claims a task or reads text.
+        Ordinary subprocess/stdin fallback is deliberately unavailable.
+        """
+        if os.name!='nt' or self.owner_user is None:raise AXRError('wechat_interactive_owner_user_required')
+        if (type(executable_sha256) is not str or len(executable_sha256)!=64 or
+                any(ch not in '0123456789abcdef' for ch in executable_sha256)):
+            raise AXRError('wechat_readiness_executable_pin_required')
+        check()
+        if hashlib.sha256(self.helper.read_bytes()).hexdigest()!=self.sha:raise AXRError('wechat_native_bridge_build_changed')
+        process=_WindowsNavigationProcess(self.owner_user,self.helper,self.sha,check)
+        try:
+            if self._frame(process,5,check)!={'version':2,'ready':True,'input_received':False}:
+                raise AXRError('wechat_native_bridge_ready_required')
+            actual=self._instance(process)
+            request={'mode':'readiness','executable_hash':executable_sha256}
+            check()
+            if process_identity(process.pid)!=actual:raise AXRError('wechat_native_bridge_instance_changed')
+            self._write_frame(process,canonical(request)+b'\n',check)
+            result=self._frame(process,15,check);check()
+            fields={'running','ambiguous_process','accessibility','send_invoked','content_disclosed'}
+            if (type(result) is not dict or set(result)!=fields or any(type(value) is not bool for value in result.values()) or
+                    result['send_invoked'] or result['content_disclosed'] or
+                    (result['accessibility'] and (not result['running'] or result['ambiguous_process']))):
+                raise AXRError('wechat_readiness_metadata_required')
+            return result
+        finally:self._close(process)
     def invoke(self, action, *, check):
         mode=action.payload.get('mode');operations={'binding':'status.read','navigate':'application.navigate','stage_draft':'application.draft','read_draft':'messages.read','send':'messages.send'}
         if os.name=='nt':operations['read_draft']='status.read' # Local comparison metadata; keep DB read handler distinct.
@@ -138,8 +182,7 @@ class AuthorityNavigation:
         proof=None;submitted=False;actual=None
         try:
             if self._frame(process,5,check)!={'version':2,'ready':True,'input_received':False}:raise AXRError('wechat_native_bridge_ready_required')
-            actual=process_identity(process.pid)
-            if actual['image_sha256']!=self.sha or Path(actual['image']).resolve()!=self.helper:raise AXRError('wechat_native_bridge_instance_changed')
+            actual=self._instance(process)
             # These callbacks are installed root code, never MCP parameters.
             self.enroll(actual)
             proof=self.prepare(action,actual)
@@ -166,10 +209,5 @@ class AuthorityNavigation:
             if submitted and mode=='send':return {'receipt':{'state':'Unknown','execution_id':action.execution_id},'native':None,'retry':False,'delivery_confirmed':False}
             raise
         finally:
-            if process.poll() is None:
-                process.terminate()
-                try:process.wait(timeout=2)
-                except subprocess.TimeoutExpired:process.kill();process.wait()
-            for stream in (process.stdin,process.stdout):
-                if stream and not stream.closed:stream.close()
+            self._close(process)
             if actual is not None:self.release(actual)

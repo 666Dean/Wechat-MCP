@@ -237,6 +237,35 @@ class WindowsService(unittest.TestCase):
             self.assertEqual(self.service.provider_readiness(),{'ready':False,'code':'codex_provider_os_sandbox_unavailable'})
             with patch.object(implementation,'CodexSourceProvider') as provider:
                 self.assertFalse(self.service.provider_readiness()['ready']);provider.assert_not_called()
+    def test_preconsent_readiness_routes_pinned_metadata_to_owner_session(self):
+        root=self.kernel.store.directory;shard=root/'synthetic-salt-fixture';shard.write_bytes(b'0123456789abcdef')
+        self.service.config['shards']=[{'path':str(shard),'salt':b'0123456789abcdef'.hex()}]
+        navigation={'helper_sha256':self.service.navigation.sha,'profiles':{
+            cid:{'visual_binding':{'executable_hash':'a'*64}} for cid in self.service.resources}}
+        self.service.config['reply_navigation']=navigation
+        metadata={'running':True,'ambiguous_process':False,'accessibility':True,'send_invoked':False,'content_disclosed':False}
+        with patch.object(self.kernel,'development_fixture',False),patch.object(
+                self.service.navigation,'readiness',return_value=metadata) as probe:
+            self.assertIsNone(self.service.scope)
+            self.assertEqual(self.service.readiness(),{'database':True,'accessibility':True})
+            self.assertEqual(probe.call_args.args,('a'*64,));probe.call_args.kwargs['check']()
+            self.assertIsNone(self.service.scope)
+            shard.write_bytes(b'changed salt!!!!')
+            self.assertEqual(self.service.readiness(),{'database':False,'accessibility':True})
+    def test_preconsent_readiness_fails_closed_for_missing_or_conflicting_pins_and_native_errors(self):
+        self.service.config['reply_navigation']={'helper_sha256':self.service.navigation.sha,'profiles':{}}
+        navigation=self.service.config['reply_navigation']
+        with patch.object(self.kernel,'development_fixture',False),patch.object(self.service.navigation,'readiness') as probe:
+            self.assertIs(self.service.readiness()['accessibility'],False);probe.assert_not_called()
+            navigation['profiles']={'first':{'visual_binding':{'executable_hash':'a'*64}},
+                'second':{'visual_binding':{'executable_hash':'b'*64}}}
+            self.assertIs(self.service.readiness()['accessibility'],False);probe.assert_not_called()
+            navigation['profiles'].pop('second');navigation['helper_sha256']='b'*64
+            self.assertIs(self.service.readiness()['accessibility'],False);probe.assert_not_called()
+            navigation['helper_sha256']=self.service.navigation.sha
+            for error in (AXRError('synthetic cancellation'),RuntimeError('synthetic native refusal'),OSError('synthetic image missing')):
+                probe.side_effect=error
+                self.assertIs(self.service.readiness()['accessibility'],False)
 
 
 class WindowsServiceFactory(unittest.TestCase):

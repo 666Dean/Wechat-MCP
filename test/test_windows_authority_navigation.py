@@ -107,6 +107,18 @@ class WindowsNativeBridge(unittest.TestCase):
         self.assertIs(frames[1]['send_invoked'],False)
         denied=subprocess.run([str(self.helper),'--script','untrusted'],capture_output=True,timeout=5)
         self.assertEqual(json.loads(denied.stdout),{'error':'fixed_entrypoint_required'})
+    def test_readiness_cannot_bypass_authenticated_pipe_using_stdio(self):
+        # These requests must be rejected before window enumeration or UIA,
+        # even on a developer machine where WeChat happens to be running.
+        for arguments,request in ((['--authority-v2'],{'mode':'readiness','executable_hash':'a'*64}),
+                ([],{'op':'readiness','executable_hash':'a'*64}),
+                (['--authority-v2'],{'mode':'readiness','op':'send_text','text':'synthetic forbidden input'})):
+            with self.subTest(arguments=arguments,request=request):
+                result=subprocess.run([str(self.helper),*arguments],input=canonical(request)+b'\n',capture_output=True,timeout=5)
+                value=json.loads(result.stdout.splitlines()[-1])
+                self.assertEqual(value['error'],'readiness_authenticated_pipe_required')
+                if arguments:
+                    self.assertIs(value['send_invoked'],False);self.assertIs(value['content_disclosed'],False)
 
     def test_send_requires_mac_equivalent_cached_recipient_witness_before_ui(self):
         request={'mode':'send','operation':'messages.send','expected_text':'synthetic fixture only',

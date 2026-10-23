@@ -53,6 +53,63 @@ class WindowsInteractiveNavigation(unittest.TestCase):
                 'axr_applications.wechat_execution.subprocess.Popen') as popen:
             with self.assertRaisesRegex(AXRError,'interactive_owner_user_required'):self.bridge.invoke(self.action(),check=lambda:None)
         popen.assert_not_called()
+    def metadata(self,**changes):
+        return {'running':True,'ambiguous_process':False,'accessibility':True,
+            'send_invoked':False,'content_disclosed':False,**changes}
+    def test_readiness_uses_owner_channel_without_task_enrollment_or_authority(self):
+        self.channel.result.return_value=json.dumps(self.metadata())
+        self.bridge.enroll=Mock();self.bridge.prepare=Mock();self.bridge.receipt=Mock();self.bridge.release=Mock()
+        with patch.object(native,'WindowsNavigation',return_value=self.channel) as launch,patch(
+                'axr_applications.wechat_execution.process_identity',return_value=self.actual),patch(
+                'axr_applications.wechat_execution.subprocess.Popen') as popen:
+            self.assertEqual(self.bridge.readiness('a'*64),self.metadata())
+        self.assertEqual(launch.call_args.args[:3],(self.actual['user'],str(self.bridge.helper),self.actual['image_sha256']))
+        self.assertEqual(json.loads(self.channel.submit.call_args.args[0]),{'mode':'readiness','executable_hash':'a'*64})
+        popen.assert_not_called();self.channel.close.assert_called_once()
+        for callback in (self.bridge.enroll,self.bridge.prepare,self.bridge.receipt,self.bridge.release):callback.assert_not_called()
+        self.assertEqual(list(self.bridge.attempts.iterdir()),[])
+    def test_readiness_rejects_missing_owner_pin_and_changed_helper_before_launch(self):
+        with patch.object(native,'WindowsNavigation') as launch,patch('axr_applications.wechat_execution.subprocess.Popen') as popen:
+            for pin in (None,'',True,'a'*63,'A'*64,'x'*64):
+                with self.subTest(pin=pin),self.assertRaisesRegex(AXRError,'executable_pin_required'):self.bridge.readiness(pin)
+            self.helper.write_bytes(b'changed synthetic image')
+            with self.assertRaisesRegex(AXRError,'build_changed'):self.bridge.readiness('a'*64)
+            self.bridge.owner_user=None
+            with self.assertRaisesRegex(AXRError,'owner_user_required'):self.bridge.readiness('a'*64)
+        launch.assert_not_called();popen.assert_not_called()
+    def test_readiness_rejects_wrong_user_and_changed_birth_before_submit(self):
+        for identities in ([{**self.actual,'user':'S-1-5-18'}],[self.actual,{**self.actual,'birth':'reused-pid'}]):
+            self.channel.reset_mock()
+            with self.subTest(identities=identities),patch.object(native,'WindowsNavigation',return_value=self.channel),patch(
+                    'axr_applications.wechat_execution.process_identity',side_effect=identities):
+                with self.assertRaisesRegex(AXRError,'instance_changed'):self.bridge.readiness('a'*64)
+            self.channel.submit.assert_not_called();self.channel.close.assert_called_once()
+    def test_readiness_denies_extra_content_invalid_metadata_and_response_loss(self):
+        for value in (self.metadata(text='Synthetic private content'),self.metadata(accessibility=1),
+                self.metadata(send_invoked=True),self.metadata(content_disclosed=True),self.metadata(running=False),
+                self.metadata(ambiguous_process=True),{'error':'synthetic_uia_failure'}):
+            self.channel.reset_mock();self.channel.result.return_value=json.dumps(value)
+            with self.subTest(value=value),patch.object(native,'WindowsNavigation',return_value=self.channel),patch(
+                    'axr_applications.wechat_execution.process_identity',return_value=self.actual):
+                with self.assertRaisesRegex(AXRError,'metadata_required'):self.bridge.readiness('a'*64)
+            self.channel.close.assert_called_once()
+        self.channel.reset_mock();self.channel.result.side_effect=RuntimeError('synthetic response loss')
+        with patch.object(native,'WindowsNavigation',return_value=self.channel),patch(
+                'axr_applications.wechat_execution.process_identity',return_value=self.actual):
+            with self.assertRaisesRegex(RuntimeError,'response loss'):self.bridge.readiness('a'*64)
+        self.channel.close.assert_called_once();self.channel.submit.assert_called_once()
+    def test_readiness_cancellation_closes_channel_without_submitting(self):
+        self.channel.ready.side_effect=AXRError('synthetic_cancelled')
+        with patch.object(native,'WindowsNavigation',return_value=self.channel):
+            with self.assertRaisesRegex(AXRError,'cancelled'):self.bridge.readiness('a'*64)
+        self.channel.close.assert_called_once();self.channel.submit.assert_not_called()
+    def test_readiness_absent_or_ambiguous_window_is_unavailable_metadata(self):
+        with patch.object(native,'WindowsNavigation',return_value=self.channel),patch(
+                'axr_applications.wechat_execution.process_identity',return_value=self.actual):
+            for ambiguous in (False,True):
+                value=self.metadata(running=False,accessibility=False,ambiguous_process=ambiguous)
+                self.channel.result.return_value=json.dumps(value)
+                self.assertEqual(self.bridge.readiness('a'*64),value)
     def test_normal_python_is_rejected_before_token_selection_or_process_launch(self):
         with self.assertRaisesRegex(RuntimeError,'windows_navigation_authority_host_required'):
             native.WindowsNavigation(self.actual['user'],str(self.helper),self.actual['image_sha256'],lambda:None)

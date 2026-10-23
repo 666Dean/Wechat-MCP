@@ -9,7 +9,6 @@ import hashlib
 import json
 from pathlib import Path
 import secrets
-import subprocess
 import time
 from axr import _axr_native as native
 from axr.aet import AXRError,Action,Provenance,Resource,canonical,digest
@@ -205,13 +204,15 @@ class WindowsWeChatService(WeChatService):
                 if header.hex()!=shard['salt']:readable=False
             except OSError:readable=False
         try:
-            helper=Path(self.config['navigation_helper']);expected=self.config['reply_navigation']['helper_sha256']
-            if hashlib.sha256(helper.read_bytes()).hexdigest()!=expected:raise ValueError()
-            process=subprocess.run([str(helper)],input=canonical({'op':'status'}),capture_output=True,timeout=6,
-                creationflags=subprocess.CREATE_NO_WINDOW)
-            value=json.loads(process.stdout) if len(process.stdout)<=4096 else {}
-            accessible=process.returncode==0 and value.get('running') is True and value.get('accessibility') is True
-        except (OSError,ValueError,KeyError,subprocess.TimeoutExpired):accessible=False
+            navigation=self.config['reply_navigation']
+            if self.navigation.sha!=navigation['helper_sha256']:raise ValueError()
+            pins={profile['visual_binding']['executable_hash'] for profile in navigation['profiles'].values()}
+            if len(pins)!=1:raise ValueError()
+            def alive():
+                if self.stop_event.is_set():raise AXRError('wechat_service_stopped')
+            value=self.navigation.readiness(pins.pop(),check=alive)
+            accessible=value['running'] is True and value['ambiguous_process'] is False and value['accessibility'] is True
+        except (OSError,ValueError,KeyError,TypeError,RuntimeError):accessible=False
         return {'database':readable,'accessibility':accessible}
     def provider_readiness(self):
         result=super().provider_readiness()

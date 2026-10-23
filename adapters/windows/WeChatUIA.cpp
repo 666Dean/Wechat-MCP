@@ -43,6 +43,7 @@ static Json Main(const Json& req,const Json* authority=nullptr){
     Candidate candidate;EnumWindows(Enum,reinterpret_cast<LPARAM>(&candidate));
     std::string op=req.at("op");
     if(op=="status")return {{"running",candidate.windows.size()==1},{"ambiguous_process",candidate.windows.size()>1},{"accessibility",true}};
+    if(op=="readiness"&&candidate.windows.size()!=1)return {{"running",false},{"ambiguous_process",candidate.windows.size()>1},{"accessibility",false}};
     if(candidate.windows.size()!=1)throw std::runtime_error("wechat_window_missing_or_ambiguous");
     HWND window=candidate.windows[0];DWORD pid=0;GetWindowThreadProcessId(window,&pid);
     HANDLE p=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);wchar_t exe[32768];DWORD size=32768;
@@ -56,6 +57,8 @@ static Json Main(const Json& req,const Json* authority=nullptr){
     ComPtr<IUIAutomationElement> root;automation->ElementFromHandle(window,&root);
     ComPtr<IUIAutomationTreeWalker> walker;automation->get_ControlViewWalker(&walker);
     if(!root||!walker)throw std::runtime_error("uia_tree_unavailable");
+    // Pre-consent metadata only: no names, values, tree walk, focus or input.
+    if(op=="readiness")return {{"running",true},{"ambiguous_process",false},{"accessibility",true}};
     Json nodes=Json::array();std::size_t remaining=64000;
     std::function<void(ComPtr<IUIAutomationElement>,Json,unsigned,bool)> walk;
     walk=[&](ComPtr<IUIAutomationElement> node,Json path,unsigned depth,bool read){
@@ -206,6 +209,14 @@ static Json V2(const Json& request){
     if(mode!="navigate")req["expected_identity"]=request.at("identity");
     return Main(req,&request);
 }
+static Json Readiness(const Json& request){
+    if(!request.is_object()||request.size()!=2||request.at("mode")!="readiness"||!request.at("executable_hash").is_string())
+        throw std::runtime_error("readiness_request_invalid");
+    auto pin=request.at("executable_hash").get<std::string>();
+    if(pin.size()!=64||pin.find_first_not_of("0123456789abcdef")!=std::string::npos)
+        throw std::runtime_error("readiness_executable_pin_required");
+    return Main({{"op","readiness"},{"executable_hash",pin}});
+}
 int main(int argc,char** argv){HRESULT initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);Json result,request;
     bool pipeMode=argc==3&&std::string(argv[1])=="--authority-pipe",v2=pipeMode||(argc==2&&std::string(argv[1])=="--authority-v2");
     std::unique_ptr<Stellaria::AXR::WindowsNavigationPeer> peer;
@@ -214,7 +225,11 @@ int main(int argc,char** argv){HRESULT initialized=CoInitializeEx(nullptr,COINIT
         if(pipeMode)peer=std::make_unique<Stellaria::AXR::WindowsNavigationPeer>(argv[2]);
         if(FAILED(initialized))throw std::runtime_error("sta_initialization_failed");
         if(peer)request=peer->Request();else{std::string line;char ch;while(std::cin.get(ch)&&ch!='\n'){if(line.size()>=1024*1024)throw std::runtime_error("request_too_large");line.push_back(ch);}request=Json::parse(line);}
-        result=v2?V2(request):Main(request);}
+        // Only the authenticated protected-System pipe may use this exception
+        // to task preflight. It cannot carry a scope, selectors or text.
+        bool readiness=request.is_object()&&(request.value("mode",std::string{})=="readiness"||request.value("op",std::string{})=="readiness");
+        if(readiness){if(!peer)throw std::runtime_error("readiness_authenticated_pipe_required");result=Readiness(request);}
+        else result=v2?V2(request):Main(request);}
     catch(const nlohmann::json::exception&){result={{"error","invalid_request"}};}
     catch(const std::exception& e){result={{"error",e.what()}};}
     if(v2){result["send_invoked"]=sendInvoked;result["content_disclosed"]=false;

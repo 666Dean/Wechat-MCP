@@ -285,8 +285,14 @@ receipt acknowledgment keeps the helper alive through the last identity check an
 restores no authority. Pending I/O checks cancellation at most every 50 ms. Both
 application controllers use this channel; System without owner binding cannot fall
 back to an ordinary subprocess. Synthetic routing/Unknown and native temporary-pipe
-checks do not prove cross-session launch. Pre-consent readiness, Windows source
-isolation, native frontend/deployment and migration/recovery remain code gaps.
+checks do not prove cross-session launch. Pre-consent readiness now reuses this
+authenticated owner-session channel. Its exact two-field request carries only
+the readiness mode and pinned WeChat image hash. It verifies that image and a
+UIA root/walker, returning boolean metadata without reading values, changing
+focus, enrolling a handler or preparing/claiming a task. Stdin/v2-only requests
+cannot invoke this path. Metadata is never an account or recipient witness.
+Windows source isolation, native frontend/deployment and migration/recovery
+remain code gaps.
 Reusing the Mac scheduler does not open the release gate.
 
 The bounded PCP KADS profile accepts TPM2 SHA-256 names and RSA-2048 owner
