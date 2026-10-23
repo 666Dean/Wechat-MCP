@@ -157,6 +157,27 @@ std::unique_ptr<WindowsHelloOwnerKey> WindowsHelloOwnerKey::Provision(std::strin
     throw std::runtime_error("windows_hello_required");
 #endif
 }
+std::unique_ptr<WindowsHelloOwnerKey> WindowsHelloOwnerKey::Recover(std::string review,double expires){
+    if(review.empty()||review.size()>64000||review.find('\0')!=std::string::npos||!std::isfinite(expires)||expires<=Now()||expires>Now()+180)
+        throw std::runtime_error("hello_enrollment_review_invalid");
+#if defined(_WIN32)
+    OwnerHost();
+    try{
+        Apartment apartment;
+        if(!Await(KeyCredentialManager::IsSupportedAsync(),std::chrono::seconds(15)))throw std::runtime_error("hello_provider_unavailable");
+        auto opened=Await(KeyCredentialManager::OpenAsync(L"Stellaria.AXR.Owner.v2.owner-presence-v2"),std::chrono::seconds(15));
+        if(opened.Status()!=KeyCredentialStatus::Success)throw std::runtime_error("hello_enrolled_credential_unavailable");
+        auto key=std::unique_ptr<WindowsHelloOwnerKey>(new WindowsHelloOwnerKey());key->impl_->key=opened.Credential();
+        key->impl_->publicKey=Bytes(key->impl_->key.RetrievePublicKey(CryptographicPublicKeyBlobType::X509SubjectPublicKeyInfo),294);
+        if(key->impl_->publicKey.size()!=294)throw std::runtime_error("hello_public_key_profile_unsupported");
+        review+="\r\nWindows Hello public key SHA-256: "+Digest(key->impl_->publicKey);
+        if(!ReviewEnrollment(review,expires,false)||Now()>=expires)throw std::runtime_error("hello_enrollment_cancelled_or_expired");
+        return key;
+    }catch(const winrt::hresult_error&){throw std::runtime_error("hello_provider_failed_or_unavailable");}
+#else
+    throw std::runtime_error("windows_hello_required");
+#endif
+}
 WindowsHelloOwnerKey::WindowsHelloOwnerKey(std::string expectedPublicKey):impl_(std::make_unique<Impl>()){
     if(expectedPublicKey.size()!=294)throw std::runtime_error("hello_enrolled_public_key_required");
 #if defined(_WIN32)

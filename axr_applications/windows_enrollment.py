@@ -7,6 +7,7 @@ First creation is a separately reviewed native operation, never an error
 fallback for an existing pin. Cross-session transport is a fixed native pipe.
 """
 import json
+import hashlib
 import io
 from pathlib import Path
 from datetime import datetime
@@ -15,7 +16,7 @@ import time
 from axr import _axr_native as native
 from axr.aet import AXRError, canonical, digest
 from axr.rooted import RootedDirectory
-from .windows_owner import enrolled_key, frame
+from .windows_owner import enrolled_key,enrolled_public_key,frame
 
 
 def installed_json(runtime_root,name,maximum):
@@ -88,6 +89,11 @@ def first_enrollment_review(configuration,challenge):
     lines.extend(quote(row['conversation_id']) for row in app['resources'])
     lines.extend(['',f"配置指纹：{challenge['configuration_digest']}",
         '确认截止：'+datetime.fromtimestamp(challenge['expires']).astimezone().isoformat(timespec='seconds')])
+    if 'build_digest' in challenge:lines.extend(['',f"构建指纹：{challenge['build_digest']}"])
+    if challenge['kind']=='wechat-owner-orphan-recovery':
+        lines[0]='微信代理中断登记恢复'
+        lines[1]='没有可用的配置收据。本次只打开既有 Windows Hello 密钥；请核对程序、配置和即将显示的实际公钥指纹。'
+        lines[2]='不会创建或替换密钥，不恢复旧权限；验证硬件证明并签名后才能重新初始化。'
     review='\r\n'.join(lines)
     if len(review.encode('utf-8'))>65536:raise AXRError('owner_enrollment_review_budget')
     return review
@@ -96,9 +102,18 @@ def first_enrollment_review(configuration,challenge):
 def enrollment_key(runtime_root,configuration,challenge):
     # A missing file is the only first-enrollment case. Invalid/unreadable pins
     # or unavailable existing credentials must never fall through to creation.
+    if challenge['kind']=='wechat-owner-orphan-recovery':
+        try:(Path(runtime_root)/'owner-key.json').lstat()
+        except FileNotFoundError:return native.recover_windows_hello_owner(first_enrollment_review(configuration,challenge),challenge['expires'])
+        raise AXRError('wechat_owner_orphan_recovery_requires_missing_pin')
     if challenge['kind']!='wechat-owner-enrollment':
         expected=hex_bytes(challenge['expected_public_key'],294)
         if len(expected)!=294:raise AXRError('wechat_owner_enrolled_key_pin_required')
+        try:(Path(runtime_root)/'owner-key.json').lstat()
+        except FileNotFoundError:
+            if challenge['kind']!='wechat-owner-recovery':raise AXRError('wechat_owner_enrolled_key_pin_required') from None
+        else:
+            if enrolled_public_key(runtime_root)!=expected:raise AXRError('wechat_owner_public_key_pin_changed')
         review=('微信代理初始化恢复' if challenge['kind']=='wechat-owner-recovery' else '微信代理构建更新')+'\r\n'+ \
             '确认本次固定配置与构建。旧任务、授权与发送不会恢复，也不会创建或替换密钥。\r\n'+ \
             json.dumps({'configuration':configuration,'challenge':challenge},ensure_ascii=False,indent=2)
@@ -114,6 +129,10 @@ def enrollment_key(runtime_root,configuration,challenge):
     try:(Path(runtime_root)/'owner-key.json').lstat()
     except FileNotFoundError:
         return native.provision_windows_hello_owner(first_enrollment_review(configuration,challenge),challenge['expires'])
+    public=enrolled_public_key(runtime_root)
+    review=first_enrollment_review(configuration,challenge).replace('首次登记','登记既有所有者密钥').replace('创建所有者密钥','验证既有所有者密钥')
+    review+='\r\n公钥指纹：'+hashlib.sha256(public).hexdigest()
+    if not native.review_windows_owner(review,challenge['expires']):raise AXRError('owner_enrollment_recovery_cancelled')
     return enrolled_key(runtime_root)
 
 
@@ -121,15 +140,18 @@ def respond(runtime_root,source,emit,*,clock=time.time):
     challenge=frame(source);now=clock()
     try:
         initial=challenge.get('kind')=='wechat-owner-enrollment'
+        orphan=challenge.get('kind')=='wechat-owner-orphan-recovery'
         reviewed=challenge.get('kind') in ('wechat-owner-recovery','wechat-owner-build-update')
         fields={'version','kind','configuration_digest','nonce','expires'}
         if reviewed:fields|={'expected_public_key','build_digest'}
-        if (not (initial or reviewed) or set(challenge)!=fields or
+        if orphan or initial and 'build_digest' in challenge:fields.add('build_digest')
+        if (not (initial or orphan or reviewed) or set(challenge)!=fields or
                 type(challenge['version']) is not int or challenge['version']!=2 or
                 len(hex_bytes(challenge['nonce'],32))!=32 or
                 len(hex_bytes(challenge['configuration_digest'],32))!=32 or
                 type(challenge['expires']) not in (int,float) or not now<challenge['expires']<=now+180):raise ValueError()
         if reviewed and (len(hex_bytes(challenge['expected_public_key'],294))!=294 or len(hex_bytes(challenge['build_digest'],32))!=32):raise ValueError()
+        if 'build_digest' in challenge and len(hex_bytes(challenge['build_digest'],32))!=32:raise ValueError()
         from axr.deployment_configuration import read
         registration=read(runtime_root)
         if (type(registration) is not dict or set(registration)!={'version','application_module','deployment'} or
@@ -138,6 +160,9 @@ def respond(runtime_root,source,emit,*,clock=time.time):
         from .wechat import _configuration
         configuration=_configuration(registration['deployment'])
         if digest(configuration)!=challenge['configuration_digest']:raise ValueError()
+        if 'build_digest' in challenge:
+            from .wechat import review_windows_build
+            if review_windows_build(configuration['application'])['build']!=challenge['build_digest']:raise ValueError()
     except (ValueError,TypeError,KeyError):raise AXRError('owner_enrollment_challenge_invalid') from None
     roots=trust_roots(runtime_root)
     key=enrollment_key(runtime_root,configuration,challenge)

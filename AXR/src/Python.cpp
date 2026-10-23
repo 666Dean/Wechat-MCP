@@ -55,6 +55,7 @@ PYBIND11_MODULE(_axr_native,m) {
       .def("attestation",[](const WindowsHelloOwnerKey& key){py::gil_scoped_release release;return key.Attestation().dump();})
       .def("sign",[](const WindowsHelloOwnerKey& key,py::bytes message){auto value=std::string(message);std::string signature;{py::gil_scoped_release release;signature=key.Sign(value);}return py::bytes(signature);});
     m.def("provision_windows_hello_owner",&WindowsHelloOwnerKey::Provision,py::arg("review"),py::arg("expires"),py::call_guard<py::gil_scoped_release>());
+    m.def("recover_windows_hello_owner",&WindowsHelloOwnerKey::Recover,py::arg("review"),py::arg("expires"),py::call_guard<py::gil_scoped_release>());
     m.def("review_windows_owner",&ReviewWindowsOwner,py::arg("review"),py::arg("expires"),py::call_guard<py::gil_scoped_release>());
     m.def("windows_installation_root",[]{auto path=WindowsInstallationRoot().u8string();return std::string(path.begin(),path.end());});
     m.def("windows_data_root",[]{auto path=WindowsDataRoot().u8string();return std::string(path.begin(),path.end());});

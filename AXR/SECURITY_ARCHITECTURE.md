@@ -356,3 +356,11 @@ the application. Missing owner credentials never fall back to System's vault.
 The public Python surface returns only verified counts, never credential bytes.
 Selected-file migration validates every encrypted database and existing conflict
 before provisioning; identical partial OS writes may continue, conflicts cannot.
+
+
+Orphaned Windows Hello first-setup recovery is an explicit fixed service mode,
+never a failed-provision fallback. It opens only the existing key and shows its
+actual public-key digest in protected native review, then requires the same
+attestation/challenge checks as enrollment. Existing or malformed pins exclude
+this path. First setup now signs and seals the full build-review digest and
+rechecks it before enrolling assets. No task or previous authority is restored.

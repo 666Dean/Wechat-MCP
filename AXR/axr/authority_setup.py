@@ -7,13 +7,14 @@ from .storage import AuthoritySecretStore,Vault
 from .owner import authenticate
 from . import _axr_native as native
 
-def main(runtime_root):
+def main(runtime_root,*,recover=False):
     from .host import Lease
     with Lease(Path.home()/'.stellaria-axr'/'leases',['owner-setup',str(Path(runtime_root).resolve())]):
-        return initialize(runtime_root)
+        return initialize(runtime_root,recover=recover)
 
-def initialize(runtime_root):
+def initialize(runtime_root,*,recover=False):
     if not getattr(native,'security_release',False):raise AXRError('authority_formal_build_required')
+    if recover and sys.platform!='win32':raise AXRError('windows_owner_recovery_required')
     from .deployment_configuration import path as configuration_path
     root=Path(runtime_root);path=configuration_path(root)
     if path.is_symlink() or path.stat().st_size>32768:raise AXRError('authority_deployment_configuration_invalid')
@@ -42,7 +43,7 @@ def initialize(runtime_root):
         signer=native.HardwareSigningKey('Stellaria.AXR.Root.v2')
         return complete(backend,configuration,deployment,signer)
     helper=root/'bin'/('axr-owner-auth.exe' if sys.platform=='win32' else 'axr-helper')
-    hardware_enrollment=getattr(registration,'authenticate_owner_setup',None)
+    hardware_enrollment=getattr(registration,'authenticate_owner_recovery' if recover else 'authenticate_owner_setup',None)
     enrollment=None
     if callable(hardware_enrollment):
         # One exact hardware user-presence challenge replaces a redundant

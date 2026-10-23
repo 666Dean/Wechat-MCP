@@ -12,6 +12,9 @@ class WindowsHelloOwnerKey {
 public:
     explicit WindowsHelloOwnerKey(std::string expectedPublicKey);
     static std::unique_ptr<WindowsHelloOwnerKey> Provision(std::string review,double expires);
+    // Explicit orphaned-first-setup recovery: open only, show the actual key
+    // fingerprint for local review, then require attestation and a signature.
+    static std::unique_ptr<WindowsHelloOwnerKey> Recover(std::string review,double expires);
     ~WindowsHelloOwnerKey();
     WindowsHelloOwnerKey(const WindowsHelloOwnerKey&)=delete;
     WindowsHelloOwnerKey& operator=(const WindowsHelloOwnerKey&)=delete;

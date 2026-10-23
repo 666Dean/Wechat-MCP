@@ -113,11 +113,35 @@ def authenticate_owner_setup(value):
     if os.name=='nt':
         from .windows_enrollment import exchange
         _build_assets(config['application']) # Reject helper escapes before any owner key operation.
+        build=review_windows_build(config['application'])
         challenge={'version':2,'kind':'wechat-owner-enrollment','configuration_digest':digest(config),
-            'nonce':secrets.token_hex(32),'expires':time.time()+180}
+            'build_digest':build['build'],'nonce':secrets.token_hex(32),'expires':time.time()+180}
         response,actual=exchange(config,challenge,resources_root())
+        if review_windows_build(config['application'])!=build:raise AXRError('wechat_owner_build_changed_during_review')
         return {**response,'identity':actual}
     return _hardware_enrollment(digest(config))
+
+
+def review_windows_build(application):
+    return OwnerDeployment.review(resources_root().parent,_build_assets(application))
+
+
+def authenticate_owner_recovery(value):
+    if os.name!='nt':raise AXRError('wechat_windows_recovery_required')
+    config=_configuration(value)
+    from axr.initialization import empty_initialization
+    if not empty_initialization(config['state']) or (Path(config['state'])/'policy.sealed.json').exists():
+        raise AXRError('wechat_orphan_recovery_requires_empty_setup')
+    try:(resources_root()/'owner-key.json').lstat()
+    except FileNotFoundError:pass
+    else:raise AXRError('wechat_owner_orphan_recovery_requires_missing_pin')
+    from .windows_enrollment import exchange
+    build=review_windows_build(config['application'])
+    challenge={'version':2,'kind':'wechat-owner-orphan-recovery','configuration_digest':digest(config),
+        'build_digest':build['build'],'nonce':secrets.token_hex(32),'expires':time.time()+180}
+    response,actual=exchange(config,challenge,resources_root())
+    if review_windows_build(config['application'])!=build:raise AXRError('wechat_owner_build_changed_during_review')
+    return {**response,'identity':actual}
 
 def _hardware_enrollment(configuration_digest):
     # The second process is a fixed protected owner identity. Its hardware key
@@ -231,6 +255,8 @@ def initialize_owner(value, signer, enrollment=None):
     if os.name=='nt':
         from .windows_enrollment import validate_enrollment
         validate_enrollment(config,enrollment,resources_root())
+        if challenge.get('kind') not in ('wechat-owner-enrollment','wechat-owner-orphan-recovery'):
+            raise AXRError('wechat_owner_enrollment_signature_invalid')
     with __import__('contextlib').closing(OwnerStore(directory,provision=True,authority_service=True)) as store:
         if not store.journal.verify_audit() or store.journal.checkpoint.read()['sequence']!=0:raise AXRError('wechat_empty_initialization_checkpoint_required')
         application=config['application']
@@ -264,8 +290,10 @@ def initialize_owner(value, signer, enrollment=None):
         application={**application,'conversations':catalog,'resources':[asdict(Resource('wechat',application['account_id'],r['conversation_id'])) for r in catalog]}
         # No authority comes from the imported keys, including unlimited legacy
         # sessions. Only new separately signed owner contracts can enable use.
-        store.seal_config({'version':2,'application':application,'owner_public_key':response['public_key'],
-                           'owner_user':actual['user'],'enrollment':digest(challenge)})
+        receipt={'version':2,'application':application,'owner_public_key':response['public_key'],
+                           'owner_user':actual['user'],'enrollment':digest(challenge)}
+        if os.name=='nt' and 'build_digest' in challenge:receipt['enrollment_build']=challenge['build_digest']
+        store.seal_config(receipt)
         finish_initialization(store,signer)
     if os.name=='nt':
         from .windows_enrollment import persist_pin
@@ -283,6 +311,8 @@ def finish_initialization(store,signer):
             empty_initialization(store.directory) and store.journal.verify_audit() and store.journal.checkpoint.read()['sequence']==0)
         assets=_build_assets(application)
         install=resources_root().parent if os.name=='nt' else BASE
+        if os.name=='nt' and config.get('enrollment_build') is not None and review_windows_build(application)['build']!=config['enrollment_build']:
+            raise AXRError('wechat_owner_build_changed_during_review')
         deployment.enroll(install,assets,lambda:store.config()==config and
             (os.name=='nt' or config['owner_user']==process_identity(os.getpid())['user']))
         kernel,registry=_kernel(store,signer,config['owner_public_key'],initialize=True)
@@ -360,7 +390,12 @@ def _resume_windows_owner_setup(config):
         challenge=_windows_setup_review(config,approved['owner_public_key'],build,'wechat-owner-recovery')
         if store.config()!=approved or deployment.review(root,assets)!=build or time.time()>=challenge['expires']:
             raise AXRError('wechat_initialization_approval_changed')
-        if early:finish_initialization(store,native.HardwareSigningKey('Stellaria.AXR.Root.v2'))
+        if early:
+            if approved.get('enrollment_build') is not None and approved['enrollment_build']!=build['build']:
+                # This new exact signature supersedes only the unfinished setup
+                # receipt, never an operational policy/task or its history.
+                store.seal_config({**approved,'enrollment':digest(challenge),'enrollment_build':build['build']})
+            finish_initialization(store,native.HardwareSigningKey('Stellaria.AXR.Root.v2'))
         elif deployment._load()!=build:raise AXRError('wechat_initialization_approval_changed')
     from .windows_enrollment import persist_pin
     _windows_source_workspace(approved['application'])

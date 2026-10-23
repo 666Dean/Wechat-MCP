@@ -20,7 +20,8 @@ class OwnerDeployment:
         value=self.vault.open(self.backend.get(self.name),self.name)
         if value.get('version')!=2 or not isinstance(value.get('assets'),list):raise AXRError('owner_deployment_invalid')
         return value
-    def review(self,root,assets):
+    @staticmethod
+    def review(root,assets):
         """Hash the fixed installation for an exact owner challenge; no writes."""
         if type(assets) is not list or not 1<=len(assets)<=16:raise AXRError('owner_build_asset_budget')
         directory=RootedDirectory(root);rows=[]

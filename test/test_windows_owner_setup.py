@@ -27,7 +27,8 @@ class OwnerSetup(unittest.TestCase):
     @classmethod
     def setUpClass(cls):cls.e=Evidence()
     def setUp(self):
-        self.f=fixtures.ExistingOwnerEnrollment();self.f.e=self.e;self.f.setUp();self.addCleanup(self.f.doCleanups)
+        build=patch.object(wechat,'review_windows_build',return_value={'version':2,'assets':[],'build':'b2'*32});build.start();self.addCleanup(build.stop)
+        self.f=fixtures.ExistingOwnerEnrollment();self.addCleanup(self.f.doCleanups);self.f.e=self.e;self.f.setUp()
         self.root=self.f.root
         helper=self.root/'fixture-helper.exe';helper.write_bytes(b'synthetic file; never executed')
         self.config={**self.f.config,'owner_user':OWNER,'application':{**self.f.config['application'],

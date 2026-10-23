@@ -56,6 +56,10 @@ class NativeHelloRefusal(unittest.TestCase):
         script="import time\nfrom axr import _axr_native as n\ntry:n.provision_windows_hello_owner('synthetic review',time.time()+60)\nexcept RuntimeError as e:\n assert str(e)=='hello_protected_owner_host_required',str(e)\nelse:raise AssertionError('ordinary Python provisioned Hello')"
         result=subprocess.run([sys.executable,'-c',script],capture_output=True,timeout=10)
         self.assertEqual(result.returncode,0,result.stderr.decode(errors='replace'))
+    def test_normal_python_cannot_open_an_orphan_key_or_show_recovery_ui(self):
+        script="import time\nfrom axr import _axr_native as n\ntry:n.recover_windows_hello_owner('synthetic recovery review',time.time()+60)\nexcept RuntimeError as e:\n assert str(e)=='hello_protected_owner_host_required',str(e)\nelse:raise AssertionError('ordinary Python recovered Hello')"
+        result=subprocess.run([sys.executable,'-c',script],capture_output=True,timeout=10)
+        self.assertEqual(result.returncode,0,result.stderr.decode(errors='replace'))
     def test_public_key_pin_is_bounded_before_any_os_request(self):
         for public in (b'',b'a'*293,b'a'*295,b'a'*(1024*1024)):
             with self.assertRaisesRegex(RuntimeError,'hello_enrolled_public_key_required'):

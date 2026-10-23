@@ -23,6 +23,7 @@ class ExistingOwnerEnrollment(unittest.TestCase):
     @classmethod
     def setUpClass(cls):cls.e=Evidence()
     def setUp(self):
+        review=patch.object(enrollment.native,'review_windows_owner',return_value=True);review.start();self.addCleanup(review.stop)
         self.temporary=tempfile.TemporaryDirectory();self.addCleanup(self.temporary.cleanup)
         self.root=Path(self.temporary.name).resolve();self.outputs=[];self.signed=[]
         self.config={'state':str(self.root/'new-state'),'endpoint':r'\\.\pipe\Stellaria.AXR.fixture' if sys.platform=='win32' else '/tmp/axr-fixture.sock',

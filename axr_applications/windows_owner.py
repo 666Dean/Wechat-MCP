@@ -15,7 +15,7 @@ from axr.authority_server import AuthorityClient
 from axr_integration.authority_frontend import load_connection
 
 
-def enrolled_key(runtime_root):
+def enrolled_public_key(runtime_root):
     """Read only the protected install pin; never provision from a control call.
 
     Deployment writes this after validating enrollment/hardware evidence. This
@@ -34,7 +34,11 @@ def enrolled_key(runtime_root):
         if len(public)!=294 or public.hex()!=value['public_key']:raise ValueError()
     except (OSError,ValueError,TypeError,AXRError):
         raise AXRError('wechat_owner_enrolled_key_pin_required') from None
-    return native.WindowsHelloOwnerKey(public)
+    return public
+
+
+def enrolled_key(runtime_root):
+    return native.WindowsHelloOwnerKey(enrolled_public_key(runtime_root))
 
 
 def frame(stream):
