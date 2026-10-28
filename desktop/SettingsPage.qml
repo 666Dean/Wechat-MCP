@@ -76,6 +76,9 @@ Item {
                             GlassCombo { objectName: "settingsAccessMenu"; model: ["仅生成草稿","自动回复","完全访问"]; currentIndex: settings.accessLevel; menuWidth: 190
                                 onActivated: function(index){settings.accessRequested(index);currentIndex=Qt.binding(function(){return settings.accessLevel})} }
                         }
+                        Row { visible: settings.status.contact_requests_supported===true; title: "联系人目录"; detail: "更新目录不会扩大访问范围"
+                            GlassButton { objectName: "refreshWindowsContacts"; text: "刷新联系人"; enabled: settings.connected && !settings.controller.data.loading; onClicked: settings.controller.refreshContacts() }
+                        }
                         Rule {}
                         Row { title: "有效期"; Detail { text: settings.scopeActive ? settings.timeText() : "未授权" } }
                         Rule {}

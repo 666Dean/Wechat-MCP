@@ -82,3 +82,15 @@ class WindowsServiceDesktop(unittest.TestCase):
             control.setProperty('checked',True);control.clicked.emit();run.call_args.args[1]()
         self.assertEqual(call.call_args.args[1:3],('control.set_manual_approval',(True,)))
         self.assertTrue(call.call_args.kwargs['owner'])
+    def test_contact_refresh_and_denial_have_owner_only_fixed_routes(self):
+        c,w=self.controller,self.window
+        c._data.update(connected=True,status={'contact_requests_supported':True},
+            authorization_requests=[{'id':'fixture-request','target':'Fixture contact','reason':'Synthetic proposal','state':'AwaitingOwner'}])
+        c.changed.emit();w.setProperty('page',6);QTest.qWait(40);c.fixture=False
+        with patch.object(c,'run') as run,patch('desktop.app.call',return_value={}) as call:
+            self.fixture.visual(w,'refreshWindowsContacts').clicked.emit();run.call_args.args[1]()
+            self.assertEqual(call.call_args.args[1],'control.refresh_catalog');self.assertTrue(call.call_args.kwargs['owner'])
+            w.setProperty('page',9);QTest.qWait(40)
+            self.fixture.visual(w,'denyContact_fixture-request').clicked.emit();run.call_args.args[1]()
+            self.assertEqual(call.call_args.args[1:3],('control.deny_authorization',('fixture-request',)))
+            self.assertTrue(call.call_args.kwargs['owner'])

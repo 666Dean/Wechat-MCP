@@ -3,7 +3,7 @@
 import ctypes as C
 import os
 import unittest
-from axr.aet import AXRError
+from axr.aet import AXRError,canonical
 from axr_applications.wechat_chat_state import NativeCachedDraftWitness
 from axr_applications.wechat_database import NativeDatabase
 import test_native_wechat_credentials as fixtures
@@ -45,6 +45,20 @@ class NativeChatState(unittest.TestCase):
         self.assertEqual(len(binding['recipient_witness']),64)
         self.assertNotIn('exact fixture draft',str(binding))
         self.assertGreaterEqual(self.calls,10)
+    def test_owner_catalog_reads_only_private_metadata_and_detects_duplicate_or_missing_self(self):
+        configuration={**self.f.config,'resources':[*self.f.config['resources'],{
+            'platform':'wechat','account_id':self.f.account,'conversation_id':self.f.account}]}
+        consumer=self.f.module.fixture_consumer('fixture-owner-catalog',canonical(configuration).decode(),{'fixture-key':self.f.key})
+        self.database=NativeDatabase(consumer,self.f.account)
+        rows=self.database.catalog(self.check)
+        self.assertEqual({r['conversation_id'] for r in rows},{self.f.account,self.f.peer})
+        self.assertTrue(all(set(r)=={'conversation_id','display_name','data_class'} for r in rows))
+        self.mutate("INSERT INTO contact VALUES('fixture-group@chatroom','Fixture group','',0)")
+        self.assertEqual(len(self.database.catalog(self.check)),2)
+        self.mutate("INSERT INTO contact SELECT * FROM contact WHERE username='"+self.f.peer+"'")
+        with self.assertRaisesRegex(AXRError,'catalog_invalid'):self.database.catalog(self.check)
+        self.mutate("DELETE FROM contact WHERE username='"+self.f.account+"'")
+        with self.assertRaisesRegex(AXRError,'self_identity_missing'):self.database.catalog(self.check)
     def test_same_text_cached_in_another_conversation_is_rejected_natively(self):
         self.mutate("INSERT INTO SessionTable VALUES('fixture-other','exact fixture draft')")
         with self.assertRaisesRegex(RuntimeError,'unique_draft'):self.observe()

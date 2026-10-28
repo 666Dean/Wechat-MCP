@@ -47,6 +47,9 @@ def call(state,method,args=(),kwargs=None,*,owner=False,timeout=180):
         return value
     if method in ('control.revoke_all','control.stop_automatic'):return control('stop')
     if method=='control.approve_pending':return control('approve_pending',{'job_id':args[0]})
+    if method=='control.approve_authorization':return control('approve_authorization',{'request_id':args[0]})
+    if method=='control.deny_authorization':return control('deny_authorization',{'request_id':args[0]})
+    if method=='control.refresh_catalog':return control('refresh_catalog')
     if method=='control.set_manual_approval':return control('set_manual_approval',{'required':args[0]})
     if method=='control.start_automatic':
         targets,seconds,count=args[:3]

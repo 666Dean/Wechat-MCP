@@ -460,7 +460,8 @@ Badge { text: (window.backend.attachments || {}).enabled ? "范围已配置" : "
                             Panel { required property var modelData; Layout.fillWidth: true; implicitHeight: 100
                                 RowLayout { anchors.fill: parent; anchors.margins: 20
                                     ColumnLayout { Layout.fillWidth: true; Copy { text: modelData.target; font.weight: Font.Medium } Caption { Layout.fillWidth: true; text: modelData.reason } }
-                                    ButtonX { text: "查看并授权"; onClicked: {window.authorizationRequest=modelData;authorizationDialog.open()} }
+                                    ButtonX { objectName: "reviewContact_"+modelData.id; text: "查看并授权"; onClicked: {window.authorizationRequest=modelData;authorizationDialog.open()} }
+                                    ButtonX { objectName: "denyContact_"+modelData.id; visible: window.status.contact_requests_supported===true; text: "拒绝"; onClicked: owner.denyAuthorization(modelData.id) }
                                 }
                             }
                         }
@@ -555,7 +556,7 @@ ButtonX { text: "系统认证并批准"; primary: true; enabled: !window.preview
         onAccepted: owner.grantLocal(window.selectedConversation)
     }
     Dialog { id: authorizationDialog; anchors.centerIn: parent; width: Math.min(520,window.width-60); modal: true; title: "授权指定联系人"; standardButtons: Dialog.Cancel | Dialog.Ok
-        contentItem: Copy { text: "目标：" + (window.authorizationRequest.target || "") + "\n用途：" + (window.authorizationRequest.reason || "") + "\n\n允许本地读取与草稿；自动回复会话运行时，将该目标加入当前回复范围并允许向 Codex 披露及回复。将通过本机系统认证和唯一身份核对，聊天消息不能自行授予权限。" }
+        contentItem: Copy { text: "目标：" + (window.authorizationRequest.target || "") + "\n用途：" + (window.authorizationRequest.reason || "") + "\n\n将由本人核对稳定身份、读取/模型披露范围及是否允许回复，再通过本机认证签署。已有会话会按剩余时间和次数替换，旧待办取消；没有合格导航绑定时不新增发送权限。申请和聊天内容本身不能授予权限。" }
         onAccepted: owner.approveAuthorization(window.authorizationRequest.id)
     }
     Dialog { id: autoDialog; anchors.centerIn: parent; width: Math.min(560,window.width-60); modal: true; title: "确认自动回复授权"; standardButtons: Dialog.Cancel | Dialog.Ok

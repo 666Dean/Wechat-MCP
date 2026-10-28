@@ -394,6 +394,12 @@ class Controller(QObject):
     @Slot(str)
     def approveAuthorization(self,key):
         if not self.fixture:self.run('authorization',lambda:call(self.state,'control.approve_authorization',(key,),owner=True,timeout=90))
+    @Slot(str)
+    def denyAuthorization(self,key):
+        if not self.fixture:self.run('authorization_denied',lambda:call(self.state,'control.deny_authorization',(key,),owner=True))
+    @Slot()
+    def refreshContacts(self):
+        if not self.fixture:self.run('contact_catalog',lambda:call(self.state,'control.refresh_catalog',owner=True))
     @Slot()
     def importPersona(self):
         if self.fixture:return
@@ -538,7 +544,7 @@ class Controller(QObject):
             self._notice='已载入 '+str(len(self._threads))+' 个 Codex 对话。'+('可继续载入更多。' if self._threads_cursor else '')
             self.noticeChanged.emit();return
         if name=='assistant_save':self.loadAssistant()
-        if name in ('chat_prompt','chat_cancel','owner_finish','automatic','automatic_stop','approval_setting'):self.refresh()
+        if name in ('chat_prompt','chat_cancel','owner_finish','automatic','automatic_stop','approval_setting','authorization','authorization_denied','contact_catalog'):self.refresh()
         if name=='owner_claim':
             if value.get('ready'):self.agent_bridge.start(value)
             return
@@ -582,7 +588,8 @@ class Controller(QObject):
             'restore':'已恢复安装前的 Codex 设置。','start':'本地服务已启动。','execute':'请查看处理结果。','agent':'助理已启动，等待授权范围内的新任务。','grant':'已授权此会话的本地读取，有效期 15 分钟。','cache':'文件目录已更新，请重新授权。',
             'automatic':('自动回复已开启。微信需要保持登录且可见。' if isinstance(value,dict) and value.get('automatic_reply') else '草稿模式已开启，消息不会自动发送。'),'automatic_stop':'自动回复已停止，当前发送权限已撤销。',
             'assistant_save':'助理偏好已保存，下次开启服务时生效。','hooks':'连接事件已配置，请在 Codex 的 /hooks 审核并信任。',
-            'authorization':'目标授权已更新，可以继续原任务。','chat_prompt':'任务已排队；Codex 空闲后会继续处理。',
+            'authorization':'目标授权已签署，请按实际范围继续；旧待办不会恢复。','authorization_denied':'已拒绝申请，没有新增权限。',
+            'contact_catalog':'联系人目录已刷新，没有新增权限。','chat_prompt':'任务已排队；Codex 空闲后会继续处理。',
             'copy_draft':'已复制，请核对微信目标后由你发送。','manual_draft':'请核对收件人与回复内容。'}.get(name,'操作已完成。')
         self.noticeChanged.emit()
     @Slot()

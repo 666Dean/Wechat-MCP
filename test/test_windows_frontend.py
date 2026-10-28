@@ -97,7 +97,7 @@ class WindowsFrontendProtocol(unittest.TestCase):
         return [json.loads(line) for line in output.getvalue().splitlines()],connector
     def test_discovery_is_available_without_service_configuration_or_authority(self):
         values,connector=self.run_protocol([{'id':1,'method':'initialize'},{'id':2,'method':'tools/list'}])
-        self.assertEqual(values[0]['result']['serverInfo']['name'],'wechat-axr');self.assertEqual(len(values[1]['result']['tools']),6)
+        self.assertEqual(values[0]['result']['serverInfo']['name'],'wechat-axr');self.assertEqual(len(values[1]['result']['tools']),8)
         connector.assert_not_called()
     def test_fixed_tools_route_and_close_without_accepting_policy_or_paths(self):
         client=Mock();client.request.return_value={'owner_authorized':False}

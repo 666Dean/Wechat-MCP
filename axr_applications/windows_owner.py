@@ -170,11 +170,14 @@ def service_control(connection,request,emit,*,connect,owner_key,clock,confirm=No
     The native local window replaces Mac's existing owner review surface. No
     model method, server address, executable or arbitrary signing text enters.
     """
-    allowed={'start','approve_pending','set_manual_approval','snapshot','stop','manual_draft','assistant_settings','save_assistant_settings',
+    allowed={'start','approve_pending','approve_authorization','deny_authorization','refresh_catalog','set_manual_approval','snapshot','stop','manual_draft','assistant_settings','save_assistant_settings',
         'check_target','codex_lifecycle','claim_owner_task','finish_owner_task','queue_owner_prompt','cancel_owner_task'}
     if set(request)!={'operation','method','arguments'} or request['method'] not in allowed or type(request['arguments']) is not dict:
         raise AXRError('wechat_owner_control_request_invalid')
     method=request['method'];args=request['arguments']
+    if method=='refresh_catalog' and args:raise AXRError('wechat_owner_control_request_invalid')
+    if method=='deny_authorization' and (set(args)!={'request_id'} or type(args['request_id']) is not str or not 1<=len(args['request_id'])<=64):
+        raise AXRError('wechat_owner_control_request_invalid')
     if method=='set_manual_approval':
         if set(args)!={'required'} or type(args['required']) is not bool:raise AXRError('wechat_owner_control_request_invalid')
         class Input:
@@ -190,19 +193,25 @@ def service_control(connection,request,emit,*,connect,owner_key,clock,confirm=No
         return control(connection,source,reviewed,connect=connect,owner_key=owner_key,clock=clock)
     channel=connect(connection['endpoint'],connection['server'])
     try:
-        if method in ('start','approve_pending'):
+        if method in ('start','approve_pending','approve_authorization'):
             if method=='approve_pending' and (set(args)!={'job_id'} or type(args['job_id']) is not str):
                 raise AXRError('wechat_owner_control_request_invalid')
-            response=channel.request('WeChatOwner',method='review' if method=='start' else 'review_pending',arguments=args)
+            if method=='approve_authorization' and (set(args)!={'request_id'} or type(args['request_id']) is not str):
+                raise AXRError('wechat_owner_control_request_invalid')
+            review_method={'start':'review','approve_pending':'review_pending','approve_authorization':'review_authorization'}[method]
+            response=channel.request('WeChatOwner',method=review_method,arguments=args)
             challenge=response.get('challenge',{});authority=channel.session.authority;now=clock()
             if (type(challenge) is not dict or challenge.get('version')!=2 or type(challenge.get('version')) is not int
                 or not authority or challenge.get('root_id')!=authority['root_id'] or challenge.get('epoch')!=channel.session.authority_epoch
                 or type(challenge.get('expires')) not in (int,float) or not now<challenge['expires']<=now+180
                 or type(challenge.get('nonce')) is not str or len(challenge['nonce'])!=64
                 or any(c not in '0123456789abcdef' for c in challenge['nonce'])
-                or challenge.get('kind')!=('wechat-standing-scope' if method=='start' else 'wechat-windows-pending')):
+                or challenge.get('kind')!={'start':'wechat-standing-scope','approve_pending':'wechat-windows-pending','approve_authorization':'wechat-contact-authorization'}[method]):
                 raise AXRError('wechat_owner_control_review_invalid')
             if method=='approve_pending' and (challenge.get('job_id')!=args['job_id'] or challenge.get('review_digest')!=digest(response.get('review'))):
+                raise AXRError('wechat_owner_control_review_invalid')
+            if method=='approve_authorization' and (challenge.get('request_id')!=args['request_id'] or challenge.get('review_digest')!=digest(response.get('review')) or
+                challenge.get('authorized_contact')!=response.get('review',{}).get('target',{}).get('conversation_id')):
                 raise AXRError('wechat_owner_control_review_invalid')
             review='微信代理授权审查\r\n请核对完整范围或精确内容。关闭窗口或取消不会批准。\r\n'+json.dumps(response,ensure_ascii=False,indent=2)
             if len(review.encode('utf-8'))>65536:raise AXRError('wechat_owner_review_budget')
@@ -212,7 +221,7 @@ def service_control(connection,request,emit,*,connect,owner_key,clock,confirm=No
             if owner_key is None:raise AXRError('wechat_owner_enrolled_key_pin_required')
             signature=owner_key().sign(canonical(challenge)).hex()
             if clock()>=challenge['expires']:raise AXRError('wechat_owner_control_review_expired')
-            result=channel.request('WeChatOwner',method='activate' if method=='start' else 'approve_pending',
+            result=channel.request('WeChatOwner',method={'start':'activate','approve_pending':'approve_pending','approve_authorization':'approve_authorization'}[method],
                 arguments={'nonce':challenge['nonce'],'signature':signature})
         else:result=channel.request('WeChatOwner',method=method,arguments=args)
         emit(result);return result

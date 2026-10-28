@@ -68,6 +68,27 @@ class NativeDatabase:
                         row[key] = bytes.fromhex(cell['blob_hex'])
         return value
 
+    def catalog(self,check):
+        """Owner-only caller; fixed contact metadata, never chat or SQL input."""
+        from .wechat_targets import private_recipient
+        result=[];seen=set()
+        for offset in range(0,5000,1000):
+            batches=self.use(self.account,{'kind':'catalog','offset':offset,'limit':1000},check)
+            if len(batches)!=1:raise AXRError('wechat_contact_shard_required')
+            rows=batches[0]['rows']
+            if type(rows) is not list or len(rows)>1000:raise AXRError('wechat_contact_catalog_budget')
+            for row in rows:
+                if type(row) is not dict:raise AXRError('wechat_contact_catalog_invalid')
+                identity=row.get('username');label=row.get('remark') or row.get('nick_name') or identity
+                if not private_recipient(identity):continue
+                if (not isinstance(label,str) or not 0<len(identity.encode())<=256 or not 0<len(label.encode())<=4000 or
+                    identity in seen):raise AXRError('wechat_contact_catalog_invalid')
+                seen.add(identity);result.append({'conversation_id':identity,'display_name':label,'data_class':'personal'})
+            if len(rows)<1000:break
+        else:raise AXRError('wechat_contact_catalog_budget')
+        if not 1<=len(result)<=4096 or self.account not in seen:raise AXRError('wechat_contact_catalog_invalid')
+        return result
+
     def search(self, identity, *, check, since=0, until=2**63-1, after=None, limit=6):
         if type(limit) is not int or not 1 <= limit <= 100 or since < 0 or until < since:
             raise AXRError('wechat_native_search_range')

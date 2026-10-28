@@ -32,6 +32,8 @@ class WindowsWeChatService(WeChatService):
         for key,job in list(self.jobs.items()):
             if job['state'] in PENDING:
                 self.save_job(key,{k:v for k,v in {**job,'state':'Unknown','retry':False}.items() if k not in ('page','approval')})
+        from .windows_contacts import ContactAuthorization
+        self.contacts=ContactAuthorization(self)
     def approval_required(self):
         load=getattr(self.kernel.store,'config',None)
         config=load()['application'] if callable(load) else self.config
@@ -41,7 +43,13 @@ class WindowsWeChatService(WeChatService):
     def close(self):
         if self.stop_event.is_set() and not self.thread.is_alive():return
         super().close()
+    def review(self,peer,arguments):
+        if self.contacts.transition is not None:raise AXRError('wechat_authorization_transition_busy')
+        return super().review(peer,arguments)
     def activate(self,peer,nonce,signature):
+        if self.contacts.transition is not None or self.reviews.get(nonce,{}).get('kind')=='wechat-contact-authorization':raise AXRError('wechat_authorization_review_required')
+        return self._activate_scope(peer,nonce,signature)
+    def _activate_scope(self,peer,nonce,signature):
         with self.scope_lock:
             challenge=self.reviews.get(nonce)
             wall,tick=time.time(),time.monotonic()
@@ -74,7 +82,7 @@ class WindowsWeChatService(WeChatService):
     @staticmethod
     def public_job(job):return {k:v for k,v in job.items() if k not in PRIVATE}
     def status(self):
-        return {**super().status(),'manual_approval_required':self.approval_required(),'pending_review_supported':True}
+        return {**super().status(),'manual_approval_required':self.approval_required(),'pending_review_supported':True,'contact_requests_supported':True}
     @staticmethod
     def approval_seal(job):
         return digest({k:job[k] for k in ('id','conversation_id','operation','text','source','page','expires','scope_generation','client_witness') if k in job})
@@ -161,14 +169,22 @@ class WindowsWeChatService(WeChatService):
     def dispatch(self,peer,packet):
         payload=packet.get('payload',{});method=payload.get('method');args=payload.get('arguments',{})
         if packet.get('operation')=='WeChatOwner':
+            if method=='refresh_catalog':return self.contacts.refresh(peer)
+            if method=='review_authorization':return self.contacts.review(peer,args['request_id'])
+            if method=='approve_authorization':return self.contacts.approve(peer,args['nonce'],args['signature'])
+            if method=='deny_authorization':return self.contacts.deny(peer,args['request_id'])
             if method=='review_pending':return self.review_pending(peer,args['job_id'])
             if method=='approve_pending':return self.approve_pending(peer,args['nonce'],args['signature'])
             result=super().dispatch(peer,packet)
-            if method=='snapshot':result['jobs']=[self.public_job(job) for job in self.jobs.values()]
+            if method=='snapshot':
+                result['jobs']=[self.public_job(job) for job in self.jobs.values()]
+                result['authorization_requests']=self.contacts.pending()
             return result
         if peer.role!='client' or peer.principal!=PRINCIPAL:raise AXRError('wechat_managed_frontend_required')
         from .wechat_frontend import validate_arguments
         validate_arguments(method,args);self.context.generation=self.generation
+        if method=='wechat_request_authorization':return self.contacts.request(peer,args['target'],args['reason'])
+        if method=='wechat_authorization_status':return self.contacts.status(peer,args['request_id'])
         if method=='wechat_job_status':
             with self.job_lock:
                 job=self.jobs.get(args['job_id'])

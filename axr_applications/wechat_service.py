@@ -128,8 +128,10 @@ class WeChatService:
         self.worker_event.set()
         return {'stopped':True,'revoked':True,'retry':False}
     def review(self,peer,arguments):
+        return self._review(peer,arguments)
+    def _review(self,peer,arguments,*,replacing=False):
         self.kernel._owner(peer)
-        if self.scope:raise AXRError('automatic_reply_already_active')
+        if self.scope and not replacing:raise AXRError('automatic_reply_already_active')
         readiness=self.readiness()
         if not readiness['database']:raise AXRError('wechat_full_disk_access_required')
         if arguments.get('automatic',False) and not readiness['accessibility']:raise AXRError('wechat_accessibility_required')
@@ -557,7 +559,7 @@ class WeChatService:
         text=self.infer(job['conversation_id'],{'messages':context})
         if text:
             value={**job,'text':text,'state':'Draft'}
-            if self.scope['automatic']:
+            if self.scope['automatic'] and job['conversation_id'] in self.scope['reply_targets']:
                 value.update(state=self.queue_state(False),operation='messages.send',source=digest(context))
             self.save_job(key,value)
             self.worker_event.set()

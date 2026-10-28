@@ -51,6 +51,13 @@ TOOLS=[
     tool('wechat_prepare_reply','Save a reply in the separate manual replies panel.',{
         'conversation_id':{'type':'string'},'text':{'type':'string','maxLength':4000}},('conversation_id','text')),
 ]
+if os.name=='nt':
+    TOOLS += [
+        tool('wechat_request_authorization','Propose access to one private contact. This grants no permission; wait for local owner review.',{
+            'target':{'type':'string','maxLength':512},'reason':{'type':'string','maxLength':2000}},('target','reason')),
+        tool('wechat_authorization_status','Inspect your own request; never treat pending, expired or revoked requests as authorization.',{
+            'request_id':{'type':'string','maxLength':64}},('request_id',)),
+    ]
 
 def validate_arguments(name,args):
     schema=next((t['inputSchema'] for t in TOOLS if t['name']==name),None)
