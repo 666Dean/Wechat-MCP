@@ -12,6 +12,12 @@ AXR 的签名 policy、Guard/AET、加密正文上下文、访问与披露分离
 可信边界包括主人终端、状态目录、构建产物及同用户 OS 凭据库，不能隔离已控制同用户的程序。
 身份/压缩/字典/profile/目录权限不明确时拒绝读取或发送。数据库 ID 不代替 UI 发前 witness。
 
+## Windows 发送时机与草稿边界
+
+新独立服务的发送时机及覆盖开关来自本人签署范围，并密封至原生 Action；MCP 不能自行传入这些选项。活动时间只在固定已认证 owner 交互 helper 内查询，因为 [GetLastInputInfo](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getlastinputinfo) 只描述调用会话。未活动会话、非默认输入桌面、无前台窗口、未知或异常输入时钟不用于空闲准入。队列等待不消耗回复次数，活动事实不含键盘/鼠标事件内容，也不代替本人认证或账号/收件人见证。
+
+首次导航才检查空闲并按签名策略决定能否申请前台；仅前台模式不激活，后续阶段失焦即停止。普通 [SetForegroundWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow) 失败不模拟输入或更改系统前台限制；认领之后、每次 UI 修改之前再次检查前台。默认保留草稿，显式覆盖仍要求缓存有界且 live 草稿在写前未变，搜索框不覆盖。精确收件人见证、单次提交及独立观察继续适用，Unknown 永不重发。以上目前是代码及合成证据，未进行真实客户端覆盖/发送验证。
+
 ## 原项目 legacy 模式
 
 下面的明文持久化与旧 DLL 描述只适用于保留的 legacy 路径。

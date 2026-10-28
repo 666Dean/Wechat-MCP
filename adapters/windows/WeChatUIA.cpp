@@ -10,6 +10,8 @@
 #include <thread>
 #include <algorithm>
 #include <map>
+#include <wtsapi32.h>
+#include "SendPolicy.hpp"
 #include "axr/Core.hpp"
 #include "axr/Commit.h"
 #include "axr/WindowsNavigation.hpp"
@@ -29,13 +31,36 @@ static ComPtr<IUIAutomationElement> Path(IUIAutomationTreeWalker* walker,ComPtr<
 struct Candidate{std::vector<HWND> windows;};
 static BOOL CALLBACK Enum(HWND window,LPARAM param){DWORD pid=0;GetWindowThreadProcessId(window,&pid);HANDLE p=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);if(!p)return TRUE;wchar_t path[32768];DWORD len=32768;bool ok=QueryFullProcessImageNameW(p,0,path,&len);CloseHandle(p);if(ok&&IsWindowVisible(window)){auto file=std::filesystem::path(std::wstring(path,len)).filename().wstring();if(file==L"WeChat.exe"||file==L"Weixin.exe")reinterpret_cast<Candidate*>(param)->windows.push_back(window);}return TRUE;}
 static bool authorityClaimed=false,sendInvoked=false;
+static WeChat::Activity Activity(HWND window) {
+    WeChat::Activity facts;
+    DWORD session=0, bytes=0;LPWSTR state=nullptr;
+    bool active=ProcessIdToSessionId(GetCurrentProcessId(),&session) && session!=0 &&
+        WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE,session,WTSConnectState,&state,&bytes) &&
+        bytes==sizeof(WTS_CONNECTSTATE_CLASS) && *reinterpret_cast<WTS_CONNECTSTATE_CLASS*>(state)==WTSActive;
+    if(state)WTSFreeMemory(state);
+    HDESK desktop=OpenInputDesktop(0,FALSE,DESKTOP_READOBJECTS);
+    if(desktop){
+        wchar_t input[256]{},current[256]{};DWORD needed=0;
+        facts.desktop=active && GetUserObjectInformationW(desktop,UOI_NAME,input,sizeof(input),&needed) &&
+            GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()),UOI_NAME,current,sizeof(current),&needed) &&
+            _wcsicmp(input,L"Default")==0 && _wcsicmp(input,current)==0 && GetForegroundWindow()!=nullptr;
+        CloseDesktop(desktop);
+    }
+    facts.foreground=facts.desktop && GetForegroundWindow()==window;
+    LASTINPUTINFO info{sizeof(LASTINPUTINFO)};
+    if(facts.desktop && GetLastInputInfo(&info)){
+        // Unsigned subtraction handles DWORD rollover; implausible ages fail.
+        facts.idle=WeChat::IdleSeconds(GetTickCount64(),info.dwTime);
+    }
+    return facts;
+}
 static void Authority(const Json& request,bool claim=false){
     const auto& context=request.at("guard_context");
     Json scope={{"operations",Json::array({request.at("operation")})},
         {"resource",{{"platform","wechat"},{"account_id",request.at("account")},{"conversation_id",request.at("identity")}}},
         {"text",request.at("expected_text")},{"visual_binding",request.at("visual_binding")}};
     auto endpoint=context.at("authority_endpoint").get<std::string>(),proof=context.at("proof").get<std::string>(),encoded=scope.dump();
-    int allowed=claim?axr_authority_claim(endpoint.c_str(),proof.c_str(),encoded.c_str()):axr_authority_preflight(endpoint.c_str(),proof.c_str(),encoded.c_str());
+    int allowed=claim&&!authorityClaimed?axr_authority_claim(endpoint.c_str(),proof.c_str(),encoded.c_str()):axr_authority_preflight(endpoint.c_str(),proof.c_str(),encoded.c_str());
     if(allowed!=1)throw std::runtime_error("authority_or_scope_changed");
     if(claim)authorityClaimed=true;
 }
@@ -80,11 +105,18 @@ static Json Main(const Json& req,const Json* authority=nullptr){
         Authority(*authority,true);
         auto binding=authority->at("visual_binding");
         binding["expected_pid"]=pid;binding["window_id"]=reinterpret_cast<std::uintptr_t>(window);binding["process_birth"]=birth;
-        return {{"binding",binding},{"main_window_verified",true},{"send_invoked",false},{"content_disclosed",false}};
+        auto facts=Activity(window);
+        return {{"binding",binding},{"activity",{{"desktop_available",facts.desktop},{"application_active",facts.foreground},{"idle_seconds",facts.idle>=0?Json(facts.idle):Json(nullptr)}}},
+            {"main_window_verified",true},{"send_invoked",false},{"content_disclosed",false}};
     }
     if(req.at("expected_pid").get<DWORD>()!=pid)throw std::runtime_error("application_epoch_changed");
     if(authority&&(req.at("window_id").get<std::uintptr_t>()!=reinterpret_cast<std::uintptr_t>(window)||req.at("process_birth")!=birth))throw std::runtime_error("main_window_instance_changed");
     ComPtr<IUIAutomationElement> boundTarget;
+    bool timingAdmitted=false;
+    auto currentForeground=[&]{
+        if(authority)WeChat::NeedsActivation(req.value("activation_policy",std::string("immediate")),
+            req.value("idle_seconds",15),false,Activity(window));
+    };
     auto verify=[&]{
         if(authority)Authority(*authority);
         else {const auto& control=req.at("guard_context");
@@ -102,14 +134,29 @@ static Json Main(const Json& req,const Json* authority=nullptr){
                 auto expected=req.at(pair.second).get<std::string>();
                 if(expected.empty()||Value(Path(walker.Get(),root,req.at(pair.first)).Get())!=expected)throw std::runtime_error("stable_identity_witness_changed");
             }
-        }};
+        }
+        if(authority){
+            const auto policy=req.value("activation_policy",std::string("immediate"));
+            auto phase=req.value("idle_gate",std::string("initial"));
+            if(phase!="initial" && phase!="continuation")throw std::runtime_error("idle_gate_invalid");
+            bool initial=op=="navigate" && phase=="initial" && !timingAdmitted;
+            bool activate=WeChat::NeedsActivation(policy,req.value("idle_seconds",15),initial,Activity(window));
+            if(activate){
+                // No simulated input, foreground-lock changes or focus retries.
+                Authority(*authority,true);
+                if(!SetForegroundWindow(window))throw std::runtime_error("foreground_activation_denied");
+            }
+            WeChat::NeedsActivation(policy,req.value("idle_seconds",15),false,Activity(window));
+            timingAdmitted=true;
+        }
+    };
     verify();
     if(authority&&op=="navigate"){
         auto search=Path(walker.Get(),root,req.at("search_path"));ComPtr<IUIAutomationValuePattern> input;
         if(FAILED(search->GetCurrentPatternAs(UIA_ValuePatternId,IID_PPV_ARGS(&input))))throw std::runtime_error("search_input_unavailable");
         // Preserve the user's unfinished search as well as their chat draft.
         if(!Draft(input.Get()).empty())throw std::runtime_error("existing_search_never_overwrite");
-        verify();Authority(*authority,true);auto query=req.at("text").get<std::string>();SetValue(input.Get(),query);
+        verify();Authority(*authority,true);auto query=req.at("text").get<std::string>();currentForeground();SetValue(input.Get(),query);
         if(Draft(input.Get())!=query)throw std::runtime_error("search_query_echo_changed");
         verify();auto selected=Path(walker.Get(),root,req.at("search_result_path"));
         if(Value(selected.Get())!=req.at("search_result_title").get<std::string>())throw std::runtime_error("search_result_label_changed");
@@ -118,7 +165,7 @@ static Json Main(const Json& req,const Json* authority=nullptr){
         if(!select&&FAILED(selected->GetCurrentPatternAs(UIA_InvokePatternId,IID_PPV_ARGS(&invoke))))throw std::runtime_error("search_result_action_unavailable");
         verify();BOOL same=FALSE;auto fresh=Path(walker.Get(),root,req.at("search_result_path"));
         if(FAILED(automation->CompareElements(selected.Get(),fresh.Get(),&same))||!same||Draft(input.Get())!=query)throw std::runtime_error("search_result_epoch_changed");
-        auto status=select?selection->Select():invoke->Invoke();if(FAILED(status))throw std::runtime_error("search_selection_unknown");
+        currentForeground();auto status=select?selection->Select():invoke->Invoke();if(FAILED(status))throw std::runtime_error("search_selection_unknown");
         verify();
         if(Value(Path(walker.Get(),root,req.at("header_path")).Get())!=req.at("expected_title").get<std::string>()||
            Value(Path(walker.Get(),root,req.at("identity_path")).Get())!=req.at("expected_identity").get<std::string>())throw std::runtime_error("selected_conversation_witness_changed");
@@ -130,10 +177,15 @@ static Json Main(const Json& req,const Json* authority=nullptr){
         ComPtr<IUIAutomationValuePattern> input;
         if(FAILED(target->GetCurrentPatternAs(UIA_ValuePatternId,IID_PPV_ARGS(&input))))throw std::runtime_error("input_unavailable");
         if(op=="stage_draft"){
-            if(!Draft(input.Get()).empty())throw std::runtime_error("existing_draft_never_overwrite");
+            auto policy=req.value("draft_policy",std::string("preserve"));
+            if(policy!="preserve" && policy!="replace")throw std::runtime_error("draft_policy_invalid");
+            auto prior=Draft(input.Get());
+            if(!prior.empty() && policy!="replace")throw std::runtime_error("existing_draft_never_overwrite");
             verify();Authority(*authority,true);
+            if(Draft(input.Get())!=prior)throw std::runtime_error("draft_changed_before_prepare");
             auto wide=Wide(text);BSTR prepared=SysAllocStringLen(wide.data(),UINT(wide.size()));
             if(!prepared)throw std::runtime_error("draft_allocation_failed");
+            try{currentForeground();}catch(...){SysFreeString(prepared);throw;}
             auto changed=input->SetValue(prepared);SysFreeString(prepared);
             if(FAILED(changed))throw std::runtime_error("draft_prepare_failed");
             verify();return {{"draft_match",Draft(input.Get())==text},{"stage_invoked",true},{"send_invoked",false},{"content_disclosed",false}};
@@ -151,7 +203,7 @@ static Json Main(const Json& req,const Json* authority=nullptr){
                 throw std::runtime_error("draft_or_send_control_changed");
             // Claim only after both exact-input comparisons, immediately before
             // a single external invocation. Never retry an uncertain send.
-            Authority(*authority,true);sendInvoked=true;
+            Authority(*authority,true);currentForeground();sendInvoked=true;
             if(FAILED(invoke->Invoke()))throw std::runtime_error("send_outcome_unknown");
             return {{"draft_match",true},{"send_invoked",true},{"delivery_confirmed",false},{"content_disclosed",false}};
         }

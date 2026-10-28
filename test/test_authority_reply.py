@@ -55,7 +55,7 @@ class ReplyTransaction(unittest.TestCase):
             if self.ambiguous:self.recent.append({**self.recent[0],'username':'fixture-other'})
             data.update(navigation_invoked=True,query_input_submitted=True,main_window_verified=True)
         elif mode == 'stage_draft':
-            if self.input:raise AssertionError('must preserve user text')
+            if self.input and action.payload['visual_binding'].get('draft_policy')!='replace':raise AXRError('existing_draft_never_overwrite')
             self.stages+=1;self.input=action.payload['text'];data['draft_match']=True
         elif mode == 'read_draft':data['draft_match']=self.input==action.payload['text']
         elif mode == 'send':
@@ -97,6 +97,27 @@ class ReplyTransaction(unittest.TestCase):
         with self.assertRaisesRegex(AXRError,'scope_changed'):self.submit()
         self.assertEqual((self.stages,self.sent),(1,0))
         self.assertEqual(self.input,self.plan.text)
+    def test_explicit_draft_replacement_keeps_witness_observation_and_permanent_attempt(self):
+        self.cache['fixture-peer']='Synthetic unsent draft'
+        result=self.submit(overwrite_drafts=True)
+        self.assertEqual(result['state'],'Observed');self.assertEqual((self.stages,self.sent),(1,1))
+        with self.assertRaisesRegex(AXRError,'previous_attempt'):self.submit(overwrite_drafts=True)
+    def test_unknown_or_truncated_draft_cannot_be_replaced(self):
+        original=self.local
+        for row in ({'draft':'x','size':2},{'draft':'','size':True},{'draft':None,'size':0},{'draft':'x','size':16001}):
+            with self.subTest(row=row):
+                self.local=lambda resource,kind,parameters,operation,check:[row] if kind=='draft' else original(resource,kind,parameters,operation,check)
+                with self.assertRaisesRegex(AXRError,'preserved'):self.submit(overwrite_drafts=True)
+                self.assertEqual((self.stages,self.sent),(0,0))
+        with self.assertRaisesRegex(AXRError,'policy_invalid'):self.submit(overwrite_drafts=1)
+    def test_live_draft_appearing_after_empty_cache_is_preserved_without_replacement(self):
+        original=self.native
+        def change(action,check):
+            if action.payload['mode']=='stage_draft':self.input='Synthetic user typing'
+            return original(action,check)
+        self.native=change
+        with self.assertRaisesRegex(AXRError,'never_overwrite'):self.submit()
+        self.assertEqual(self.input,'Synthetic user typing');self.assertEqual(self.sent,0)
     def test_sender_direction_server_id_full_text_and_unique_record_are_independently_required(self):
         for changes in ({'sender':'other'},{'outgoing':False},{'server_id':0},
                         {'server_id':True},{'text':'partial'},{'text_truncated':True}):

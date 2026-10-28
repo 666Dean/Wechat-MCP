@@ -46,7 +46,7 @@ class ReplyExecutor:
         self.rounds = observation_rounds
         self.lock = threading.Lock()
 
-    def submit(self, plan, *, principal, purpose, sources, binding, native, local, check):
+    def submit(self, plan, *, principal, purpose, sources, binding, native, local, check, overwrite_drafts=False):
         """Trusted dependencies only; never pass callables from a model packet.
 
         ``binding(cid, check)`` returns the pinned main-window metadata, ``native``
@@ -54,13 +54,14 @@ class ReplyExecutor:
         operation under its own read permission. Neither may auto-approve it.
         """
         plan.validate()
+        if type(overwrite_drafts) is not bool:raise AXRError('reply_draft_policy_invalid')
         if self.database.account != plan.account:raise AXRError('reply_account_changed')
         if not self.lock.acquire(False):raise AXRError('reply_executor_busy')
         try:
-            return self._submit(plan, principal, purpose, tuple(sources), binding, native, local, check)
+            return self._submit(plan, principal, purpose, tuple(sources), binding, native, local, check, overwrite_drafts)
         finally:self.lock.release()
 
-    def _submit(self, plan, principal, purpose, sources, binding, native, local, check):
+    def _submit(self, plan, principal, purpose, sources, binding, native, local, check, overwrite_drafts):
         self.attempts.mkdir(mode=0o700, parents=True, exist_ok=True)
         marker = self.attempts / ('reply-' + digest([plan.account, plan.recipient, plan.attempt]) + '.json')
         if marker.exists() or marker.is_symlink():raise AXRError('previous_attempt_never_retry')
@@ -89,6 +90,7 @@ class ReplyExecutor:
             valid()
             operations = {'navigate':'application.navigate', 'stage_draft':'application.draft',
                           'read_draft':'status.read', 'send':'messages.send'}
+            if mode=='stage_draft':visual={**visual,'draft_policy':'replace' if overwrite_drafts else 'preserve'}
             action = Action(principal, target, operations[mode], purpose,
                 {'mode':mode, 'text':text, 'visual_binding':visual},
                 sources=sources if mode == 'send' else (),
@@ -114,9 +116,11 @@ class ReplyExecutor:
                 raise AXRError('reply_unique_fresh_navigation_required')
             return at, current
         valid()
-        # Inspect before any draft insertion. User text is never overwritten.
+        # Unknown/truncated drafts remain blocked even with explicit replacement.
         draft = metadata(plan.recipient, 'draft')
-        if len(draft) != 1 or draft[0].get('draft') != '' or draft[0].get('size') != 0:
+        if (len(draft)!=1 or type(draft[0].get('draft')) is not str or type(draft[0].get('size')) is not int
+            or not 0<=draft[0]['size']<=16000 or draft[0]['size']!=len(draft[0]['draft'].encode())
+            or (not overwrite_drafts and (draft[0]['draft']!='' or draft[0]['size']!=0))):
             raise AXRError('reply_existing_or_unknown_draft_preserved')
         _, staged_window = selected(plan.recipient, plan.label)
         result = perform('stage_draft', resource, plan.text, staged_window)

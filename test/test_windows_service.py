@@ -162,23 +162,39 @@ class WindowsService(unittest.TestCase):
         self.assertEqual(result,{'legacy':'still approved separately'});application.assert_called_once()
         self.assertFalse(self.call('wechat_status')['owner_authorized'])
     def test_approved_windows_service_uses_full_reply_executor_and_cannot_resend(self):
+        self.reply_transaction()
+    def test_signed_idle_scope_is_sealed_on_each_phase_and_does_not_recheck_own_input(self):
+        actions=self.reply_transaction(send_policy='when_idle')
+        self.assertEqual([a.payload['visual_binding']['idle_gate'] for a in actions if a.payload['mode']=='navigate'],
+            ['initial','continuation','continuation'])
+        self.assertTrue(all(a.payload['visual_binding']['activation_policy']=='when_idle' for a in actions))
+        self.assertTrue(all(a.payload['visual_binding']['idle_seconds']==15 for a in actions))
+        self.assertTrue(all(a.payload['visual_binding']['idle_gate']=='continuation' for a in actions if a.payload['mode']!='navigate'))
+    def test_signed_foreground_scope_and_draft_replacement_reach_guarded_transaction(self):
+        actions=self.reply_transaction(send_policy='foreground_only',overwrite_drafts=True)
+        staged=next(a for a in actions if a.payload['mode']=='stage_draft')
+        self.assertEqual(staged.payload['visual_binding']['draft_policy'],'replace')
+        self.assertTrue(all(a.payload['visual_binding']['activation_policy']=='foreground_only' for a in actions))
+    def reply_transaction(self,send_policy='immediate',overwrite_drafts=False):
         from test import test_authority_reply as transactions
         transaction=transactions.ReplyTransaction();transaction.setUp();self.addCleanup(transaction.doCleanups)
         transaction.plan=type(transaction.plan)('fixture-owner','fixture-peer','fixture-owner',
             'Fixture peer','Fixture owner','Synthetic reply','fixture-task')
         transaction.cache={'fixture-peer':'','fixture-owner':''};transaction.active='fixture-owner'
+        if overwrite_drafts:transaction.cache['fixture-peer']='Synthetic user draft explicitly approved for replacement'
         self.service.database=transaction.database;self.service.executor=transaction.executor
         self.config['reply_navigation']={'profiles':{cid:{'label':label,'visual_binding':{'expected_identity':cid}}
             for cid,label in [('fixture-peer','Fixture peer'),('fixture-owner','Fixture owner')]}}
         self.service.config['reply_navigation']=self.config['reply_navigation']
-        self.activate();pending=self.call('wechat_send_message',conversation_id='fixture-peer',text='Synthetic reply',request_id='full-chain')
+        self.activate(send_policy=send_policy,overwrite_drafts=overwrite_drafts);pending=self.call('wechat_send_message',conversation_id='fixture-peer',text='Synthetic reply',request_id='full-chain')
         self.approve(pending['job_id']);self.service.context.executing_job=pending['job_id']
         self.service.save_job(pending['job_id'],{**self.service.jobs[pending['job_id']],'state':'Executing'})
+        actions=[]
         def invoke(action,check):
             proof=self.service.prepare(action);self.kernel.claim_commit(self.f.peer,proof)
             if action.payload['mode']=='binding':
                 result={'receipt':{'state':'Completed'},'native':{'main_window_verified':True,'binding':{'pid':12,'window_id':1}}}
-            else:result=transaction.native(action,check)
+            else:actions.append(action);result=transaction.native(action,check)
             self.kernel.observe(self.f.peer,proof,verified=result['receipt']['state']=='Completed',evidence_digest=digest(result))
             return result
         with patch.object(self.service.navigation,'invoke',side_effect=invoke):
@@ -186,6 +202,63 @@ class WindowsService(unittest.TestCase):
             self.assertTrue(result['database_record_observed']);self.assertEqual(result['native_state'],'Unknown')
             with self.assertRaisesRegex(AXRError,'previous_attempt'):self.service.send('fixture-peer','Synthetic reply')
         self.assertEqual(transaction.sent,1);self.assertTrue(self.kernel.integrity.verify())
+        return actions
+    def test_windows_idle_and_foreground_checks_use_interactive_metadata(self):
+        self.activate(send_policy='foreground_only')
+        facts={'desktop_available':True,'application_active':False,'idle_seconds':15.}
+        with patch.object(self.service,'inspect_binding',return_value={'activity':facts}) as probe:
+            self.assertEqual(self.service.send_wait_reason(),'wechat_background')
+            facts['application_active']=True;self.assertIsNone(self.service.send_wait_reason())
+            facts['idle_seconds']=14.9;self.assertEqual(self.service.send_wait_reason(),'user_active')
+            self.assertEqual(probe.call_args.kwargs,{'activity':True})
+    def test_missing_invalid_or_locked_activity_never_releases_queue(self):
+        self.activate(send_policy='when_idle')
+        facts={'desktop_available':True,'application_active':True,'idle_seconds':30.}
+        for change in ({'desktop_available':False},{'application_active':1},{'idle_seconds':None},
+                       {'idle_seconds':True},{'idle_seconds':float('nan')},{'idle_seconds':float('inf')},
+                       {'idle_seconds':-1},{'idle_seconds':86400},{'unexpected':'private'}):
+            with self.subTest(change=change),patch.object(self.service,'inspect_binding',return_value={'activity':{**facts,**change}}):
+                self.assertEqual(self.service.send_wait_reason(),'activity_unavailable')
+        with patch.object(self.service,'inspect_binding',side_effect=AXRError('synthetic_identity_changed')):
+            self.assertEqual(self.service.send_wait_reason(),'activity_unavailable')
+        self.service.stop()
+        with self.assertRaisesRegex(AXRError,'stopped_or_expired'):self.service.send_wait_reason()
+    def test_background_send_is_unavailable_even_for_bounded_trial(self):
+        with self.assertRaisesRegex(AXRError,'windows_background_send_unavailable'):
+            self.activate(send_policy='background_when_idle',seconds=60,max_replies=1)
+        self.assertIsNone(self.service.scope);self.assertFalse(self.service.background_qualified())
+    def test_idle_queue_retains_budget_then_releases_once_and_unknown_does_not_replay(self):
+        self.activate(send_policy='when_idle');job=self.call('wechat_send_message',conversation_id='fixture-peer',text='Synthetic idle queue',request_id='wait')
+        self.approve(job['job_id']);rounds=[]
+        facts={'desktop_available':True,'application_active':False,'idle_seconds':None}
+        def wait(*args):
+            rounds.append(True)
+            current=self.service.jobs[job['job_id']]
+            if len(rounds)==1:
+                self.assertEqual(current['state'],'WaitingForIdle');self.assertEqual(self.service.reply_count,0)
+                self.assertEqual(current['approval'],self.service.approval_seal(current));facts['idle_seconds']=20
+            if len(rounds)==2:
+                self.assertEqual(current['state'],'Unknown');self.assertEqual(self.service.reply_count,1)
+            if len(rounds)==3:self.service.stop_event.set()
+        with patch.object(self.service,'inspect_binding',return_value={'activity':facts}),patch.object(
+                self.service,'scan_targets',return_value=[]),patch.object(self.service,'send',return_value={'database_record_observed':False}) as send,patch.object(
+                self.service.worker_event,'wait',side_effect=wait):
+            self.service.loop()
+        send.assert_called_once();self.assertEqual(len(rounds),3)
+        self.service.stop_event.clear()
+        with self.assertRaisesRegex(AXRError,'uncertain_text_never_retry'):
+            self.call('wechat_send_message',conversation_id='fixture-peer',text='Synthetic idle queue',request_id='another')
+    def test_immediate_policy_does_not_wait_for_idle_metadata(self):
+        self.activate(send_policy='immediate')
+        with patch.object(self.service,'inspect_binding') as probe:
+            self.assertIsNone(self.service.send_wait_reason());probe.assert_not_called()
+    def test_activity_is_not_part_of_stable_cached_window_witness(self):
+        self.activate();self.service.config['reply_navigation']={'profiles':{'fixture-peer':{'visual_binding':{'expected_identity':'fixture-peer'}}}}
+        data={'main_window_verified':True,'binding':{'pid':12,'window_id':1},'activity':{
+            'desktop_available':True,'application_active':True,'idle_seconds':30.}}
+        with patch.object(self.service.navigation,'invoke',return_value={'receipt':{'state':'Completed'},'native':data}):
+            self.assertEqual(self.service.window_binding('fixture-peer',self.service.check),data['binding'])
+            self.assertEqual(self.service.window_binding('fixture-peer',self.service.check,activity=True)['activity'],data['activity'])
     def channel(self):
         fixture=self
         class Channel:

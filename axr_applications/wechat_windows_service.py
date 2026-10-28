@@ -4,9 +4,10 @@
 No alternate scheduler: pagination, bursts, standing scopes, short child tasks,
 owner routing, preferences, queues and stop come from WeChatService.
 """
-from dataclasses import asdict
+from dataclasses import asdict,replace
 import hashlib
 import json
+import math
 from pathlib import Path
 import secrets
 import time
@@ -45,6 +46,8 @@ class WindowsWeChatService(WeChatService):
         super().close()
     def review(self,peer,arguments):
         if self.contacts.transition is not None:raise AXRError('wechat_authorization_transition_busy')
+        if type(arguments) is dict and arguments.get('send_policy')=='background_when_idle':
+            raise AXRError('wechat_windows_background_send_unavailable')
         return super().review(peer,arguments)
     def activate(self,peer,nonce,signature):
         if self.contacts.transition is not None or self.reviews.get(nonce,{}).get('kind')=='wechat-contact-authorization':raise AXRError('wechat_authorization_review_required')
@@ -247,8 +250,24 @@ class WindowsWeChatService(WeChatService):
             if not self.readiness()['accessibility']:raise AXRError('wechat_main_window_unavailable')
             return {} # Pre-consent metadata check; never used as an account/recipient witness.
         identity=getattr(self.context,'recipient',None) or self.scope['targets'][0]
-        return self.window_binding(identity,self.check)
-    def window_binding(self,identity,check):
+        return self.window_binding(identity,self.check,activity=activity)
+    def background_qualified(self):return False
+    def send_wait_reason(self):
+        self.check()
+        policy=self.scope.get('send_policy','immediate')
+        if policy=='immediate':return None
+        if policy not in ('when_idle','foreground_only'):return 'send_policy_unavailable'
+        try:
+            facts=self.inspect_binding(activity=True)['activity']
+            idle=facts['idle_seconds'];foreground=facts['application_active']
+            if (set(facts)!={'idle_seconds','application_active','desktop_available'} or
+                facts['desktop_available'] is not True or type(foreground) is not bool or
+                type(idle) not in (int,float) or not math.isfinite(idle) or not 0<=idle<86400):
+                return 'activity_unavailable'
+        except (AXRError,RuntimeError,OSError,KeyError,TypeError,ValueError,OverflowError):return 'activity_unavailable'
+        from .send_schedule import readiness
+        return readiness(policy,self.scope.get('idle_seconds',15),idle=idle,foreground=foreground)
+    def window_binding(self,identity,check,*,activity=False):
         check();visual=self.config['reply_navigation']['profiles'][identity]['visual_binding']
         action=Action(PRINCIPAL,Resource('wechat',self.config['account_id'],'axr:application-ui'),'status.read',
             'wechat-owner-service',{'mode':'binding','text':'AXR main-window metadata','visual_binding':visual})
@@ -258,7 +277,8 @@ class WindowsWeChatService(WeChatService):
         finally:self.context.recipient=previous
         if result.get('receipt',{}).get('state')!='Completed' or (result.get('native') or {}).get('main_window_verified') is not True:
             raise AXRError('reply_main_window_binding_unconfirmed')
-        return result['native']['binding']
+        binding=result['native']['binding']
+        return {**binding,'activity':result['native'].get('activity')} if activity else binding
     def send(self,identity,text,*,sources=()):
         self.check()
         if identity not in self.scope['reply_targets']:raise AXRError('wechat_send_target_not_authorized')
@@ -274,10 +294,23 @@ class WindowsWeChatService(WeChatService):
                 raise AXRError('wechat_uncertain_text_never_retry')
             self.context.recipient=identity
             try:
+                admitted=False
+                def execute(action,check):
+                    nonlocal admitted
+                    check()
+                    visual={**action.payload['visual_binding'],
+                        'activation_policy':self.scope.get('send_policy','immediate'),
+                        'idle_seconds':self.scope.get('idle_seconds',15),
+                        'idle_gate':'continuation' if admitted else 'initial'}
+                    action=replace(action,payload={**action.payload,'visual_binding':visual})
+                    result=self.navigation.invoke(action,check=check)
+                    if (action.payload['mode']=='navigate' and result.get('receipt',{}).get('state')=='Completed'
+                        and (result.get('native') or {}).get('navigation_invoked') is True):admitted=True
+                    return result
                 def local(resource,kind,parameters,operation,check):
                     check()
                     return self.local(resource.conversation_id,'messages.read',{'kind':kind,**parameters},operation)
                 return self.executor.submit(plan,principal=PRINCIPAL,purpose='wechat-owner-service',sources=sources,
-                    binding=self.window_binding,native=lambda action,check:self.navigation.invoke(action,check=check),
-                    local=local,check=self.check)
+                    binding=self.window_binding,native=execute,
+                    local=local,check=self.check,overwrite_drafts=self.scope.get('overwrite_drafts',False))
             finally:self.context.recipient=None
