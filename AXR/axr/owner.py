@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Independent local owner control. Never registered as an MCP tool."""
 import argparse
 from contextlib import closing,contextmanager

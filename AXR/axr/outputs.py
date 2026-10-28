@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Typed model output is data. ActionProposal/DataRequest never grant authority."""
 from .aet import AXRError,canonical
 

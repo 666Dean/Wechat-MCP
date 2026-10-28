@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Source-bound incoming inference. A visible parent chat is metadata routing only.
 
 The provider is a fixed trusted registration whose completion API accepts no

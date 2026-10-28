@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """NT handle-relative filesystem operations. No path-based reparse fallback."""
 import ctypes as c,ctypes.wintypes as w
 from .aet import AXRError

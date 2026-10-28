@@ -92,7 +92,7 @@ AI 署名开关及 Agent 提出新增联系人授权申请，由本机主人批�
 把 macOS / Windows 个人微信客户端的当前可见私人聊天，或显式绑定的 WCDB 数据库会话，包装为 MCP 工具。
 主人可以设置助理人设、回复风格与 AI 署名；应用内始终保留运行状态和审计。
 
-本仓库 `AXR/` 内 Stellaria AXR SDK 使用 [AGPL v3](AXR/LICENSE)；其他项目源码保持 [MIT](LICENSE)，第三方依赖保持各自协议。组合发行的 AGPL 义务见 [许可证边界](LICENSES.md)。
+本仓库 `AXR/` 内 Stellaria AXR SDK 自有代码采用 **AGPL v3 only / SCL 1.0 双授权**，贡献遵循 [Stellaria CLA 1.0](AXR/CONTRIBUTING.md)。独立官方仓库为 [Stellaria-Studio/Stellaria-AXR-SDK](https://github.com/Stellaria-Studio/Stellaria-AXR-SDK)。非 AXR 集成代码继续使用 [MIT](LICENSE)，第三方许可保持不变。详情见 [许可证边界](LICENSES.md)。
 项目不是微信、腾讯或 OpenAI 的官方产品。Codex 是默认助理称呼，不代表官方集成或认证。
 
 桌面主导航围绕工作台、简报、待办、待授权及人工回复组织；连接与权限管理收于设置。
@@ -129,7 +129,7 @@ Windows 本机原生环境已验证：AXR 原生模块/Guard 核心回归、原 
 
 AXR 提供独立所有者认证入口、
 加密 AET/context、访问与披露分离、WCDB 原生只读 pager、Swift AX / C++ UIA、监听准入、
-本地 runner 及预算机制。SDK AGPL v3，其他沿用原项目 MIT；商业许可须另行书面协议。
+本地 runner 及预算机制。SDK 自有代码采用 AGPL v3 only / SCL 1.0 双授权，其他沿用原项目 MIT；SCL 商业权利须通过另行有效协议取得。
 精确审批绑定每个任务的唯一 execution_id；取消、正文 TTL 或重启后不能迁移审批或重放原任务。
 
 跨平台构建、使用、授权流程与实际验收状态见 [Gen1 集成说明](docs/AXR_GEN1.md)。

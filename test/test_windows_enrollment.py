@@ -23,7 +23,10 @@ class ExistingOwnerEnrollment(unittest.TestCase):
     @classmethod
     def setUpClass(cls):cls.e=Evidence()
     def setUp(self):
-        review=patch.object(enrollment.native,'review_windows_owner',return_value=True);review.start();self.addCleanup(review.stop)
+        # Non-Windows native modules intentionally omit these OS entry points.
+        # Only synthetic platform-independent rejection tests create the mock;
+        # Windows still requires the real exported symbol to exist.
+        review=patch.object(enrollment.native,'review_windows_owner',return_value=True,create=sys.platform!='win32');review.start();self.addCleanup(review.stop)
         self.temporary=tempfile.TemporaryDirectory();self.addCleanup(self.temporary.cleanup)
         self.root=Path(self.temporary.name).resolve();self.outputs=[];self.signed=[]
         self.config={'state':str(self.root/'new-state'),'endpoint':r'\\.\pipe\Stellaria.AXR.fixture' if sys.platform=='win32' else '/tmp/axr-fixture.sock',
@@ -108,7 +111,7 @@ class ExistingOwnerEnrollment(unittest.TestCase):
         self.assertFalse((self.root/'new-state').exists())
     def test_invalid_existing_pin_never_falls_back_to_creation(self):
         (self.root/'owner-key.json').write_bytes(b'not a pin\n')
-        with patch.object(enrollment.native,'provision_windows_hello_owner') as create,patch.object(
+        with patch.object(enrollment.native,'provision_windows_hello_owner',create=sys.platform!='win32') as create,patch.object(
                 wechat,'resources_root',return_value=self.root):
             with self.assertRaisesRegex(AXRError,'enrolled_key_pin_required'):
                 enrollment.respond(self.root,io.BytesIO(canonical(self.challenge)+b'\n'),self.outputs.append)
@@ -116,13 +119,13 @@ class ExistingOwnerEnrollment(unittest.TestCase):
         self.assertEqual(self.outputs,[])
     def test_missing_roots_prevent_first_creation(self):
         (self.root/'owner-key.json').unlink();(self.root/'hello-trust.json').unlink()
-        with patch.object(enrollment.native,'provision_windows_hello_owner') as create:
+        with patch.object(enrollment.native,'provision_windows_hello_owner',create=sys.platform!='win32') as create:
             with self.assertRaisesRegex(AXRError,'trust_roots_required'):self.respond()
             create.assert_not_called()
         self.assertEqual(self.outputs,[])
     def test_cancelled_first_creation_emits_nothing_and_has_no_software_fallback(self):
         (self.root/'owner-key.json').unlink()
-        with patch.object(enrollment.native,'provision_windows_hello_owner',side_effect=RuntimeError('hello_enrollment_cancelled_or_expired')):
+        with patch.object(enrollment.native,'provision_windows_hello_owner',side_effect=RuntimeError('hello_enrollment_cancelled_or_expired'),create=sys.platform!='win32'):
             with self.assertRaisesRegex(RuntimeError,'cancelled_or_expired'):self.respond()
         self.assertEqual(self.outputs,[]);self.assertEqual(self.signed,[])
         self.assertFalse((self.root/'owner-key.json').exists())

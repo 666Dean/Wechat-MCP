@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 // Wire layout: Microsoft TSS.MSR PCPTool.v11/inc/TpmAtt.h and TPM 2.0
 // TPMS_ATTEST/TPMT_PUBLIC. Independent bounded parser; no private TPM blobs
 // or optional unauthenticated PCP flags are treated as hardware evidence.

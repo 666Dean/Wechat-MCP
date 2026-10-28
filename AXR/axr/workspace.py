@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Scoped text writes through held directory handles and encrypted undo records."""
 from pathlib import Path
 from .aet import AXRError,digest

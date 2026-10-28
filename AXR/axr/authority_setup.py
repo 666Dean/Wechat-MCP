@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Owner-only first setup inside the fixed installed native authority host."""
 import hashlib,importlib,json,os,re,sys
 from pathlib import Path

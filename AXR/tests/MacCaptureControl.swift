@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 // Manual developer qualification, never installed in the product or auto-run.
 // Exactly one owned synthetic window. No display capture, consent requests,
 // private application data, image files, fallback routes or input events.

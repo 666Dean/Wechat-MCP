@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 // Generic AX broker. Application-specific selectors and parsing belong to integrators.
 import Foundation
 import AppKit

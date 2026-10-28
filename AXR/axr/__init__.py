@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Stellaria Agent eXecution Runtime. No application adapters live here."""
 from .aet import Action, AXRError, Provenance, Resource
 from .guard import Guard

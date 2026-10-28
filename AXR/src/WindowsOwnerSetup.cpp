@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 // Fixed, one-shot LocalSystem -> interactive owner setup. The job only manages
 // child lifetime; it is not an agent sandbox or authorization mechanism.
 #include "axr/WindowsOwnerSetup.hpp"

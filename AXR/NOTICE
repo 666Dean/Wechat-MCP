@@ -1,9 +1,8 @@
-Stellaria AXR SDK Gen1
+Stellaria AXR SDK
 Copyright (c) 2026 Stellaria contributors
-License: GNU Affero General Public License version 3 only (AGPL-3.0-only).
 
-This SDK provides application-independent authorization, execution, journaling
-and platform primitives.
-The license grants of third-party dependencies are preserved separately.
-A commercial alternative requires a separate written agreement from applicable
-copyright holders; this distribution does not grant such an agreement.
+SDK-owned source: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
+The AGPL-3.0-only path is available under LICENSE. The SCL alternative
+requires a separately effective commercial agreement; publishing the framework
+does not itself grant proprietary rights. Third-party and file-level notices
+remain in force. See LICENSES.md and THIRD_PARTY_NOTICES.md.

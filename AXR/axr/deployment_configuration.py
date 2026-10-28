@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Signed runtime selects an inline or protected installation configuration.
 
 The marker has no caller-chosen path. Account data stays outside signed code;

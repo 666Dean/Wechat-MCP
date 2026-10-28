@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 #pragma once
 #include <nlohmann/json.hpp>
 #include <filesystem>
@@ -30,6 +30,8 @@ double Now();
 
 class Guard {
 public:
+    // Public operations on one instance are serialized. This does not combine
+    // revalidation and an external application commit into an atomic operation.
     Guard(const std::filesystem::path& path, std::string key, bool migrateLegacy=false);
     ~Guard();
     Guard(const Guard&) = delete;

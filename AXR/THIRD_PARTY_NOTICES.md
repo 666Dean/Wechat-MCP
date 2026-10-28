@@ -1,9 +1,14 @@
 # Third-party components
 
-AXR source is AGPL-3.0-only. The SDK links OpenSSL (Apache-2.0) and SQLite
+SDK-owned source uses AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0.
+This does not relicense dependencies. The SDK links OpenSSL (Apache-2.0) and SQLite
 (public domain), and uses nlohmann/json (MIT) and pybind11 (BSD-3-Clause).
 Python convenience bindings use keyring (MIT) and pywin32 (PSF).
 Native Windows/macOS APIs are provided by the operating system.
+
+Imported Python integration tests preserve MIT notices; their full upstream
+license is in licenses/integration-tests-MIT.txt. They are development tests,
+not a replacement license for the SDK runtime.
 
 The pinned nlohmann/json fallback header is downloaded at build time from
 v3.12.0, verified by SHA-256, and retains its copyright and MIT header.

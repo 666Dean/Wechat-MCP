@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 // Opaque device-bound representation, never a raw private key. Called only
 // in-process by the protected native host; no command line or IPC endpoint.
 import CryptoKit

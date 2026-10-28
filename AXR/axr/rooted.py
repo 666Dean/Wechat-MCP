@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Held directory handles; component-relative opens reject links/reparse points."""
 import contextlib,os,stat,sys,uuid
 from pathlib import Path

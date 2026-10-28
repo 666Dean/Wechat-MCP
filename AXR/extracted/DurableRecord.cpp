@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 // AXR authenticated commit, load, write and sync;
 // no compute jobs, scheduler, Provider, project format or runtime dependencies.
 #include "axr/Core.hpp"

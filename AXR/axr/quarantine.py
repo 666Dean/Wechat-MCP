@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Content intake, immutable inspection, mandatory OS isolation and safe output.
 
 The quarantine is application-neutral. It never knows a chat ID, extracts a key,

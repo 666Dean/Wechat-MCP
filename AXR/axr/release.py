@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Signed release inventory and monotonic update admission; no unsigned fallback.
 
 Owner-enrolled or maintainer public keys and protected state come from the independently installed

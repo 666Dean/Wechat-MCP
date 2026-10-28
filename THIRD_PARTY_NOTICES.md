@@ -1,9 +1,10 @@
 # Integration notices
 
 The code outside AXR/ retains MIT, subject to original third-party notices.
-AXR/ is separately AGPL-3.0-only. Combining or distributing a program that links
-AXR may impose AGPL obligations on the combined program; an MIT header does not
-remove those obligations. See AXR/THIRD_PARTY_NOTICES.md for SDK dependencies.
+SDK-owned AXR/ offers AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0.
+The SCL path requires a separate effective agreement and cannot relicense third
+parties. Under the AGPL path, linking/distribution may impose AGPL obligations
+on the combined program; an MIT header does not remove those obligations. See AXR/THIRD_PARTY_NOTICES.md for SDK dependencies.
 
 ## Optional SQLite3 Multiple Ciphers reader
 

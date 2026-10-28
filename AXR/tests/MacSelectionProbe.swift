@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 // Owner-operated system picker qualification. Metadata by default. The optional
 // scoped read captures one owner-selected window, runs local Vision and returns
 // text only over the parent's private pipe. Never an input or network capability.

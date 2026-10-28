@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Fixed isolated parser executable. No SDK root, broker credential or file inputs."""
 import base64,json,os,sys
 from pathlib import Path

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Bounded worker supervision, private inherited-pipe IPC and account leases."""
 import contextlib
 import hashlib

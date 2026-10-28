@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Independent protected audit head. The backend must be outside worker access.
 
 Use an OS-key-store backend owned by the security authority service. A file next

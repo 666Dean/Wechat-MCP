@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Windows broker worker limits. A Job Object is not an Agent security sandbox."""
 def bind_job(process, memory=512*1024*1024):
     import uuid

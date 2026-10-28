@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 // Fixed embedded-runtime host. No user site, PYTHONPATH, caller-selected module,
 // script, executable or startup arguments enter the authority interpreter.
 #include "axr/ProtectedStore.hpp"

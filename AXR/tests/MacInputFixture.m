@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 // Manual synthetic fixture. No WeChat data, network or production policy.
 #import <Cocoa/Cocoa.h>
 @interface Messages:NSStackView @end

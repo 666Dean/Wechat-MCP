@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Offline arm64 Mach-O evidence. Never loads an image or authorizes a call.
 
 Addresses are unslid virtual addresses, not universal-file offsets. A matched

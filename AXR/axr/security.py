@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Unified task authority, native decisions, scoped containment and trusted recovery.
 
 This module belongs in the trusted authority process. Its owner APIs are never

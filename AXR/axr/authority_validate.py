@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Fixed non-authority identity for a signed candidate runtime check.
 
 Does not initialize a ledger, key store, permission, provider call or service.

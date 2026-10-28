@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Pure content extraction for the isolated worker. Never fetches or opens files.
 
 No detector result is an execution capability. The only accepted input is a

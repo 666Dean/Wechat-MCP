@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Authority-process protocol: Authorize, Access, Commit and Revoke.
 
 Only authenticated PeerContext objects from axr.ipc enter this dispatcher. The

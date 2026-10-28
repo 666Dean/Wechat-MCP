@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Register an installed bundle with public Launch Services, without consent.
 
 Registration supplies application metadata to system pickers. It neither grants

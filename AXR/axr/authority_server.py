@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Local authority transport, separate from business MCP and model workers.
 
 This server accepts only owner-enrolled native peers. Endpoint discovery is not

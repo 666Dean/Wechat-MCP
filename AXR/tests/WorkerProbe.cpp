@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 // Sandboxing witness used only with synthetic fixture data / loopback TCP.
 #include "axr/Core.hpp"
 #include <iostream>

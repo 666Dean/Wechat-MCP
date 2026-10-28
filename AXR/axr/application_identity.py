@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Live application witness; process drift freezes only its registered domain."""
 from .aet import AXRError,digest
 from .ipc import process_identity

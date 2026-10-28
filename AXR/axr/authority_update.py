@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Fixed, offline build re-enrollment. No MCP entry and no grant restoration."""
 import importlib,json,re
 from pathlib import Path

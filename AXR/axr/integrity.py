@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Bind mutable authority tables to an independently protected audit checkpoint.
 
 A crash between a database update and checkpoint persistence seals the service.

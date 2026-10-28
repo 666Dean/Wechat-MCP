@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 #pragma once
 #if defined(_WIN32)
 // Internal trusted-host launch primitives shared by setup and UI navigation.

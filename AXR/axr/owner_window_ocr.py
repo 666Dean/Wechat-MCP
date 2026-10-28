@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Local owner-only window qualification; never register this command in MCP.
 
 The native picker captures only the exact window sealed in this action. Window

@@ -1,5 +1,7 @@
 # Stellaria AXR SDK Gen1
 
+独立官方仓库：[Stellaria-Studio/Stellaria-AXR-SDK](https://github.com/Stellaria-Studio/Stellaria-AXR-SDK)。
+
 ## Security Architecture 2
 
 新增统一 TaskContract、原生策略判定、受认证的独立权限服务协议、隔离内容解析、
@@ -39,10 +41,12 @@ Windows 采用 C++。具体应用的数据库、内容解析、模型调度、�
 
 ## 许可与交付
 
-`AXR/` 采用 [GNU AGPL v3 only](LICENSE)。商业使用仍须遵守该许可证；
-需要不同许可条款的合作应另行取得书面协议。本仓库不自动授予商业例外，
-也不包含服务等级、托管服务或生产可用性保证。仓库其他源代码的许可见
-[许可边界](../LICENSES.md)，第三方组件遵循各自许可证。
+`AXR/` 自有代码采用 **GNU AGPL v3 only 或 Stellaria Commercial License 1.0** 双授权，
+SPDX 表达式为 `AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0`。
+AGPL 允许符合其条件的商业使用；SCL 通用文本不自动授予专有集成等权利，须另有有效专项协议。
+完整边界见 [SDK 许可说明](LICENSES.md)，第三方材料保持原许可。
+新 SDK 贡献按照 [Stellaria CLA 1.0](CONTRIBUTING.md) 完成有效签署与具体接受记录；
+历史贡献不因新 CLA 追溯转让。本仓库其他代码的许可见 [许可边界](../LICENSES.md)。
 
 Gen1 当前为开发版本。支持范围以构建、回归与具体设备验收为准：SDK 编译成功
 不代表任意应用的控制接口已经可用。详见下方安全边界与

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 // No file-based proof fallback. Root identity comes from the OS connection and
 // a protected fixed installation, never an endpoint's JSON description.
 #include "axr/Commit.h"

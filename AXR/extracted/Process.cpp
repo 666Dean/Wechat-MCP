@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 // AXR process argument encoding and bounded worker lifecycle.
 #include "axr/Core.hpp"
 #include <chrono>

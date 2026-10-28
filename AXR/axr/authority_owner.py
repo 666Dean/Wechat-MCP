@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Fixed generic owner entry. Application behavior remains outside the SDK."""
 import importlib,json,re
 from pathlib import Path

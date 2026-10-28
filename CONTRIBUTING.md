@@ -2,6 +2,13 @@
 
 欢迎提交问题和小范围 Pull Request。请先阅读 [功能状态](docs/STATUS.md)。
 
+## AXR SDK 的许可与贡献
+
+`AXR/` 自有代码采用 AGPL v3 only / SCL 1.0 双授权，新贡献依
+[Stellaria CLA 1.0 流程](AXR/CONTRIBUTING.md)完成有效签署、权利核验与具体接受记录。
+普通勾选或 PR 提交不代替签约，私密身份材料不上传公开仓库；历史贡献不自动追溯。
+非 AXR 集成代码保留原有 MIT 许可。详情见 [许可边界](LICENSES.md)。
+
 ## 开发验证
 
 Windows、Python 3.12 x64：
@@ -23,6 +30,6 @@ Windows 版本、Python 版本、操作步骤及真实观察结果。不要上�
 - 更新 CHANGELOG.md；功能或证据变化时同时更新 README.md 和 docs/STATUS.md。
 - 区分“实现”“模拟测试”“真实微信验证”，不要只用一个“支持”概括。
 - 公开仓库提交示例配置，运行配置始终留在本地。
-- MIT 仅覆盖本仓库自有源码，新增依赖需记录来源及自己的许可证。
+- MIT 覆盖非 AXR 的自有集成源码；AXR 适用上方双授权。新增依赖需记录来源及许可证。
 
 仓库所有者授权的完成更新应提交并推送 GitHub，遵循 AGENTS.md；外部贡献者通过 PR 提交。

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 """Credential use mediation. Never registered on the business MCP interface.
 
 Consumers are fixed trusted service registrations. The broker returns operation

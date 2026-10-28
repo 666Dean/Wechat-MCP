@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 #include "axr/Core.hpp"
 #include "axr/Commit.h"
 #include <cmath>
@@ -11,6 +11,7 @@
 #include <array>
 #include <chrono>
 #include <map>
+#include <mutex>
 #include <set>
 #include <stdexcept>
 
@@ -134,6 +135,9 @@ bool ValidTransition(std::string_view from,std::string_view to) {
 }
 struct Guard::Impl {
     sqlite3* db{};std::string key;
+    // SQLite FULLMUTEX protects individual calls, not a multi-statement quota
+    // transaction. Serialize operations on this Guard, including nested calls.
+    mutable std::recursive_mutex mutex;
     ~Impl(){if(db)sqlite3_close(db);OPENSSL_cleanse(key.data(),key.size());}
     std::string StateMac(const std::string& id,const std::string& signature,int used,int revoked) const {
         return Hmac(key,Json{{"kind","grant-state-v2"},{"id",id},{"body_mac",signature},{"used",used},{"revoked",revoked}}.dump());
@@ -152,6 +156,13 @@ struct Guard::Impl {
     }
     std::string Find(const Json& a,double now,bool quota,const std::string& id="",const std::string& requiredClass="") const {
         std::string candidate;double candidateExpires=0;
+        // q pins a read snapshot. These values are reused only within this one
+        // lookup while the Guard lock excludes same-connection owner writes.
+        // Another call/commit must validate again; no persistent grant cache.
+        unsigned policyVersion=0;std::string actionSeal;
+        const auto version=[&]{if(!policyVersion)policyVersion=Version();return policyVersion;};
+        const auto seal=[&]() -> const std::string& {if(actionSeal.empty())actionSeal=IntentSeal(a);return actionSeal;};
+        const auto risk=Risk(a);
         Statement q(db,id.empty()?"SELECT id,body,signature,used,revoked,state_signature FROM grants WHERE revoked=0 ORDER BY rowid DESC":"SELECT id,body,signature,used,revoked,state_signature FROM grants WHERE id=?");
         if(!id.empty())q.Text(1,id);
         while(q.Step()==SQLITE_ROW) {
@@ -160,14 +171,14 @@ struct Guard::Impl {
             if(!ConstantEqual(q.Text(5),StateMac(q.Text(0),q.Text(2),sqlite3_column_int(q.s,3),sqlite3_column_int(q.s,4))))Fail("grant_state_integrity_failed");
             if(sqlite3_column_int(q.s,4)|| b.at("expires_at").get<double>()<=now ||
                (quota&&sqlite3_column_int(q.s,3)>=b.at("max_uses").get<int>())||
-               b.at("policy_version")!=Version()||b.at("principal")!=a.at("principal")||
+               b.at("policy_version")!=version()||b.at("principal")!=a.at("principal")||
                b.at("resource")!=a.at("resource")||!Contains(b.at("operations"),a.at("operation"))||
                b.at("purpose")!=a.at("purpose")||b.at("workflow")!=a.at("workflow")||
-               (!b.at("intent").is_null()&&b.at("intent")!=IntentSeal(a))||
+               (!b.at("intent").is_null()&&b.at("intent")!=seal())||
                (a.at("operation")=="application.navigate"&&
-                (b.at("intent")!=IntentSeal(a)||b.at("max_uses")!=1||b.at("expires_at").get<double>()-now>300))||
+                (b.at("intent")!=seal()||b.at("max_uses")!=1||b.at("expires_at").get<double>()-now>300))||
                (a.at("destination")!="local"&&!Contains(b.at("destinations"),a.at("destination")))||
-               (Risk(a)==4&&b.at("intent")!=IntentSeal(a))||
+               (risk==4&&b.at("intent")!=seal())||
                (!requiredClass.empty()&&!Contains(b.at("classes"),requiredClass))) continue;
             bool valid=true;for(const auto& p:a.at("sources"))valid=valid&&Contains(b.at("classes"),p.at("data_class"));
             if(valid){
@@ -226,8 +237,9 @@ Guard::Guard(const std::filesystem::path& path,std::string key,bool migrateLegac
     impl_->Version();
 }
 Guard::~Guard()=default;
-unsigned Guard::Version() const {return impl_->Version();}
+unsigned Guard::Version() const {std::lock_guard lock(impl_->mutex);return impl_->Version();}
 std::string Guard::IssueOwner(Json b,double now) {
+    std::lock_guard lock(impl_->mutex);
     auto expiry=b.at("expires_at").get<double>();
     if(!std::isfinite(expiry)||expiry-now<1||expiry-now>86400*30||!b.at("max_uses").is_number_integer()||
        b.at("max_uses").get<int>()<1||b.at("max_uses").get<int>()>100000||b.at("operations").empty())Fail("invalid_grant");
@@ -243,18 +255,21 @@ std::string Guard::IssueOwner(Json b,double now) {
     if(q.Step()!=SQLITE_DONE)Fail("grant_store_failed");return b.at("id").get<std::string>();
 }
 void Guard::RevokeOwner(const std::string& id) {
+    std::lock_guard lock(impl_->mutex);
     impl_->Version();
     Exec(impl_->db,"BEGIN IMMEDIATE");
     try{RevokeScoped(id);Exec(impl_->db,"UPDATE policy SET version=version+1;");impl_->VersionMac();Exec(impl_->db,"COMMIT;");}
     catch(...){Exec(impl_->db,"ROLLBACK");throw;}
 }
 void Guard::RevokeScoped(const std::string& id) {
+    std::lock_guard lock(impl_->mutex);
     Statement row(impl_->db,"SELECT signature,used FROM grants WHERE id=?");row.Text(1,id);
     if(row.Step()==SQLITE_ROW){Statement update(impl_->db,"UPDATE grants SET revoked=1,state_signature=? WHERE id=?");
         update.Text(1,impl_->StateMac(id,row.Text(0),sqlite3_column_int(row.s,1),1));update.Text(2,id);if(update.Step()!=SQLITE_DONE)Fail("revocation_failed");}
 }
-std::string Guard::Check(const Json& a,double now,bool quota) const {ValidateAction(a);impl_->Sources(a,now);return impl_->Find(a,now,quota);}
+std::string Guard::Check(const Json& a,double now,bool quota) const {std::lock_guard lock(impl_->mutex);ValidateAction(a);impl_->Sources(a,now);return impl_->Find(a,now,quota);}
 Json Guard::Consume(const Json& a,double now) {
+    std::lock_guard lock(impl_->mutex);
     Exec(impl_->db,"BEGIN IMMEDIATE");
     try{auto id=Check(a,now);Statement row(impl_->db,"SELECT signature,used,revoked FROM grants WHERE id=?");row.Text(1,id);if(row.Step()!=SQLITE_ROW)Fail("grant_missing");
         int used=sqlite3_column_int(row.s,1)+1,revoked=sqlite3_column_int(row.s,2);
@@ -263,6 +278,7 @@ Json Guard::Consume(const Json& a,double now) {
     catch(...){Exec(impl_->db,"ROLLBACK");throw;}
 }
 Json Guard::ExecutionProof(const Json& a,const std::string& id,unsigned version,double now) const {
+    std::lock_guard lock(impl_->mutex);
 #ifdef AXR_SECURITY_RELEASE
     Fail("legacy_commit_disabled_in_security_release");
 #endif
@@ -278,6 +294,7 @@ Json Guard::ExecutionProof(const Json& a,const std::string& id,unsigned version,
     return {{"version",1},{"policy_version",version},{"intent_seal",IntentSeal(a)},{"action",a},{"grants",grants}};
 }
 void Guard::Revalidate(const Json& a,const std::string& id,unsigned version,double now) const {
+    std::lock_guard lock(impl_->mutex);
     ValidateAction(a);if(version!=Version())Fail("policy_changed_before_commit");impl_->Sources(a,now);impl_->Find(a,now,false,id);
 }
 }
