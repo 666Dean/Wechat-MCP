@@ -35,8 +35,8 @@ std::filesystem::path Checked(const std::string& text,bool directory){
     if(bool(attributes&FILE_ATTRIBUTE_DIRECTORY)!=directory)Denied("windows_source_path_type_changed");
     return path;
 }
-std::string Read(const std::filesystem::path& path,size_t maximum){
-    auto size=std::filesystem::file_size(Extended(path));if(size>maximum)Denied("windows_source_file_budget");
+std::string Read(const std::filesystem::path& path,size_t maximum,const char* budgetCode="windows_source_file_budget"){
+    auto size=std::filesystem::file_size(Extended(path));if(size>maximum)Denied(budgetCode);
     std::ifstream stream(Extended(path),std::ios::binary);if(!stream)Denied("windows_source_file_unavailable");
     // Snapshot only this bounded prefix; event files can grow while read.
     std::string value(size,'\0');stream.read(value.data(),std::streamsize(size));
@@ -159,7 +159,10 @@ struct Attributes {
 };
 void Events(const std::string& raw,bool final){
     size_t start=0;while(start<raw.size()){
-        auto end=raw.find('\n',start);if(end==std::string::npos){if(!final&&raw.size()-start<=1024*1024)return;Denied("codex_provider_protocol_invalid");}
+        auto end=raw.find('\n',start);if(end==std::string::npos){
+            if(raw.size()-start>1024*1024)Denied("codex_provider_event_budget");
+            if(!final)return;Denied("codex_provider_protocol_invalid");
+        }
         if(end-start>1024*1024)Denied("codex_provider_event_budget");
         auto value=ParseBounded(std::string_view(raw).substr(start,end-start));if(!value.is_object())Denied("codex_provider_protocol_invalid");
         if(value.contains("item")){
@@ -254,9 +257,9 @@ Json RunWindowsSource(const Json& configuration,const std::string& input,const s
     auto wall=Now();auto tick=GetTickCount64();
     for(;;){check();auto elapsed=Now()-wall;if(elapsed<0||elapsed>config.timeout||GetTickCount64()-tick>config.timeout*1000ull)Denied("codex_provider_timeout");
         if(std::filesystem::file_size(Extended(capture))+std::filesystem::file_size(Extended(errors))>4*1024*1024)Denied("codex_provider_event_budget");
-        Events(Read(capture,4*1024*1024),false);if(WaitForSingleObject(process.process.value,50)==WAIT_OBJECT_0)break;
+        Events(Read(capture,4*1024*1024,"codex_provider_event_budget"),false);if(WaitForSingleObject(process.process.value,50)==WAIT_OBJECT_0)break;
     }
-    DWORD exit=1;if(!GetExitCodeProcess(process.process.value,&exit)||exit)Denied(("codex_provider_inference_failed_exit_"+std::to_string(exit)).c_str());auto events=Read(capture,4*1024*1024);Events(events,true);
+    DWORD exit=1;if(!GetExitCodeProcess(process.process.value,&exit)||exit)Denied(("codex_provider_inference_failed_exit_"+std::to_string(exit)).c_str());auto events=Read(capture,4*1024*1024,"codex_provider_event_budget");Events(events,true);
     bool completed=false;size_t start=0;while(start<events.size()){auto end=events.find('\n',start);auto event=ParseBounded(std::string_view(events).substr(start,end-start));if(event.value("type",std::string{})=="turn.completed")completed=true;start=end+1;}
     if(!completed)Denied("codex_provider_no_typed_result");check();auto output=Checked(Text(work/L"result.json"),false);
     return {{"output",ParseBounded(Read(output,24000))},{"sandbox",witness},{"identity",actual}};

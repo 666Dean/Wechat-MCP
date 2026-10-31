@@ -76,7 +76,19 @@ def validate_configuration(configuration,local_assets):
         provider.get('binary')!='@resources/provider/codex.exe' or provider.get('tls_bundle')!='@resources/provider/ca-bundle.pem' or
         Path(provider.get('workspace',''))!=data/'source'):
         raise AXRError('windows_install_fixed_assets_required')
-    if set(local_assets) not in ({'codex','ca'},{'codex','ca','hello_trust'}):raise AXRError('windows_install_local_assets_required')
+    if not {'codex','ca'}<=set(local_assets) or set(local_assets)-{'codex','ca','hello_trust','admission_trust'}:
+        raise AXRError('windows_install_local_assets_required')
+    if 'admission_trust' in local_assets:
+        from axr_applications.windows_admission import trust_keys
+        from axr_applications.windows_navigation import decode_json
+        from axr.rooted import RootedDirectory
+        trust=unredirected(local_assets['admission_trust']);directory=RootedDirectory(trust.parent)
+        try:raw=directory.read(trust.name,4096)
+        finally:directory.close()
+        trust_keys(decode_json(raw))
+        if hashlib.sha256(raw).hexdigest()!=app.get('admission_trust_sha256'):
+            raise AXRError('windows_install_admission_trust_changed')
+    elif 'admission_trust_sha256' in app:raise AXRError('windows_install_admission_trust_required')
     for name,field in [('codex','sha256'),('ca','tls_sha256')]:
         source=unredirected(local_assets[name]);maximum=512*1024**2 if name=='codex' else 2*1024**2
         if not source.is_file() or not 1<=source.stat().st_size<=maximum or hashlib.sha256(source.read_bytes()).hexdigest()!=provider.get(field):
@@ -112,8 +124,13 @@ def install(package,*,configuration,local_assets,replace_stopped=False):
         current=json.loads(Path(native.windows_deployment_configuration()).read_bytes())
         from axr_applications.wechat import provider_build_update
         old,new=current['deployment'],configuration['deployment']
+        old_app,new_app=old['application'],new['application']
+        # A first trust pin is a separate explicit local asset selection and is
+        # effective only after the exact new build/configuration owner review.
+        if 'admission_trust_sha256' not in old_app and 'admission_trust_sha256' in new_app:
+            new_app={k:v for k,v in new_app.items() if k!='admission_trust_sha256'}
         if ({k:v for k,v in old.items() if k!='application'}!={k:v for k,v in new.items() if k!='application'} or
-            not provider_build_update(old['application'],new['application'],bundled_path='@resources/provider/codex.exe')):
+            not provider_build_update(old_app,new_app,bundled_path='@resources/provider/codex.exe')):
             raise AXRError('windows_update_configuration_changed')
         if (root/'runtime/owner-key.json').exists():
             from axr_applications.windows_enrollment import installed_json,hex_bytes
@@ -137,11 +154,14 @@ def install(package,*,configuration,local_assets,replace_stopped=False):
     if review(stage)!=approved:raise AXRError('windows_package_changed_during_copy')
     selections=[('codex','runtime/provider/codex.exe'),('ca','runtime/provider/ca-bundle.pem')]
     if 'hello_trust' in local_assets:selections.append(('hello_trust','runtime/hello-trust.json'))
+    if 'admission_trust' in local_assets:selections.append(('admission_trust','runtime/admission-trust.json'))
     for name,relative in selections:
         path=unredirected(local_assets[name]);source=RootedDirectory(path.parent)
         try:raw=source.read(path.name,512*1024**2 if name=='codex' else 2*1024**2)
         finally:source.close()
-        if name!='hello_trust' and hashlib.sha256(raw).hexdigest()!=configuration['deployment']['application']['codex_provider']['sha256' if name=='codex' else 'tls_sha256']:
+        expected=(configuration['deployment']['application'].get('admission_trust_sha256') if name=='admission_trust' else
+            configuration['deployment']['application']['codex_provider']['sha256' if name=='codex' else 'tls_sha256'])
+        if name!='hello_trust' and hashlib.sha256(raw).hexdigest()!=expected:
             raise AXRError('windows_install_local_asset_changed')
         target=stage/relative;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(raw);protect(target,public=True)
     if 'hello_trust' not in local_assets:
@@ -174,9 +194,11 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--package',type=Path,required=True);p.add_argument('--configuration',type=Path,required=True)
     for name in ('codex','ca'):p.add_argument('--'+name,type=Path,required=True)
     p.add_argument('--hello-trust',type=Path)
+    p.add_argument('--admission-trust',type=Path)
     p.add_argument('--replace-stopped',action='store_true');a=p.parse_args()
     configuration=json.loads(a.configuration.read_bytes())
     assets={'codex':a.codex,'ca':a.ca}
     if a.hello_trust:assets['hello_trust']=a.hello_trust
+    if a.admission_trust:assets['admission_trust']=a.admission_trust
     print(json.dumps(install(a.package,configuration=configuration,local_assets=assets,replace_stopped=a.replace_stopped)))
 if __name__=='__main__':main()

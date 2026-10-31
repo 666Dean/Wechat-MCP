@@ -31,7 +31,7 @@ def credential_source(root,shards,credential,*,index=False,key_mode='file'):
     if key_mode!='file':source['key_mode']=key_mode
     return {'credential_import':source}
 
-def configuration(root,account,credential,provider,workspace,*,index=False,key_mode='file'):
+def configuration(root,account,credential,provider,workspace,*,index=False,key_mode='file',navigation=None,package=None,admission_trust=None):
     if sys.platform!='win32':raise AXRError('windows_setup_required')
     from .windows_setup import private_request_directory
     from axr_applications.provider_trust import prepare_public_ca_bundle
@@ -48,10 +48,24 @@ def configuration(root,account,credential,provider,workspace,*,index=False,key_m
             'auth_file':str(auth),'workspace':str(data/'source'),'tls_bundle':'@resources/provider/ca-bundle.pem','tls_sha256':ca['sha256']}}
     value={'state':str(data/'state/wechat'),'endpoint':r'\\.\pipe\Stellaria.AXR.WeChat.'+digest([owner,account])[:32],
         'owner_user':owner,'application':application}
+    if navigation is not None:
+        from axr_applications.windows_navigation import prepare
+        from scripts.install_authority_windows import review
+        if package is None:raise AXRError('windows_navigation_package_required')
+        manifest=review(package)
+        application['reply_navigation']=prepare(navigation,account=account,helper=install/'wechat-uia.exe',
+            helper_sha=manifest['files']['wechat-uia.exe'],endpoint=value['endpoint'])
     value.update(credential_source(root,shards,credential,index=index,key_mode=key_mode))
     result={'version':2,'application_module':'axr_applications.wechat','deployment':value}
+    assets={'codex':provider,'ca':Path(ca['path'])}
+    if admission_trust is not None:
+        from axr_applications.windows_admission import trust_keys
+        from axr_applications.windows_navigation import read_json
+        trust_keys(read_json(admission_trust,4096))
+        application['admission_trust_sha256']=fingerprint(admission_trust,4096)
+        assets['admission_trust']=Path(admission_trust)
     if len(canonical(result))>32768:raise AXRError('setup_account_budget')
-    return result,{'codex':provider,'ca':Path(ca['path'])}
+    return result,assets
 
 def payload_location():
     from scripts.install_authority_windows import review

@@ -63,6 +63,23 @@ class WindowsServiceDesktop(unittest.TestCase):
         c.accept({'name':'setup_environment','error':None,'value':{'key_mode':'file','credential':'old.key','index':False}})
         self.assertEqual(c.setupEnvironment['key_mode'],'password');self.assertTrue(c.setupEnvironment['index'])
         self.assertEqual(c.setupEnvironment['credential'],'')
+    def test_navigation_and_evidence_buttons_require_local_confirmation_and_use_fixed_routes(self):
+        from PySide6.QtCore import QObject
+        c,w=self.controller,self.window
+        c._setup_environment={'platform':'windows','installed':True,'navigation':'fixture.json','admission':'evidence.json'}
+        c._setup_inputs={'navigation':{'synthetic':'navigation'},'admission':{'synthetic':'evidence'}};c.setupChanged.emit()
+        setup=w.findChild(QObject,'setupDialog');setup.open();setup.setProperty('step',1);QTest.qWait(40);c.fixture=False
+        with patch.object(c,'run') as run,patch('desktop.windows_lifecycle.configure_navigation',return_value={}) as navigation,patch(
+            'desktop.windows_lifecycle.import_admission',return_value={}) as admission:
+            for button_name,dialog_name in (('importWindowsNavigation','windowsNavigationConfirmation'),('importWindowsAdmission','windowsAdmissionConfirmation')):
+                button=self.fixture.visual(w,button_name);self.assertTrue(button.isEnabled());button.clicked.emit();QTest.qWait(20)
+                dialog=w.findChild(QObject,dialog_name);self.assertTrue(dialog.property('visible'));dialog.close();run.assert_not_called()
+            c.importWindowsNavigation();run.call_args.args[1]();navigation.assert_called_once_with(c._setup_inputs['navigation'])
+            c.importWindowsAdmission();run.call_args.args[1]();admission.assert_called_once_with(c._setup_inputs['admission'])
+        with patch.object(c,'run') as run,patch('desktop.windows_lifecycle.admission_request',return_value={'authorization_granted':False}) as prepare:
+            self.fixture.visual(w,'prepareWindowsAdmission').clicked.emit();value=run.call_args.args[1]();prepare.assert_called_once()
+            c.accept({'name':'setup_admission_request','error':None,'value':value})
+        self.assertIn('false',c.setupEnvironment['admission_request'])
     def test_explicit_stop_and_review_buttons_use_separate_fixed_service_actions(self):
         from PySide6.QtCore import QObject
         c,w=self.controller,self.window;c._setup_environment={'platform':'windows','installed':True};c.setupChanged.emit()

@@ -40,6 +40,10 @@ class DeploymentConfiguration(unittest.TestCase):
     def test_reply_helper_and_endpoint_must_match_the_owner_deployment(self):
         app=self.config['application']
         navigation={'helper':'@resources/helper','endpoint':self.config['endpoint']}
+        if os.name=='nt':
+            from test.test_windows_navigation_configuration import document
+            from axr_applications.windows_navigation import prepare
+            navigation=prepare(document(),account='fixture-self',helper='@resources/helper',helper_sha='b2'*32,endpoint=self.config['endpoint'])
         value={**self.config,'application':{**app,'reply_navigation':navigation}}
         self.assertEqual(wechat._configuration(value)['application']['reply_navigation']['helper'],str(self.resources/'helper'))
         for changes in ({'endpoint':'untrusted'},{'helper':'untrusted'}):

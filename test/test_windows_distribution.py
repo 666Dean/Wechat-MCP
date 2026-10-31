@@ -105,9 +105,21 @@ class RuntimePackage(unittest.TestCase):
                     self.assertTrue(updated['build_reenrollment_required']);self.assertFalse(updated['wechat_authorized'])
                     self.assertEqual((root/'runtime/owner-key.json').read_bytes(),pin)
                     self.assertEqual(history.read_bytes(),b'synthetic retained history')
+                    from test.test_security_authority import FixtureSigner
+                    reviewer=FixtureSigner().public_key;material_trust=area/'admission-trust.json'
+                    material_trust.write_bytes(canonical({'version':2,'keys':{hashlib.sha256(reviewer).hexdigest():reviewer.hex()}}))
+                    app['admission_trust_sha256']=hashlib.sha256(material_trust.read_bytes()).hexdigest()
+                    selected={'codex':provider,'ca':ca,'hello_trust':trust,'admission_trust':material_trust}
+                    installer.install(self.package,configuration=config,local_assets=selected,replace_stopped=True)
+                    self.assertEqual((root/'runtime/admission-trust.json').read_bytes(),material_trust.read_bytes())
+                    self.assertEqual((root/'runtime/owner-key.json').read_bytes(),pin);self.assertTrue(history.exists())
+                    other=FixtureSigner().public_key;material_trust.write_bytes(canonical({'version':2,'keys':{hashlib.sha256(other).hexdigest():other.hex()}}))
+                    changed={**config,'deployment':{**config['deployment'],'application':{**app,'admission_trust_sha256':hashlib.sha256(material_trust.read_bytes()).hexdigest()}}}
+                    with self.assertRaisesRegex(AXRError,'update_configuration_changed'):
+                        installer.install(self.package,configuration=changed,local_assets=selected,replace_stopped=True)
                     changed={**config,'deployment':{**config['deployment'],'credential_import':{'path':str(area/'different.key'),'sha256':'c3'*32}}}
                     with self.assertRaisesRegex(AXRError,'update_configuration_changed'):
-                        installer.install(self.package,configuration=changed,local_assets={'codex':provider,'ca':ca,'hello_trust':trust},replace_stopped=True)
+                        installer.install(self.package,configuration=changed,local_assets={**selected,'admission_trust':root/'runtime/admission-trust.json'},replace_stopped=True)
             self.assertTrue(result['installed']);self.assertFalse(result['wechat_authorized']);self.assertFalse(result['service_started'])
             self.assertEqual(json.loads((data/'deployment.json').read_bytes()),config)
             self.assertFalse((root/'deployment.json').exists());self.assertFalse((area/'never-read.key').exists())

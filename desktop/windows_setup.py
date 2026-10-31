@@ -10,7 +10,7 @@ from axr import _axr_native as native
 from axr.aet import AXRError,canonical
 from axr.rooted import RootedDirectory
 
-OPERATIONS=('install','update','initialize','recover','refresh','reconfigure','start','stop')
+OPERATIONS=('install','update','initialize','recover','refresh','reconfigure','navigation','admission','start','stop')
 
 def profile_for_sid(sid):
     if re.fullmatch(r'S-1-5-21-\d+-\d+-\d+-\d+',sid) is None:raise AXRError('windows_setup_owner_invalid')
@@ -92,6 +92,14 @@ def invoke(operation,payload=None,*,timeout=420):
 def execute(operation,payload):
     from scripts.install_authority_windows import install,administrator
     administrator()
+    if operation=='admission':
+        if set(payload)!={'envelope','owner','expected_configuration'}:raise AXRError('windows_setup_request_invalid')
+        from scripts.import_windows_admission import import_material
+        return import_material(payload['envelope'],payload['owner'],payload['expected_configuration'])
+    if operation=='navigation':
+        if set(payload)!={'document','owner','expected_configuration'}:raise AXRError('windows_setup_request_invalid')
+        from scripts.configure_windows_navigation import configure
+        return configure(payload['document'],payload['owner'],payload['expected_configuration'])
     if operation=='reconfigure':
         if set(payload)!={'source','owner'}:raise AXRError('windows_setup_request_invalid')
         from scripts.reconfigure_windows import correct
@@ -135,7 +143,7 @@ def admin_main(request_path,sha):
             raise AXRError('windows_setup_request_invalid')
         if value['operation'] in ('install','update') and value['payload'].get('configuration',{}).get('deployment',{}).get('owner_user')!=value['owner']:
             raise AXRError('windows_setup_owner_invalid')
-        if value['operation']=='reconfigure' and value['payload'].get('owner')!=value['owner']:raise AXRError('windows_setup_owner_invalid')
+        if value['operation'] in ('reconfigure','navigation','admission') and value['payload'].get('owner')!=value['owner']:raise AXRError('windows_setup_owner_invalid')
         try:result=execute(value['operation'],value['payload']);state='Completed';error=None
         except Exception as failure:
             code=str(failure) if isinstance(failure,AXRError) else ''

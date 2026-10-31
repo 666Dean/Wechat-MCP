@@ -92,6 +92,12 @@ def first_enrollment_review(configuration,challenge):
         '人工审批：'+('开启' if app.get('manual_approval_required',True) else '关闭'),
         '自动回复：未启用','',f"联系人范围（{len(app['resources'])} 项）："]
     lines.extend(quote(row['conversation_id']) for row in app['resources'])
+    if 'reply_navigation' in app:
+        lines.extend(['','设备导航配置（仅元数据，不代表设备验证或发送授权）：',
+            json.dumps(app['reply_navigation'],ensure_ascii=False,indent=2)])
+    if 'admission_trust_sha256' in app:
+        lines.extend(['','可信审查者公钥清单指纹：'+quote(app['admission_trust_sha256']),
+            '该清单可签署此设备的准入结论。请独立核对来源；软件测试不能代替设备记录。'])
     source=configuration.get('credential_import')
     if source:lines.extend(['','凭据解释：'+{'raw':'原始页密钥','password':'32 字节口令，按各分库 salt 派生'}.get(source.get('key_mode'),'按文件声明；纯 hex 视为原始页密钥')])
     lines.extend(['',f"配置指纹：{challenge['configuration_digest']}",

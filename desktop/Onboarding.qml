@@ -72,6 +72,28 @@ Dialog {
                     Detail { Layout.fillWidth: true; text: "本向导不会自动读取聊天正文或发送测试消息。敏感操作仍需单独确认。" }
                 }
                 ColumnLayout { visible: setup.step===1; Layout.fillWidth: true; spacing: 12
+                    Card { visible: setup.environment.platform==="windows"; Layout.fillWidth: true
+                        Copy { text: "设备导航配置"; font.weight: Font.Medium }
+                        Detail { Layout.fillWidth: true; text: "选择本人准备的私聊标识、控件路径与微信程序哈希。导入只准备本地配置，不探测微信、不授予联系人权限。已有部署请先停止服务，再由本人核对完整配置。" }
+                        Detail { Layout.fillWidth: true; text: setup.environment.navigation || "尚未选择导航配置"; elide: Text.ElideMiddle }
+                        RowLayout { Layout.fillWidth: true
+                            GlassButton { objectName: "chooseWindowsNavigation"; text: "选择导航配置"; onClicked: setup.controller.chooseWindowsNavigation() }
+                            GlassButton { objectName: "importWindowsNavigation"; visible: setup.environment.installed===true; text: "核对并导入"; enabled: !!setup.environment.navigation && !setup.controller.data.loading; onClicked: navigationConfirm.open() }
+                        }
+                    }
+                    Card { visible: setup.environment.platform==="windows"; Layout.fillWidth: true
+                        Copy { text: "可信准入材料"; font.weight: Font.Medium }
+                        Detail { Layout.fillWidth: true; text: "首次安装时明确选择可信审查者公钥。已签署材料必须对应本机配置和构建；软件测试记录不能代替设备验收。缺少材料时，完整准入保持关闭。" }
+                        GlassButton { text: "选择审查者公钥"; onClicked: setup.controller.chooseWindowsAdmissionTrust() }
+                        Detail { Layout.fillWidth: true; text: setup.environment.admission_trust || "未选择；已有部署可通过组件更新首次加入，仍需本人核对新构建"; elide: Text.ElideMiddle }
+                        RowLayout { visible: setup.environment.installed===true; Layout.fillWidth: true
+                            GlassButton { objectName: "prepareWindowsAdmission"; text: "查看材料请求"; enabled: !setup.controller.data.loading; onClicked: setup.controller.prepareWindowsAdmission() }
+                            GlassButton { objectName: "chooseWindowsAdmission"; text: "选择签名材料"; onClicked: setup.controller.chooseWindowsAdmission() }
+                            GlassButton { objectName: "importWindowsAdmission"; text: "验证并导入"; enabled: !!setup.environment.admission && !setup.controller.data.loading; onClicked: admissionConfirm.open() }
+                        }
+                        Detail { visible: setup.environment.installed===true; Layout.fillWidth: true; text: setup.environment.admission || "尚未选择签名材料"; elide: Text.ElideMiddle }
+                        TextArea { visible: !!setup.environment.admission_request; Layout.fillWidth: true; readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; textFormat: TextEdit.PlainText; text: setup.environment.admission_request || ""; color: Theme.ink; font.pixelSize: 11 }
+                    }
                     Card { Layout.fillWidth: true
                         StateRow { title: "本地服务"; ready: setup.controller.data.connected===true }
                         RowLayout { visible: setup.environment.installed===true; Layout.fillWidth: true
@@ -127,7 +149,7 @@ Dialog {
                         }
                         Detail { Layout.fillWidth: true; text: "微信数据已加密，需你合法持有的原始数据密钥缓存，或已有 AXR 索引。App 不提取进程密钥、不改变微信保护；不需要在聊天中提供密码。" }
                         GlassButton { objectName: "installBundledService"; text: "安装安全服务"; primary: true
-                            enabled: setup.environment.components===true && !!setup.environment.folder && !!setup.environment.credential && setup.environment.login===true && !setup.controller.data.loading
+                            enabled: setup.environment.components===true && !!setup.environment.folder && !!setup.environment.credential && setup.environment.login===true && (setup.environment.platform!=="windows" || !!setup.environment.navigation) && !setup.controller.data.loading
                             onClicked: installConfirm.open() }
                     }
                     Card { Layout.fillWidth: true
@@ -173,6 +195,30 @@ Dialog {
             Item { Layout.fillWidth: true }
             GlassButton { objectName: "setupNext"; primary: true; text: setup.step===0 ? "开始设置" : setup.step===4 ? "完成设置" : "下一步"; enabled: setup.step!==4 || (setup.controller.setupResult.ready===true && !setup.controller.data.loading)
                 onClicked: {if(setup.step===4)setup.controller.finishSetup();else {setup.step++;scroll.contentItem.contentY=0}} }
+        }
+    }
+    Dialog {
+        id: navigationConfirm; objectName: "windowsNavigationConfirmation"; anchors.centerIn: parent; modal: true; header: null; padding: 24; width: Math.min(440,setup.width-32)
+        background: Rectangle { radius: 22; color: Theme.surface; border.color: Theme.border }
+        contentItem: ColumnLayout { spacing: 18
+            Copy { text: "导入设备导航配置？"; font.pixelSize: 20; font.weight: Font.DemiBold }
+            Detail { Layout.fillWidth: true; text: "请先停止服务。已有部署需要本人核对完整配置并认证；取消时原生效配置保留，候选配置留待检查。首次设置需随后初始化。本次不会探测微信、授予权限或启动服务。" }
+            RowLayout { Layout.alignment: Qt.AlignRight
+                GlassButton { text: "取消"; onClicked: navigationConfirm.close() }
+                GlassButton { text: "核对并导入"; primary: true; onClicked: {navigationConfirm.close();setup.controller.importWindowsNavigation()} }
+            }
+        }
+    }
+    Dialog {
+        id: admissionConfirm; objectName: "windowsAdmissionConfirmation"; anchors.centerIn: parent; modal: true; header: null; padding: 24; width: Math.min(440,setup.width-32)
+        background: Rectangle { radius: 22; color: Theme.surface; border.color: Theme.border }
+        contentItem: ColumnLayout { spacing: 18
+            Copy { text: "验证并导入准入材料？"; font.pixelSize: 20; font.weight: Font.DemiBold }
+            Detail { Layout.fillWidth: true; text: "服务须已停止。将验证可信签名、本机配置、构建、期限与各项证据。导入不会新增可信公钥、启动服务或恢复权限；完整准入由服务再次独立核对。" }
+            RowLayout { Layout.alignment: Qt.AlignRight
+                GlassButton { text: "取消"; onClicked: admissionConfirm.close() }
+                GlassButton { text: "验证并导入"; primary: true; onClicked: {admissionConfirm.close();setup.controller.importWindowsAdmission()} }
+            }
         }
     }
     Dialog {

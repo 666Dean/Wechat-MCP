@@ -44,7 +44,7 @@ class WindowsSource(unittest.TestCase):
         self.assertEqual(list(self.work.iterdir()),[]);self.claim.assert_called_once();self.observe.assert_called_once()
         with self.assertRaisesRegex(AXRError,'already_consumed'):self.run_source()
     def test_tool_attempt_output_budget_failure_and_wrong_source_never_observe_or_retry(self):
-        for mode,code in (('tool','tool_attempt'),('budget','event_budget'),('fail','inference_failed'),('wrong_source','outside_task_contract')):
+        for mode,code in (('tool','tool_attempt'),('partial_budget','event_budget'),('budget','event_budget'),('fail','inference_failed'),('wrong_source','outside_task_contract')):
             self.provider=self.make_provider();self.claim.reset_mock();self.observe.reset_mock()
             with self.subTest(mode=mode),self.assertRaisesRegex(AXRError,code):self.run_source(mode)
             self.claim.assert_called_once();self.observe.assert_not_called();self.assertEqual(list(self.work.iterdir()),[])

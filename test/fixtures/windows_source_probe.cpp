@@ -17,6 +17,7 @@ int wmain(int argc,wchar_t** argv){
         auto probe=Json::parse(request.at("records").at(0).at("text").get<std::string>());auto mode=probe.value("mode",std::string("normal"));
         if(mode=="wait")std::this_thread::sleep_for(std::chrono::seconds(30));
         if(mode=="tool"){std::cout<<Json{{"type","item.started"},{"item",{{"type","command_execution"}}}}.dump()<<std::endl;std::this_thread::sleep_for(std::chrono::seconds(30));}
+        if(mode=="partial_budget"){std::cout<<std::string(1024*1024+1,'x')<<std::flush;std::this_thread::sleep_for(std::chrono::seconds(30));}
         if(mode=="budget"){std::cout<<std::string(5*1024*1024,'x')<<std::flush;std::this_thread::sleep_for(std::chrono::seconds(30));}
         if(mode=="fail")return 5;
         Json result;

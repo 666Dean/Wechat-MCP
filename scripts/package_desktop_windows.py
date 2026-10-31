@@ -99,7 +99,7 @@ def build(output,components,qt):
     binaries=[(str(p),'.') for p in components.iterdir() if p.suffix.lower()=='.dll']
     spec=inputs/'windows.spec'
     spec.write_text(f'''a=Analysis([{str(ROOT/'desktop/release_entry.py')!r}],pathex={[str(runtime),str(ROOT)]!r},binaries={binaries!r},datas={datas!r},
- hiddenimports=['PySide6.QtQuick','PySide6.QtQuickControls2','PySide6.QtSvg','PySide6.QtNetwork','PySide6.QtOpenGL','win32com.shell.shell','win32timezone','scripts.install_authority_windows','scripts.windows_service','desktop.windows_setup','desktop.windows_provisioning','mcp.client.stdio'],
+ hiddenimports=['PySide6.QtQuick','PySide6.QtQuickControls2','PySide6.QtSvg','PySide6.QtNetwork','PySide6.QtOpenGL','win32com.shell.shell','win32timezone','scripts.install_authority_windows','scripts.windows_service','scripts.configure_windows_navigation','scripts.import_windows_admission','desktop.windows_setup','desktop.windows_provisioning','desktop.windows_lifecycle','axr_applications.windows_navigation','axr_applications.windows_admission','mcp.client.stdio'],
  excludes=['pytest','numpy','scipy','torch','pandas','matplotlib','tkinter','PyQt5','PyQt6','wx','wxauto4','apsw'])
 a.datas=[e for e in a.datas if not e[0].replace(chr(92),'/').endswith('.dist-info/direct_url.json')]
 # Qt uses the Windows OS unversioned ICU API. A vcpkg icuuc.dll on the

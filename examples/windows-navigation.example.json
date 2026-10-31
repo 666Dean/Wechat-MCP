@@ -1,0 +1,40 @@
+{
+  "version": 2,
+  "account_id": "fixture-self",
+  "attribution_prefix": "AI: ",
+  "attribution_required": true,
+  "profiles": {
+    "fixture-self": {
+      "label": "Synthetic self",
+      "visual_binding": {
+        "path": [0],
+        "header_path": [1],
+        "account_path": [2],
+        "identity_path": [3],
+        "send_path": [4],
+        "search_path": [5],
+        "search_result_path": [6],
+        "executable_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "expected_title": "Synthetic self",
+        "expected_identity": "fixture-self",
+        "search_result_title": "Synthetic self"
+      }
+    },
+    "fixture-peer": {
+      "label": "Synthetic peer",
+      "visual_binding": {
+        "path": [0],
+        "header_path": [1],
+        "account_path": [2],
+        "identity_path": [3],
+        "send_path": [4],
+        "search_path": [5],
+        "search_result_path": [6],
+        "executable_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "expected_title": "Synthetic peer",
+        "expected_identity": "fixture-peer",
+        "search_result_title": "Synthetic peer"
+      }
+    }
+  }
+}

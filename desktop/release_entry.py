@@ -25,10 +25,22 @@ def main():
                'qml':(root/'Main.qml').is_file(),'icon':(root/'icon.svg').is_file(),
                'components':((root.parent/'authority-components/package-review.json').is_file() if sys.platform=='win32' else
                              (root.parent/'authority-payload.tar.gz').is_file()),'canonical':native.wire_canonical('{"check":true}')=='{"check":true}'}
+        if sys.platform=='win32':
+            # Import frozen routes without UAC, SCM, installed configuration
+            # reads, owner authentication or a UIA helper operation.
+            from desktop.windows_lifecycle import configure_navigation,admission_request,import_admission
+            from scripts.configure_windows_navigation import configure
+            from scripts.import_windows_admission import import_material
+            from axr_applications.windows_navigation import prepare
+            from axr_applications.windows_admission import verify
+            value['windows_metadata_entries']=all(callable(f) for f in (
+                configure_navigation,admission_request,import_admission,configure,import_material,prepare,verify))
         output=sys.argv[sys.argv.index('--check-output')+1] if '--check-output' in sys.argv else None
         if output:Path(output).write_text(json.dumps(value),encoding='utf-8')
         elif sys.stdout:print(json.dumps(value))
-        return 0 if all(value[k] is True for k in ('security_release','qml','icon','canonical','components','chinese_glyphs')) else 2
+        required=('security_release','qml','icon','canonical','components','chinese_glyphs')+(
+            ('windows_metadata_entries',) if sys.platform=='win32' else ())
+        return 0 if all(value[k] is True for k in required) else 2
     from desktop.app import main as desktop_main
     desktop_main()
 

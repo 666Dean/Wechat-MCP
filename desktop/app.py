@@ -155,6 +155,60 @@ class Controller(QObject):
         path,_=QFileDialog.getOpenFileName(None,'选择本机 Codex 原生程序',filter='原生程序 (*.exe)')
         if path:self._setup_inputs['provider']=path;self.inspectSetupEnvironment()
     @Slot()
+    def chooseWindowsNavigation(self):
+        if self.fixture or sys.platform!='win32':return
+        path,_=QFileDialog.getOpenFileName(None,'选择本人准备的设备导航配置',filter='JSON (*.json)')
+        if not path:return
+        from axr_applications.windows_navigation import read_json,prepare
+        try:
+            document=read_json(path)
+            prepare(document,account=document.get('account_id'),helper='fixed-helper',helper_sha='0'*64,endpoint='fixed-endpoint')
+        except Exception:
+            self._notice='设备导航文件无效。请核对私聊 ID、标签、控件路径及程序哈希。';self.noticeChanged.emit();return
+        self._setup_inputs['navigation']=document;self._setup_environment['navigation']=Path(path).name
+        self.setupChanged.emit()
+    @Slot()
+    def importWindowsNavigation(self):
+        if self.fixture or sys.platform!='win32':return
+        from .windows_lifecycle import configure_navigation
+        document=self._setup_inputs.get('navigation')
+        if document is None:return
+        self.agent_bridge.stop()
+        self.run('setup_navigation',lambda:configure_navigation(document))
+    @Slot()
+    def chooseWindowsAdmissionTrust(self):
+        if self.fixture or sys.platform!='win32':return
+        path,_=QFileDialog.getOpenFileName(None,'选择可信审查者公钥清单（首次安装）',filter='JSON (*.json)')
+        if not path:return
+        from axr_applications.windows_admission import trust_keys
+        from axr_applications.windows_navigation import read_json
+        try:trust_keys(read_json(path,4096))
+        except Exception:
+            self._notice='审查者公钥清单无效。';self.noticeChanged.emit();return
+        self._setup_inputs['admission_trust']=path;self._setup_environment['admission_trust']=Path(path).name;self.setupChanged.emit()
+    @Slot()
+    def chooseWindowsAdmission(self):
+        if self.fixture or sys.platform!='win32':return
+        path,_=QFileDialog.getOpenFileName(None,'选择已经签署的 Windows 准入材料',filter='JSON (*.json)')
+        if not path:return
+        from axr_applications.windows_navigation import read_json
+        try:envelope=read_json(path,16000)
+        except Exception:
+            self._notice='准入材料无效。';self.noticeChanged.emit();return
+        self._setup_inputs['admission']=envelope;self._setup_environment['admission']=Path(path).name;self.setupChanged.emit()
+    @Slot()
+    def importWindowsAdmission(self):
+        if self.fixture or sys.platform!='win32':return
+        from .windows_lifecycle import import_admission
+        envelope=self._setup_inputs.get('admission')
+        if envelope is None:return
+        self.run('setup_admission',lambda:import_admission(envelope))
+    @Slot()
+    def prepareWindowsAdmission(self):
+        if self.fixture or sys.platform!='win32':return
+        from .windows_lifecycle import admission_request
+        self.run('setup_admission_request',admission_request)
+    @Slot()
     def installBundledService(self):
         if self.fixture:return
         inputs=dict(self._setup_inputs);selected_package=self._setup_package
@@ -170,7 +224,10 @@ class Controller(QObject):
                 owner=json.loads(native.process_identity(os.getpid()))['user']
                 workspace=private_request_directory(cache_root(owner)/('local-'+uuid.uuid4().hex),owner)
                 package=selected_package or payload_location()
-                config,assets=configuration(inputs['root'],inputs['account'],inputs['credential'],inputs.get('provider') or codex_binary(),workspace,index=inputs.get('index',False),key_mode=inputs.get('key_mode','file'))
+                if not inputs.get('navigation'):raise AXRError('windows_navigation_required')
+                config,assets=configuration(inputs['root'],inputs['account'],inputs['credential'],inputs.get('provider') or codex_binary(),workspace,
+                    index=inputs.get('index',False),key_mode=inputs.get('key_mode','file'),navigation=inputs['navigation'],package=package,
+                    admission_trust=inputs.get('admission_trust'))
                 return invoke('install',{'package':str(package),'configuration':config,'local_assets':{k:str(v) for k,v in assets.items()}})
             import tempfile
             from axr.storage import private_directory
@@ -263,9 +320,9 @@ class Controller(QObject):
         if self.fixture or sys.platform!='win32':return
         from .windows_lifecycle import update_components
         from .windows_provisioning import payload_location
-        package=self._setup_package;provider=self._setup_inputs.get('provider')
+        package=self._setup_package;provider=self._setup_inputs.get('provider');trust=self._setup_inputs.get('admission_trust')
         self.agent_bridge.stop()
-        self.run('setup_update',lambda:update_components(package or payload_location(),provider))
+        self.run('setup_update',lambda:update_components(package or payload_location(),provider,trust))
     @Slot()
     def refreshWindowsBuild(self):
         if self.fixture or sys.platform!='win32':return
@@ -510,6 +567,7 @@ class Controller(QObject):
             return
         if name=='setup_environment':
             self._setup_environment={**value,'key_mode':self._setup_inputs.get('key_mode','file'),
+                **{k:self._setup_environment[k] for k in ('navigation','admission_trust','admission') if k in self._setup_environment},
                 'index':self._setup_inputs.get('index',False),
                 'credential':Path(self._setup_inputs['credential']).name if self._setup_inputs.get('credential') else ''}
             self.setupChanged.emit();return
@@ -520,6 +578,17 @@ class Controller(QObject):
                 'setup_refresh_build':'新构建审查完成。请连接服务，再重新批准所需范围。',
                 'setup_correct_credential':'凭据引用已更正。请重新初始化；本次没有导入密钥或授予访问。'}[name]
             self.changed.emit();self.noticeChanged.emit();self.inspectSetupEnvironment();return
+        if name=='setup_navigation':
+            self._notice=('导航配置已由本人审查；请重新批准所需会话范围。' if value.get('owner_reviewed') else
+                '导航配置已暂存；请继续初始化，由本人核对完整配置。')+' 本次没有验证设备或授予发送权限。'
+            self._data.update(connected=False,status={'owner_authorized':False,'automatic_reply':False})
+            self.changed.emit();self.noticeChanged.emit();return
+        if name=='setup_admission':
+            self._notice='签名材料已导入。服务启动仍会核对实际部署与全部准入条件；本次没有恢复权限。';self.noticeChanged.emit()
+            return
+        if name=='setup_admission_request':
+            self._setup_environment['admission_request']=json.dumps(value,ensure_ascii=False,indent=2)
+            self.setupChanged.emit();return
         if name in ('setup_install','setup_login','setup_connect_codex'):self.inspectSetupEnvironment()
         if name in ('setup_initialize','setup_connect_codex','setup_start'):
             if sys.platform=='win32':self.refresh()
@@ -594,7 +663,7 @@ class Controller(QObject):
         self.noticeChanged.emit()
     @Slot()
     def refresh(self):
-        if self.inflight & {'setup_update','setup_stop','setup_refresh_build','setup_correct_credential'}:return
+        if self.inflight & {'setup_update','setup_stop','setup_refresh_build','setup_correct_credential','setup_navigation','setup_admission'}:return
         if self.fixture:
             self._data={'connected':False,'status':{'audit_valid':True,'policy_version':1,'listener':{'listen':False,'wake_agent':False,'auto_execute':False},
                 'platform':{'mode':'synthetic_preview','send_available':False}},'jobs':[], 'drafts':[], 'grants':[],

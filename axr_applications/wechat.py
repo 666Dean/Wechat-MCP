@@ -33,7 +33,7 @@ def resources_root():
     actual=process_identity(os.getpid());image=Path(actual['image'])
     return image.parent/'runtime' if os.name=='nt' else image.parent.parent/'Resources'
 
-def _configuration(value):
+def _configuration(value,*,runtime_root=None):
     if type(value) is not dict or set(value)-{'state','endpoint','application','legacy_namespace','credential_import','owner_public_key','owner_user'} or not {'state','endpoint','application'}<=set(value):raise AXRError('wechat_deployment_configuration_invalid')
     if 'owner_user' in value and (os.name!='nt' or type(value['owner_user']) is not str or
             re.fullmatch(r'S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+',value['owner_user']) is None):raise AXRError('wechat_windows_owner_user_invalid')
@@ -45,7 +45,7 @@ def _configuration(value):
         if (type(source) is not dict or set(source)!=fields or not Path(source['path']).is_absolute()
             or re.fullmatch('[0-9a-f]{64}',source['sha256']) is None):raise AXRError('wechat_deployment_configuration_invalid')
         if 'key_mode' in source and source['key_mode'] not in ('raw','password'):raise AXRError('wechat_deployment_configuration_invalid')
-    root=resources_root();application=dict(value['application'])
+    root=Path(runtime_root) if runtime_root is not None else resources_root();application=dict(value['application'])
     if type(application.get('manual_approval_required',True)) is not bool:raise AXRError('wechat_approval_setting_invalid')
     def asset(value):
         if not isinstance(value,str):raise AXRError('wechat_deployment_asset_invalid')
@@ -88,6 +88,9 @@ def _configuration(value):
         navigation['helper']=asset(navigation['helper'])
         if navigation['endpoint']!=endpoint or navigation['helper']!=application.get('navigation_helper'):
             raise AXRError('wechat_deployment_navigation_mismatch')
+        if os.name=='nt':
+            from .windows_navigation import validate
+            validate(navigation,account=application['account_id'],helper=application['navigation_helper'],endpoint=endpoint)
         application['reply_navigation']=navigation
     if not application.get('resources') or len(application['resources'])>4096:raise AXRError('wechat_deployment_resources_required')
     seen=set()
@@ -115,6 +118,9 @@ def authenticate_owner_setup(value):
     if not empty_initialization(directory):raise AXRError('wechat_fresh_authority_state_required')
     if os.name=='nt':
         from .windows_enrollment import exchange
+        if 'admission_trust_sha256' in config['application']:
+            from .windows_admission import installed_trust
+            installed_trust(resources_root().parent,config['application'])
         _build_assets(config['application']) # Reject helper escapes before any owner key operation.
         build=review_windows_build(config['application'])
         challenge={'version':2,'kind':'wechat-owner-enrollment','configuration_digest':digest(config),
@@ -259,10 +265,10 @@ def refresh_owner_build(value,bootstrap):
             return {**result,'updated':True,'credentials_retained':True,'ledger_retained':True}
         finally:kernel.close()
 
-def _build_assets(application):
+def _build_assets(application,*,installation_root=None):
     helper=Path(application['navigation_helper'])
     if os.name=='nt':
-        install=resources_root().parent
+        install=Path(installation_root) if installation_root is not None else resources_root().parent
         try:
             relative=helper.relative_to(install)
             if not helper.is_absolute() or '..' in relative.parts:raise ValueError()
@@ -320,6 +326,11 @@ def initialize_owner(value, signer, enrollment=None):
         else:raise AXRError('wechat_contact_catalog_budget')
         if not catalog or len(catalog)>4096:raise AXRError('wechat_contact_catalog_budget')
         application={**application,'conversations':catalog,'resources':[asdict(Resource('wechat',application['account_id'],r['conversation_id'])) for r in catalog]}
+        if os.name=='nt' and 'reply_navigation' in application:
+            from .windows_navigation import validate
+            helper=Path(application['navigation_helper'])
+            validate(application['reply_navigation'],account=application['account_id'],helper=helper,endpoint=config['endpoint'],
+                helper_sha=hashlib.sha256(helper.read_bytes()).hexdigest(),identities={r['conversation_id'] for r in catalog})
         # No authority comes from the imported keys, including unlimited legacy
         # sessions. Only new separately signed owner contracts can enable use.
         receipt={'version':2,'application':application,'owner_public_key':response['public_key'],
@@ -400,7 +411,7 @@ def _resume_windows_owner_setup(config):
         any(p.name not in allowed or p.is_symlink() or p.is_junction() for p in directory.iterdir()))):
         raise AXRError('wechat_initialization_recovery_requires_review')
     with __import__('contextlib').closing(OwnerStore(directory,authority_service=True)) as store:
-        approved=store.config();strip=lambda app:{k:v for k,v in app.items() if k not in ('resources','conversations')}
+        approved=store.config();strip=lambda app:{k:v for k,v in app.items() if k not in ('resources','conversations','manual_approval_required')}
         if (approved.get('version')!=2 or strip(approved.get('application',{}))!=strip(config['application']) or
             approved.get('owner_user')!=config['owner_user'] or re.fullmatch('[0-9a-f]{64}',approved.get('enrollment','')) is None or
             re.fullmatch('[0-9a-f]{588}',approved.get('owner_public_key','')) is None):raise AXRError('wechat_initialization_approval_changed')
@@ -442,9 +453,17 @@ def _refresh_windows_owner_build(value,bootstrap):
     with __import__('contextlib').closing(OwnerStore(config['state'],authority_service=True)) as store:
         approved=store.config();strip=lambda app:{k:v for k,v in app.items() if k not in ('resources','conversations')}
         old,new=strip(approved['application']),strip(config['application']);root=resources_root().parent
+        from .windows_navigation import build_update,validate
         if (approved['owner_user']!=config.get('owner_user') or approved['owner_public_key']!=bootstrap.get('owner_public_key') or
-            not provider_build_update(old,new,bundled_path=root/'runtime/provider/codex.exe')):
+            not build_update(old,new,bundled_path=root/'runtime/provider/codex.exe',
+                identities={r['conversation_id'] for r in approved['application']['resources']})):
             raise AXRError('wechat_build_update_configuration_changed')
+        if 'reply_navigation' in new:
+            validate(new['reply_navigation'],account=new['account_id'],helper=new['navigation_helper'],endpoint=config['endpoint'],
+                helper_sha=hashlib.sha256(Path(new['navigation_helper']).read_bytes()).hexdigest())
+        if 'admission_trust_sha256' in new:
+            from .windows_admission import installed_trust
+            installed_trust(root,new)
         kernel,registry=_windows_kernel(store,native.HardwareSigningKey('Stellaria.AXR.Root.v2'),approved['owner_public_key'],enroll_current=False)
         try:
             kernel.security.revoke('kernel');kernel.integrity.persist()
@@ -453,7 +472,11 @@ def _refresh_windows_owner_build(value,bootstrap):
             challenge=_windows_setup_review(config,approved['owner_public_key'],build,'wechat-owner-build-update')
             def authenticated():return store.config()==approved and time.time()<challenge['expires'] and deployment.review(root,assets)==build and revoked()
             result=deployment.enroll(root,assets,authenticated)
-            if old!=new:store.seal_config({**approved,'application':{**approved['application'],'codex_provider':new['codex_provider']}})
+            if old!=new:
+                replacement={**approved['application']}
+                for field in ('codex_provider','reply_navigation','admission_trust_sha256'):
+                    if field in new:replacement[field]=new[field]
+                store.seal_config({**approved,'application':replacement})
             registry.rows=[]
             if not native.durable_write(str(registry.path),store.vault.seal([],'axr-peer-registry-v2')):raise AXRError('peer_registry_write_failed')
             store.journal.security_event('owner-build-update',{'build':result['build'],'authority_restored':False});kernel.integrity.persist()
@@ -567,6 +590,9 @@ def _kernel(store,signer,owner_public_key,*,initialize=False):
     return kernel,registry
 
 def release_gate(value):
+    if os.name=='nt':
+        from .windows_admission import gate
+        return gate(value)
     # These providers report observed deployment facts. In particular no JSON
     # UI flag can declare the incoming actor or MCP bridge qualified.
     def identity():
@@ -575,7 +601,6 @@ def release_gate(value):
         from . import _wechat_credentials
         return hasattr(_wechat_credentials,'import_legacy_credentials') and not hasattr(_wechat_credentials,'fixture_consumer')
     def integration():
-        if os.name=='nt':return False # Windows deployment remains independently gated.
         with __import__('contextlib').closing(OwnerStore(value['state'],authority_service=True)) as store:
             config=store.config();app=config['application'];pins=OwnerDeployment(store.secrets,store.vault)._load()
             front=BASE/'AXR MCP.app/Contents/MacOS/axr-frontend'

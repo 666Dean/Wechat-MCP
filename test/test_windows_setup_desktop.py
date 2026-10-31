@@ -99,3 +99,17 @@ class Configuration(unittest.TestCase):
             self.assertEqual(value['credential_import']['key_mode'],'password');self.assertEqual(len(value['credential_import']['sha256']),64)
             self.assertEqual(len(value['application']['shards']),4);self.assertEqual(set(assets),{'codex','ca'})
             self.assertFalse((area/'private').exists());self.assertNotIn('synthetic login',str(config))
+            from test.test_windows_navigation_configuration import document
+            from test.test_security_authority import FixtureSigner
+            public=FixtureSigner().public_key;trust=area/'reviewers.json'
+            trust.write_bytes(canonical({'version':2,'keys':{hashlib.sha256(public).hexdigest():public.hex()}}))
+            with patch.object(Path,'home',return_value=profile),patch.object(Path,'read_bytes',guarded),patch.object(
+                    native,'windows_installation_root',return_value=str(area/'installed')),patch.object(native,'windows_data_root',return_value=str(area/'private')),patch(
+                    'scripts.install_authority_windows.review',return_value={'files':{'wechat-uia.exe':'b2'*32}}):
+                prepared,assets=provisioning.configuration(root,'wxid_fixture_owner',credential,program,area/'local-with-navigation',key_mode='password',
+                    navigation=document('wxid_fixture_owner'),package=area/'synthetic-package',admission_trust=trust)
+            application=prepared['deployment']['application']
+            self.assertEqual(application['reply_navigation']['helper_sha256'],'b2'*32)
+            self.assertEqual(application['reply_navigation']['endpoint'],prepared['deployment']['endpoint'])
+            self.assertEqual(application['admission_trust_sha256'],hashlib.sha256(trust.read_bytes()).hexdigest())
+            self.assertEqual(assets['admission_trust'],trust);self.assertFalse((area/'private').exists())
