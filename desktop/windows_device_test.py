@@ -72,6 +72,7 @@ def _structure(package,pin):
         raise AXRError('device_test_structure_invalid')
     clean=[]
     for node in nodes:
+        if type(node) is not dict:raise AXRError('device_test_structure_invalid')
         path=node.get('path');children=node.get('children');role=node.get('role')
         if (type(path) is not list or len(path)>16 or any(type(n) is not int or not 0<=n<500 for n in path)
             or type(children) is not int or not 0<=children<=500 or role not in ('Text','Edit','List','Button','Other')
@@ -79,7 +80,26 @@ def _structure(package,pin):
             raise AXRError('device_test_structure_invalid')
         # Automation IDs are not needed for path preparation; never export them.
         clean.append({'path':path,'role':role,'children':children})
+    # The native walk is preorder and can stop at either bound. An Edit seen
+    # before an omitted branch does not establish that the tree is complete.
+    paths=[tuple(node['path']) for node in clean]
+    if paths[0]!=() or paths!=sorted(set(paths)):
+        raise AXRError('device_test_structure_invalid')
+    by_path={tuple(node['path']):node for node in clean}
+    children_by_path={path:[] for path in paths}
+    for path in paths[1:]:
+        if path[:-1] not in by_path:raise AXRError('device_test_structure_invalid')
+        children_by_path[path[:-1]].append(path[-1])
+    depth_limited=False
+    for path,node in by_path.items():
+        indices=children_by_path[path]
+        if indices!=list(range(len(indices))) or len(indices)>node['children']:
+            raise AXRError('device_test_structure_invalid')
+        if len(indices)<node['children']:
+            if len(path)==16:depth_limited=True
+            elif len(nodes)!=500:raise AXRError('device_test_structure_invalid')
     return {'state':'Observed','nodes':clean,'node_budget_reached':len(nodes)==500,
+            'depth_budget_reached':depth_limited,
             'text_redacted':True,'helper_sha256':manifest['files']['wechat-uia.exe'],
             'component_revision':manifest['source_revision']}
 
@@ -116,6 +136,8 @@ def inspect_device(*,package=None,wechat_sha256=None):
                 result['structure']=structure
                 if structure['node_budget_reached']:
                     result['blockers'].append('uia_structure_budget_reached')
+                elif structure.get('depth_budget_reached'):
+                    result['blockers'].append('uia_structure_depth_reached')
                 elif not any(node['role']=='Edit' for node in structure['nodes']):
                     result['blockers'].append('uia_edit_controls_not_exposed')
     try:result['installation']=_installation()
@@ -139,6 +161,7 @@ def describe_result(value):
     labels={'wechat_window_missing_or_ambiguous':'请保持一个微信主窗口可见',
             'wechat_interactive_owner_mismatch':'微信与当前用户不一致',
             'uia_structure_budget_reached':'控件数量超出本次检查范围',
+            'uia_structure_depth_reached':'控件层级超出本次检查范围',
             'uia_edit_controls_not_exposed':'微信未暴露可用的输入控件',
             'protected_installation_unavailable':'无法校验受保护安装',
             'protected_service_installation_required':'请完成受保护组件安装',

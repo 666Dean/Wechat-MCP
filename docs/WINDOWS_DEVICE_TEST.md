@@ -59,3 +59,15 @@ python -m scripts.windows_device_test qualify --permit "<本机对应的已签�
 手动诊断目标增加显式 `--legacy-client`：按 [Microsoft 文档](https://learn.microsoft.com/en-us/windows/win32/api/oleacc/nf-oleacc-accessibleobjectfromwindow)仅获取本次窗口 `OBJID_CLIENT` 的 IAccessible，再读取 [ChildCount](https://learn.microsoft.com/en-us/windows/win32/api/oleacc/nf-oleacc-iaccessible-get_accchildcount)。不枚举其名称、值或正文，不调用动作。实际 HRESULT=0，直接子对象数=2；随后 UIA 仍是 3/0，事件订阅和解除均成功。接口存在和 ChildCount=2 不证明应用提供了完整无障碍树，不能据此发放导航/发送权限。
 
 该分支仍不加入 CTest 或正式服务/桌面分发。参考/正式目标重新编译，根 CTest 各 5/5；5 组无效窗口/参数检查均在 UIA 前拒绝。Python/桌面运行实现没有改变，完整 908/867/41 和冻结候选 `b80cb1e` 仍按上文原日期/提交记录，不冒称本轮重跑全量或重新打包。实际 JSON 记录留在本人选择的私有验证目录，公开文档只保留聚合事实。
+
+## 树完整性与 RawView 检查
+
+2026-11-04 后续发现设备解析器只把 500 节点标为预算不足，没有识别原生遍历在 16 层停止的情况。如果前面已有 Edit，原结果可能漏报深层分支。现按先序路径、唯一根、连续子索引、父节点和声明的子节点数校验拓扑；畸形/无故缺项拒绝。第 16 层仍有子节点时返回 `depth_budget_reached=true` 和 `uia_structure_depth_reached` 阻塞。刚好 16 层但叶子完整不误报；500 节点仍保守阻塞。此修复验证返回结构，不能证明 UIA provider 自身暴露了应用的全部内部控件。
+
+根据 [Microsoft 的树视图定义](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-treeoverview)，ControlView 是 RawView 的过滤子集。为验证过滤是否隐藏操作控件，手动原生目标增加独立 `wechat-uia-listener-probe <明确选定窗口> --raw-view`。该分支只调用 [RawViewWalker](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomation-get_rawviewwalker)并统计 ControlType，不重复事件订阅或 MSAA ChildCount 实验；无名称、值、标识、截图、焦点或动作访问。两种预算均显式报告，保持选定进程句柄并复核窗口/PID，外部执行设 12 秒期限、不重试。仍不自动搜窗、不加入 CTest、不进入正式分发；正式导航的 ControlView 路径没有改用 RawView 索引。
+
+先用仅属于测试进程的无文字 Win32 窗口验证：2 节点/1 Edit、两个预算均未触达；9 组无效窗口/参数拒绝。随后只对当前已登录微信的一次显式选窗检查，调用前后复核唯一窗口、PID/birth、用户及同一映像 SHA-256。微信仍为 4.1.15.13，RawView 实际 **4 节点/0 Edit**，节点/深度预算均未触达。与此前 ControlView 的 3/0 相比，只观察到多一个结构节点，没有发现输入控件。没有重复前台、权限、事件订阅、MSAA 或参数重启，不改变已登录状态；此结果不确定最终根因或该版本永久兼容性。
+
+新增 4 项 Python 回归，定向 13 项通过；完整回归 **912 发现、871 执行通过、41 条件跳过，125.762 秒**，19 个既有 GC 警告保留。参考/正式探针编译通过，根 CTest 各 5/5，125%/150% Qt 各 26 项通过，实际加载原生扩展与参考构建 SHA-256 一致。已有服务包只作未改动夹具，新桌面解析器的独立冻结另记。私有验证目录新增 `uia-raw-device-20261104.json`、`uia-raw-synthetic-20261104.json` 和 `device-tree-completeness-full-tests.txt`，没有覆盖旧结果。
+
+设备链路仍为 Blocked：当前可用输入控件未暴露，且受保护组件/服务、本人配置/初始化、真实导航绑定、独立可信审查者材料及对应有限签名验收计划未完成。诊断不能生成这些签名或替代本人原生审查。下一次敏感设备步骤必须先具备实际部署材料，并由本人完成产品原生认证；本轮没有安装、Hello/TPM、凭据迁移、正文/搜索/草稿读取、输入/发送或联网模型。

@@ -87,6 +87,48 @@ class WindowsDeviceTest(unittest.TestCase):
         summary=self.device.describe_result(result)
         self.assertIn('尚未',summary);self.assertNotIn('protected_installation',summary)
 
+    def _helper_tree(self,nodes):
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as area,patch('scripts.install_authority_windows.review',return_value={
+                'files':{'wechat-uia.exe':'b'*64},'source_revision':'c'*40}),patch.object(
+                self.device.subprocess,'run',return_value=subprocess.CompletedProcess([],0,
+                json.dumps({'nodes':nodes,'text_redacted':True}).encode(),b'')):
+            return self.device._structure(Path(area),'a'*64)
+
+    @staticmethod
+    def _node(path,children=0,role='Other'):
+        return {'path':path,'children':children,'role':role,'identifier':''}
+
+    def test_depth_limited_tree_with_edit_is_explicitly_blocked(self):
+        nodes=[self._node([0]*depth,1,'Edit' if depth==1 else 'Other') for depth in range(17)]
+        structure=self._helper_tree(nodes)
+        self.assertTrue(structure['depth_budget_reached']);self.assertFalse(structure['node_budget_reached'])
+        with patch.object(self.device,'_structure',return_value=structure),patch.object(
+                self.device,'_installation',return_value={'verified':True,'configuration':True,
+                'owner_initialized':True,'service_state':'Stopped','qualification_permit':True}):
+            result=self.device.inspect_device(package='synthetic',wechat_sha256='a'*64)
+        self.assertEqual(result['state'],'Blocked')
+        self.assertIn('uia_structure_depth_reached',result['blockers'])
+        self.assertIn('层级',self.device.describe_result(result))
+
+    def test_complete_tree_at_depth_limit_is_not_truncated(self):
+        nodes=[self._node([0]*depth,int(depth<16)) for depth in range(17)]
+        self.assertFalse(self._helper_tree(nodes)['depth_budget_reached'])
+
+    def test_malformed_topology_is_rejected(self):
+        root=self._node([],1)
+        for nodes in ([None],[self._node([0])],[root,root],
+                [root,self._node([1])],[root,self._node([0,0])],
+                [self._node([]),self._node([0])],[root],
+                [self._node([],2),self._node([1]),self._node([0])]):
+            with self.subTest(nodes=nodes),self.assertRaisesRegex(Exception,'device_test_structure_invalid'):
+                self._helper_tree(nodes)
+
+    def test_node_budget_preserves_incomplete_tree_blocker(self):
+        nodes=[self._node([],500)]+[self._node([index],role='Edit') for index in range(499)]
+        structure=self._helper_tree(nodes)
+        self.assertTrue(structure['node_budget_reached']);self.assertFalse(structure['depth_budget_reached'])
+
     def test_command_routes_only_signed_qualification_and_sanitizes_errors(self):
         from scripts.windows_device_test import main
         with (patch('scripts.windows_device_test.inspect_device',side_effect=RuntimeError('C:/private/token')),
