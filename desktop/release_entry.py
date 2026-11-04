@@ -11,6 +11,9 @@ def main():
     if sys.platform=='win32' and '--windows-setup-request' in sys.argv:
         from desktop.windows_setup import main as admin_main
         return admin_main()
+    if sys.platform=='win32' and '--windows-device-test' in sys.argv:
+        from scripts.windows_device_test import main as device_main
+        return device_main(sys.argv[sys.argv.index('--windows-device-test')+1:])
     if '--runtime-check' in sys.argv:
         import PySide6
         from PySide6.QtCore import qVersion
@@ -36,8 +39,10 @@ def main():
             from axr_applications.windows_qualification import run as qualify_run
             from scripts.run_windows_qualification import run as qualify_stage
             from desktop.windows_lifecycle import qualify_once
+            from desktop.windows_device_test import inspect_device
+            from scripts.windows_device_test import main as device_main
             value['windows_metadata_entries']=all(callable(f) for f in (
-                configure_navigation,admission_request,import_admission,configure,import_material,prepare,verify,qualify_run,qualify_stage,qualify_once))
+                configure_navigation,admission_request,import_admission,configure,import_material,prepare,verify,qualify_run,qualify_stage,qualify_once,inspect_device,device_main))
         output=sys.argv[sys.argv.index('--check-output')+1] if '--check-output' in sys.argv else None
         if output:Path(output).write_text(json.dumps(value),encoding='utf-8')
         elif sys.stdout:print(json.dumps(value))

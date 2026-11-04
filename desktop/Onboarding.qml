@@ -73,6 +73,12 @@ Dialog {
                 }
                 ColumnLayout { visible: setup.step===1; Layout.fillWidth: true; spacing: 12
                     Card { visible: setup.environment.platform==="windows"; Layout.fillWidth: true
+                        Copy { text: "设备预检"; font.weight: Font.Medium }
+                        Detail { Layout.fillWidth: true; text: "检查微信程序和本机安装状态。仅返回元数据，不读取聊天、不操作窗口、不启动服务。命令接口另可检查不含文字的控件结构。" }
+                        GlassButton { objectName: "inspectWindowsDevice"; text: "检查当前设备"; enabled: !setup.controller.data.loading; onClicked: setup.controller.inspectWindowsDevice() }
+                        TextArea { visible: !!setup.environment.device_test; Layout.fillWidth: true; readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; textFormat: TextEdit.PlainText; text: setup.environment.device_test || ""; color: Theme.ink; font.pixelSize: 11 }
+                    }
+                    Card { visible: setup.environment.platform==="windows"; Layout.fillWidth: true
                         Copy { text: "设备导航配置"; font.weight: Font.Medium }
                         Detail { Layout.fillWidth: true; text: "选择本人准备的私聊标识、控件路径与微信程序哈希。导入只准备本地配置，不探测微信、不授予联系人权限。已有部署请先停止服务，再由本人核对完整配置。" }
                         Detail { Layout.fillWidth: true; text: setup.environment.navigation || "尚未选择导航配置"; elide: Text.ElideMiddle }

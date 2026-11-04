@@ -204,6 +204,11 @@ class Controller(QObject):
         if envelope is None:return
         self.run('setup_admission',lambda:import_admission(envelope))
     @Slot()
+    def inspectWindowsDevice(self):
+        if self.fixture or sys.platform!='win32':return
+        from .windows_device_test import inspect_device
+        self.run('setup_device_test',inspect_device)
+    @Slot()
     def prepareWindowsAdmission(self):
         if self.fixture or sys.platform!='win32':return
         from .windows_lifecycle import admission_request
@@ -585,10 +590,15 @@ class Controller(QObject):
             return
         if name=='setup_environment':
             self._setup_environment={**value,'key_mode':self._setup_inputs.get('key_mode','file'),
-                **{k:self._setup_environment[k] for k in ('navigation','admission_trust','admission','qualification') if k in self._setup_environment},
+                **{k:self._setup_environment[k] for k in ('navigation','admission_trust','admission','qualification','device_test') if k in self._setup_environment},
                 'index':self._setup_inputs.get('index',False),
                 'credential':Path(self._setup_inputs['credential']).name if self._setup_inputs.get('credential') else ''}
             self.setupChanged.emit();return
+        if name=='setup_device_test':
+            from .windows_device_test import describe_result
+            self._setup_environment['device_test']=describe_result(value)
+            self._notice='设备预检已完成；结果仅含本机元数据，未授予权限或发送消息。'
+            self.setupChanged.emit();self.noticeChanged.emit();return
         if name in ('setup_update','setup_stop','setup_refresh_build','setup_correct_credential'):
             self._data.update(connected=False,status={'owner_authorized':False,'automatic_reply':False})
             self._notice={'setup_update':'组件已更新。已有部署请核对新构建；首次设置请继续初始化。旧授权不会恢复。',

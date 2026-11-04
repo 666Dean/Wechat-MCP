@@ -56,6 +56,22 @@ class WindowsServiceDesktop(unittest.TestCase):
                 button.clicked.emit();QTest.qWait(20)
                 confirm=w.findChild(QObject,dialog);self.assertTrue(confirm.property('visible'));confirm.close()
                 run.assert_not_called()
+    def test_device_inspection_button_calls_read_only_interface_and_preserves_result(self):
+        from PySide6.QtCore import QObject
+        c,w=self.controller,self.window
+        c._setup_environment={'platform':'windows','installed':False};c.setupChanged.emit()
+        setup=w.findChild(QObject,'setupDialog');setup.open();setup.setProperty('step',1);QTest.qWait(40)
+        c.fixture=False
+        value={'wechat':{'window_count':1,'version':'4.0.0.0'},'installation':{},
+               'blockers':['owner_initialization_required'],'state':'Blocked'}
+        with patch.object(c,'run') as run,patch('desktop.windows_device_test.inspect_device',return_value=value) as inspect:
+            self.fixture.visual(w,'inspectWindowsDevice').clicked.emit()
+            self.assertEqual(run.call_args.args[0],'setup_device_test');self.assertEqual(run.call_args.args[1](),value)
+            inspect.assert_called_once_with()
+            c.accept({'name':'setup_device_test','error':None,'value':value})
+            self.assertIn('4.0.0.0',c.setupEnvironment['device_test'])
+            c.accept({'name':'setup_environment','error':None,'value':{'platform':'windows','installed':False}})
+            self.assertIn('4.0.0.0',c.setupEnvironment['device_test'])
     def test_source_switch_clears_old_selection_and_late_inspection_cannot_change_visible_key_mode(self):
         c=self.controller;c._setup_inputs={'credential':'synthetic.key','index':False}
         c.setSetupCredentialMode('password');c.setSetupCredentialSource(True)
