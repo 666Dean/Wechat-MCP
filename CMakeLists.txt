@@ -27,7 +27,7 @@ if(WIN32)
     # Explicit manual metadata experiment; never auto-run against a live app.
     add_executable(wechat-uia-listener-probe test/fixtures/windows_uia_listener.cpp)
     target_compile_features(wechat-uia-listener-probe PRIVATE cxx_std_20)
-    target_link_libraries(wechat-uia-listener-probe PRIVATE ole32 uiautomationcore user32)
+    target_link_libraries(wechat-uia-listener-probe PRIVATE ole32 oleacc uiautomationcore user32)
     add_executable(wechat-send-policy-tests test/fixtures/windows_send_policy.cpp)
     target_compile_features(wechat-send-policy-tests PRIVATE cxx_std_20)
     add_test(NAME WeChatSendPolicy COMMAND wechat-send-policy-tests)

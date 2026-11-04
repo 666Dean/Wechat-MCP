@@ -4,6 +4,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include <UIAutomation.h>
+#include <oleacc.h>
 #include <wrl/client.h>
 #include <wrl/implements.h>
 #include <chrono>
@@ -30,7 +31,8 @@ static void Count(IUIAutomationTreeWalker* walker,IUIAutomationElement* element,
     }
 }
 int main(int argc,char** argv){
-    if(argc!=2)return 2;
+    if(argc!=2&&(argc!=3||std::string(argv[2])!="--legacy-client"))return 2;
+    const bool legacy=argc==3;
     HWND window=nullptr;
     try{std::size_t used=0;std::string arg=argv[1];auto value=std::stoull(arg,&used);
         if(used!=arg.size())return 2;window=reinterpret_cast<HWND>(static_cast<std::uintptr_t>(value));}
@@ -46,6 +48,12 @@ int main(int argc,char** argv){
                FAILED(automation->ElementFromHandle(window,&root))||!root||
                FAILED(automation->get_ControlViewWalker(&walker))||!walker)throw 1;
             Counts before;Count(walker.Get(),root.Get(),0,before);
+            ComPtr<IAccessible> accessible;LONG legacyChildren=-1;HRESULT legacyStatus=E_NOTIMPL;
+            if(legacy){
+                legacyStatus=AccessibleObjectFromWindow(window,OBJID_CLIENT,IID_IAccessible,
+                    reinterpret_cast<void**>(accessible.GetAddressOf()));
+                if(SUCCEEDED(legacyStatus)&&accessible)legacyStatus=accessible->get_accChildCount(&legacyChildren);
+            }
             if(FAILED(automation->AddStructureChangedEventHandler(root.Get(),TreeScope_Subtree,nullptr,sink.Get())))throw 1;
             subscribed=true;
             std::this_thread::sleep_for(std::chrono::milliseconds(1500));
@@ -54,7 +62,9 @@ int main(int argc,char** argv){
             Counts after;Count(walker.Get(),refreshed.Get(),0,after);
             if(FAILED(automation->RemoveStructureChangedEventHandler(root.Get(),sink.Get())))throw 1;
             subscribed=false;
-            std::cout<<"{\"subscribed\":true,\"unsubscribed\":true,\"before_nodes\":"<<before.nodes
+            std::cout<<"{\"subscribed\":true,\"unsubscribed\":true,\"legacy_requested\":"<<(legacy?"true":"false")
+                     <<",\"legacy_hresult\":"<<static_cast<long>(legacyStatus)<<",\"legacy_children\":"<<legacyChildren
+                     <<",\"before_nodes\":"<<before.nodes
                      <<",\"before_edits\":"<<before.edits<<",\"after_nodes\":"<<after.nodes
                      <<",\"after_edits\":"<<after.edits<<",\"content_read\":false,\"input_performed\":false}"<<std::endl;
             code=0;

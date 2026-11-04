@@ -43,4 +43,19 @@ python -m scripts.windows_device_test qualify --permit "<本机对应的已签�
 
 本机真实结果：订阅与解除均成功；订阅前 **3 nodes / 0 Edit**，订阅后仍为 **3 nodes / 0 Edit**。这次普通客户端事件订阅没有恢复控件，未扩大为其他订阅机制或重启后结论。没有文字、截图、输入、模型或进程内存读取。
 
-本人随后明确允许重启微信作临时软件渲染对照。只停止本次可见微信主进程及同映像/本人/birth 核对后的子进程，共 5 个；没有终止其他应用。仅对新启动子进程传入 `QT_ANGLE_PLATFORM=software`、`QT_OPENGL=software`、`QT_QUICK_BACKEND=software`，未修改安装文件、全局环境或系统设置。登录/手机确认由本人操作；主界面未确认前不将新窗口控件当作已登录设备证据。当前重启后的主界面对照仍待本人登录确认。
+本人随后明确允许重启微信作临时软件渲染参数对照。只停止本次可见微信主进程及同映像/本人/birth 核对后的子进程，共 5 个；没有终止其他应用。对新启动子进程传入 `QT_ANGLE_PLATFORM=software`、`QT_OPENGL=software`、`QT_QUICK_BACKEND=software`，未修改安装文件、全局环境或系统设置。登录/手机确认由本人操作。
+
+### 本人确认登录后的结果
+
+本人随后明确确认“已进入聊天主界面”。以同一正式包/helper 与同一微信映像 pin 调用结构接口，仍为 **3 nodes / 0 Edit**，未触达预算上限。此时安装/初始化缺项仍存在，最终结果 Blocked，没有读取聊天、搜索或草稿、输入、发送或联网模型。参数传入不等于客户端实际采用软件渲染；本次没有验证实际渲染后端，且子进程继承了测试进程的运行库搜索路径，不能把负结果归因为显卡，也不能称为严格单变量实验。没有因此再次中断本人已登录的客户端。
+
+| 观察条件 | UIA 节点 | Edit | 边界 |
+| --- | ---: | ---: | --- |
+| 重启前，单窗口/同完整性/前台 | 3 | 0 | 普通交互用户结构元数据 |
+| 重启前，标准结构事件订阅 | 3 → 3 | 0 → 0 | 订阅和解除成功，未改善树 |
+| 临时参数重启后，本人确认登录 | 3 | 0 | 实际渲染后端未验证 |
+| 重启后，传统接口与结构事件订阅 | 3 → 3 | 0 → 0 | MSAA 接口调用成功，但未获得操作控件 |
+
+手动诊断目标增加显式 `--legacy-client`：按 [Microsoft 文档](https://learn.microsoft.com/en-us/windows/win32/api/oleacc/nf-oleacc-accessibleobjectfromwindow)仅获取本次窗口 `OBJID_CLIENT` 的 IAccessible，再读取 [ChildCount](https://learn.microsoft.com/en-us/windows/win32/api/oleacc/nf-oleacc-iaccessible-get_accchildcount)。不枚举其名称、值或正文，不调用动作。实际 HRESULT=0，直接子对象数=2；随后 UIA 仍是 3/0，事件订阅和解除均成功。接口存在和 ChildCount=2 不证明应用提供了完整无障碍树，不能据此发放导航/发送权限。
+
+该分支仍不加入 CTest 或正式服务/桌面分发。参考/正式目标重新编译，根 CTest 各 5/5；5 组无效窗口/参数检查均在 UIA 前拒绝。Python/桌面运行实现没有改变，完整 908/867/41 和冻结候选 `b80cb1e` 仍按上文原日期/提交记录，不冒称本轮重跑全量或重新打包。实际 JSON 记录留在本人选择的私有验证目录，公开文档只保留聚合事实。
