@@ -33,4 +33,14 @@ python -m scripts.windows_device_test qualify --permit "<本机对应的已签�
 
 新增 10 项回归覆盖 GUI 调用、元数据无权限、错误身份/窗口歧义、映像 pin 和进程变化、结构预算/字段拒绝、已有输出文件拒绝和固定签名计划转交。完整回归 **908 发现、867 执行通过、41 条件跳过，118.507 秒**；125% / 150% Qt 各 **26 项通过**，19 个既有 GC 退出警告保留。原有参考/正式组件及既有服务包作为离线夹具，不能把这些测试当作新的设备或包构建。最新实现 `4372e20` 的云端 Windows/Mac/native-fuzz 已全部成功。
 
-接口改变桌面源码；旧 `4372e20` 桌面候选不包含本次新接口。新桌面候选的实际构建与冻结调用结果在完成后单独记录。
+接口实现 `b80cb1e5411184599f8985ec4350481a04c815dc` 已推送。新桌面候选构建时 `source_dirty=false`，2,395 个文件全部重算哈希通过，两个新模块均在冻结归档内，冻结 QML 与源码一致；正式 SDK、隔离 EXE 实际启动/中文合成渲染、1,362 个归档项隐私检查通过。已实际调用冻结 EXE 的诊断接口，返回 Blocked、控件检查为 NotRequested、服务 Absent，全部正文/输入/发送/模型/授权标记为 false。候选继续使用未改变的 `4372e20` 正式服务组件，不把它称为本轮新服务构建。完整文件夹保存在本人指定交付根目录的 `desktop-device-interface`，没有安装或发布。
+
+## 标准事件订阅对照
+
+根据 [Microsoft 的 UIA 事件说明](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-eventsforclients)和[订阅者检测接口](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationcoreapi/nf-uiautomationcoreapi-uiaclientsarelistening)，检查正常事件客户端在场是否改变当前控件结构。这是待验证假设，不是已确认的微信根因。
+
+新增手动构建目标 `wechat-uia-listener-probe`，只接受本次明确选择的窗口，MTA 注册该子树的结构事件；回调不查看 sender、runtime ID 或事件内容，仅前后统计 ControlType，1.5 秒后解除订阅。外部执行设置 12 秒期限，没有失败后重试。该目标仅 Windows/BUILD_TESTING 构建，**不注册 CTest**、不进入服务包、不自动发现或操作真实微信。参考/正式目标均已编译，根 CTest 仍各 5/5。
+
+本机真实结果：订阅与解除均成功；订阅前 **3 nodes / 0 Edit**，订阅后仍为 **3 nodes / 0 Edit**。这次普通客户端事件订阅没有恢复控件，未扩大为其他订阅机制或重启后结论。没有文字、截图、输入、模型或进程内存读取。
+
+本人随后明确允许重启微信作临时软件渲染对照。只停止本次可见微信主进程及同映像/本人/birth 核对后的子进程，共 5 个；没有终止其他应用。仅对新启动子进程传入 `QT_ANGLE_PLATFORM=software`、`QT_OPENGL=software`、`QT_QUICK_BACKEND=software`，未修改安装文件、全局环境或系统设置。登录/手机确认由本人操作；主界面未确认前不将新窗口控件当作已登录设备证据。当前重启后的主界面对照仍待本人登录确认。
