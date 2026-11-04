@@ -85,6 +85,119 @@ class EvidenceVerification(EvidenceFixture):
         self.assertNotIn('never-exported',str(value));self.assertNotIn('evidence',value);self.assertFalse(value['authorization_granted'])
         self.assertTrue(value['device_review_required']);self.assertEqual(value['required_categories'],list(CATEGORIES))
 
+
+class RuntimeEvidence(EvidenceFixture):
+    def setUp(self):
+        super().setUp()
+        tmp=tempfile.TemporaryDirectory();self.addCleanup(tmp.cleanup);self.root=Path(tmp.name).resolve()
+        (self.root/'runtime').mkdir()
+        self.path=self.root/'deployment.json';self.path.write_bytes(b'{"synthetic":"configuration"}')
+        self.trust=self.root/'runtime/admission-trust.json'
+        self.trust.write_bytes(canonical({'version':2,'keys':{self.key_id:self.signer.public_key.hex()}}))
+        self.material=self.root/'windows-admission.json'
+        self.body['stage']='device';self.body['code_audit']['complete']=True
+        for row in self.body['evidence'].values():row['kind']='device'
+        self.wall=time.time();self.tick=1000.
+        self.material.write_bytes(canonical(self.signed()))
+        for p in (patch.object(admission,'installed_context',return_value=(self.keys,self.expected)),
+            patch.object(admission.native,'windows_deployment_configuration',return_value=str(self.path),create=sys.platform!='win32'),
+            patch.object(admission.native,'windows_installation_root',return_value=str(self.root),create=sys.platform!='win32'),
+            patch.object(admission.native,'windows_data_root',return_value=str(self.root),create=sys.platform!='win32')):
+            p.start();self.addCleanup(p.stop)
+    def session(self):
+        return admission.RuntimeAdmission({},clock=lambda:self.wall,monotonic=lambda:self.tick)
+    def test_expiry_on_either_clock_and_clock_rollback_permanently_stop_the_session(self):
+        start_wall,start_tick=self.wall,self.tick
+        for wall,tick in ((start_wall+200,start_tick+1),(start_wall+1,start_tick+200),
+            (start_wall-1,start_tick+1),(start_wall+1,start_tick-1),(float('nan'),start_tick)):
+            self.wall,self.tick=start_wall,start_tick;session=self.session()
+            self.wall,self.tick=wall,tick
+            with self.subTest(wall=wall,tick=tick),self.assertRaisesRegex(AXRError,'restart_required'):session.require()
+            self.wall,self.tick=start_wall,start_tick
+            with self.assertRaisesRegex(AXRError,'restart_required'):session.require()
+    def test_configuration_navigation_trust_or_material_change_latches_even_after_restoration(self):
+        for path in (self.path,self.trust,self.material):
+            original=path.read_bytes();session=self.session();path.write_bytes(original+b' ')
+            # Configuration and trust pin exact bytes; material pins the signed
+            # envelope semantically, so whitespace alone is not a replacement.
+            if path==self.material:
+                self.body['sequence']+=1;path.write_bytes(canonical(self.signed()))
+            with self.subTest(path=path.name),self.assertRaisesRegex(AXRError,'restart_required'):session.require()
+            path.write_bytes(original)
+            with self.assertRaisesRegex(AXRError,'restart_required'):session.require()
+    def test_deleted_or_corrupt_material_never_extends_a_running_session(self):
+        original=self.material.read_bytes()
+        for replacement in (None,b'{malformed'):
+            self.material.write_bytes(original);session=self.session()
+            if replacement is None:self.material.unlink()
+            else:self.material.write_bytes(replacement)
+            with self.assertRaisesRegex(AXRError,'restart_required'):session.require()
+        self.material.write_bytes(original)
+    def test_software_evidence_and_startup_context_race_cannot_construct_session(self):
+        self.body['stage']='software'
+        for row in self.body['evidence'].values():row['kind']='software'
+        self.material.write_bytes(canonical(self.signed()))
+        with self.assertRaisesRegex(AXRError,'not_qualified'):self.session()
+        self.body['stage']='device'
+        for row in self.body['evidence'].values():row['kind']='device'
+        self.material.write_bytes(canonical(self.signed()))
+        with patch.object(admission,'installed_context',side_effect=[(self.keys,self.expected),(self.keys,{**self.expected,'navigation':'changed'})]):
+            with self.assertRaisesRegex(AXRError,'restart_required'):self.session()
+
+
+class RuntimeKernel(unittest.TestCase):
+    def setUp(self):
+        import test_wechat_service_v2 as fixtures
+        self.f=fixtures.ServiceTests()
+        with patch.object(fixtures,'WeChatKernel',admission.WindowsAdmissionKernel):self.f.setUp()
+        self.addCleanup(self.f.doCleanups)
+        self.kernel=self.f.kernel;self.session=Mock();self.kernel.windows_admission=self.session
+        self.f.activate();self.capability=self.f.service.capability
+        self.action=self.f.service.action('fixture-peer','messages.read',{})
+    def expire(self):self.session.require.side_effect=AXRError('synthetic_material_expired')
+    def test_admitted_execution_retains_normal_receipt_and_does_not_revoke(self):
+        proof=self.f.service.prepare(self.action);self.kernel.claim_commit(self.f.peer,proof)
+        self.assertEqual(self.kernel.observe(self.f.peer,proof,verified=True,evidence_digest=digest('synthetic result'))['state'],'Completed')
+        row,_=self.kernel.security._contract(self.capability['body']['contract']['id']);self.assertFalse(row['revoked'])
+        self.assertGreaterEqual(self.session.require.call_count,3)
+    def test_both_application_apis_authorize_access_and_preflight_deny_without_restoring_old_grants(self):
+        self.expire()
+        packets=[{'operation':'WeChat','payload':{'method':'wechat_status','arguments':{}}},
+            {'operation':'Application','payload':{'method':'status','parameters':{},'capability':None}},
+            {'operation':'Authorize','payload':{}}]
+        for packet in packets:
+            with self.assertRaisesRegex(AXRError,'restart_required'):self.kernel.dispatch(self.f.client,packet)
+        row,_=self.kernel.security._contract(self.capability['body']['contract']['id']);self.assertTrue(row['revoked'])
+        self.session.require.side_effect=None
+        with self.assertRaisesRegex(AXRError,'restart_required'):self.kernel.access(self.f.peer,self.capability,self.action)
+        with self.assertRaisesRegex(AXRError,'restart_required'):self.kernel._task(self.f.peer,self.capability)
+        with self.assertRaisesRegex(AXRError,'restart_required'):self.kernel.preflight_commit(self.f.peer,{})
+        result=self.kernel.dispatch(self.f.owner,{'operation':'WeChatOwner','payload':{'method':'stop','arguments':{}}})
+        self.assertTrue(result['revoked']);self.assertIsNone(self.f.service.scope)
+    def test_expiry_before_claim_never_issues_permit_and_revocation_remains_available(self):
+        proof=self.f.service.prepare(self.action);self.expire()
+        with self.assertRaisesRegex(AXRError,'restart_required'):self.kernel.claim_commit(self.f.peer,proof)
+        self.assertEqual(self.kernel.db.execute('SELECT state FROM authority_commits').fetchone()[0],'Prepared')
+        self.assertTrue(self.kernel.dispatch(self.f.owner,{'operation':'Revoke','payload':{'scope':'kernel'}})['revoked'])
+    def test_expiry_after_claim_records_unknown_and_never_replays(self):
+        proof=self.f.service.prepare(self.action);self.kernel.claim_commit(self.f.peer,proof);self.expire()
+        result=self.kernel.dispatch(self.f.peer,{'operation':'Commit','payload':{'phase':'receipt','proof':proof,
+            'verified':True,'evidence_digest':digest('synthetic observation')}})
+        self.assertEqual(result['state'],'Unknown');self.assertFalse(result['retry'])
+        receipt=self.kernel.dispatch(self.f.client,{'operation':'Access','payload':{'phase':'receipt','capability':self.f.service.capabilities['fixture-peer'],
+            'execution_id':self.action.execution_id}})
+        self.assertEqual(receipt['state'],'Unknown');self.assertFalse(receipt['retry'])
+        self.session.require.side_effect=None
+        with self.assertRaisesRegex(AXRError,'restart_required'):self.kernel.claim_commit(self.f.peer,proof)
+        with self.assertRaisesRegex(AXRError,'receipt_without_claim'):
+            self.kernel.observe(self.f.peer,proof,verified=True,evidence_digest=digest('later synthetic observation'))
+        self.assertEqual(self.kernel.db.execute('SELECT state FROM authority_commits').fetchone()[0],'Unknown')
+    def test_missing_runtime_session_is_closed_and_does_not_permit_client_revocation(self):
+        del self.kernel.windows_admission
+        with self.assertRaisesRegex(AXRError,'restart_required'):self.kernel.access(self.f.peer,self.capability,self.action)
+        with self.assertRaisesRegex(AXRError,'owner_channel_required'):
+            self.kernel.dispatch(self.f.client,{'operation':'Revoke','payload':{'scope':'kernel'}})
+
 @unittest.skipUnless(sys.platform=='win32','Windows bounded admission import')
 class MaterialImport(EvidenceFixture):
     def setUp(self):

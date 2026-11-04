@@ -509,7 +509,8 @@ def _windows_kernel(store,signer,owner_public_key,*,initialize=False,enroll_curr
         if peer is None:raise AXRError('wechat_native_handler_not_ready')
         return peer
     store.journal.db.execute('CREATE TABLE IF NOT EXISTS wechat_state(name TEXT PRIMARY KEY,payload BLOB)')
-    kernel=WeChatKernel(security,signer,bytes.fromhex(owner_public_key),identity=identity,environment=environment,
+    from .windows_admission import WindowsAdmissionKernel
+    kernel=WindowsAdmissionKernel(security,signer,bytes.fromhex(owner_public_key),identity=identity,environment=environment,
             handler_for=handler,initialize=initialize,recovery_verifier=lambda peer,scope:store.journal.verify_audit(),
             application_tables={'wechat_state':'name'})
     kernel.controller_peer=credential_peer
@@ -618,12 +619,13 @@ def release_gate(value):
         'adversarial':integration,'experience':integration})
 
 def create_authority(value):
-    release_gate(value).require()
+    admission=release_gate(value);admission.require()
     store=OwnerStore(value['state'],authority_service=True)
     kernel=None
     try:
         signer=native.HardwareSigningKey('Stellaria.AXR.Root.v2')
         kernel,registry=_kernel(store,signer,value['owner_public_key'])
+        if os.name=='nt':kernel.windows_admission=admission.runtime()
         if os.name=='nt' and native.security_release:
             native.expose_windows_authority_identity(registry.user)
             connection={'version':2,'endpoint':value['endpoint'],'server':process_identity(os.getpid())}

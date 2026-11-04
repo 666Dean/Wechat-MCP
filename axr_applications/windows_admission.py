@@ -6,7 +6,7 @@ Software evidence is inspectable but cannot qualify the product. Only a device
 review explicitly recording completion of the whole software audit can do so.
 No signing keys, hardware operations, UI probes or evidence files are generated.
 """
-import hashlib,math,time
+import hashlib,math,threading,time
 from pathlib import Path
 from axr import _axr_native as native
 from axr.aet import AXRError,canonical,digest
@@ -134,6 +134,7 @@ def gate(value):
     class WindowsGate(ReleaseGate):
         # No mutable cross-request cache; concurrent snapshots are independent.
         def __init__(self):pass
+        def runtime(self):return RuntimeAdmission(value)
         def status(self):
             try:
                 keys,expected=installed_context(value)
@@ -142,6 +143,119 @@ def gate(value):
             except Exception:checks={category:False for category in CATEGORIES}
             return {'qualified':all(checks.values()),'checks':checks,'passed':sum(checks.values()),'total':len(CATEGORIES)}
     return WindowsGate()
+
+
+class RuntimeAdmission:
+    """One protected startup, with no evidence replacement or clock extension.
+
+    Installation/build verification is done before consumers are constructed.
+    Runtime checks reread bounded configuration/trust/material files; execution
+    consumers retain their own actual image/hash and OS identity checks.
+    A failed session stays failed even if a file or clock is restored.
+    """
+    def __init__(self,value,*,clock=time.time,monotonic=time.monotonic):
+        self.lock=threading.RLock();self.failed=False
+        self.clock,self.monotonic=clock,monotonic
+        self.keys,self.expected=installed_context(value)
+        self.configuration=Path(native.windows_deployment_configuration())
+        from axr.rooted import RootedDirectory
+        with __import__('contextlib').closing(RootedDirectory(self.configuration.parent)) as directory:
+            self.configuration_digest=hashlib.sha256(directory.read(self.configuration.name,32768)).hexdigest()
+        self.root=Path(native.windows_installation_root())
+        with __import__('contextlib').closing(RootedDirectory(self.root/'runtime')) as directory:
+            self.trust_digest=hashlib.sha256(directory.read('admission-trust.json',4096)).hexdigest()
+        self.material=Path(native.windows_data_root())/'windows-admission.json'
+        self.wall,self.tick=clock(),monotonic()
+        if any(type(t) not in (int,float) or not math.isfinite(t) for t in (self.wall,self.tick)):
+            raise AXRError('windows_admission_session_invalid_restart_required')
+        envelope=read_json(self.material,16000)
+        result=verify(envelope,self.keys,self.expected,clock=lambda:self.wall)
+        if not result['qualified']:raise AXRError('security_release_not_qualified')
+        self.material_digest=digest(envelope)
+        self.deadline=self.tick+result['expires']-self.wall
+        # A concurrent import/update between installed_context and the file
+        # snapshots must not establish a mixed session.
+        keys,expected=installed_context(value)
+        if keys!=self.keys or expected!=self.expected:
+            raise AXRError('windows_admission_session_invalid_restart_required')
+        self.require()
+
+    def require(self):
+        with self.lock:
+            try:
+                if self.failed:raise ValueError()
+                wall,tick=self.clock(),self.monotonic()
+                if (any(type(t) not in (int,float) or not math.isfinite(t) for t in (wall,tick)) or
+                    wall<self.wall or tick<self.tick or tick>=self.deadline):raise ValueError()
+                from axr.rooted import RootedDirectory
+                with __import__('contextlib').closing(RootedDirectory(self.configuration.parent)) as directory:
+                    if hashlib.sha256(directory.read(self.configuration.name,32768)).hexdigest()!=self.configuration_digest:raise ValueError()
+                # Verify the pinned reviewer set again, without rehashing the
+                # complete installation on every database/UI cancellation poll.
+                with __import__('contextlib').closing(RootedDirectory(self.root/'runtime')) as directory:
+                    raw=directory.read('admission-trust.json',4096)
+                    if hashlib.sha256(raw).hexdigest()!=self.trust_digest or trust_keys(decode_json(raw))!=self.keys:raise ValueError()
+                envelope=read_json(self.material,16000)
+                if digest(envelope)!=self.material_digest or not verify(envelope,self.keys,self.expected,clock=lambda:wall)['qualified']:
+                    raise ValueError()
+                self.wall,self.tick=wall,tick
+            except Exception:
+                self.failed=True
+                raise AXRError('windows_admission_session_invalid_restart_required') from None
+
+
+from .wechat_service import WeChatKernel
+
+
+class WindowsAdmissionKernel(WeChatKernel):
+    """Gate both MCP APIs, task access and authenticated native commit phases.
+
+    Reducing authority and recording an uncertain outcome remain available.
+    Setup/refresh can construct a kernel, but cannot execute without a runtime
+    admission session installed by create_authority.
+    """
+    def require_admission(self):
+        try:
+            if getattr(self,'admission_revoked',False):raise AXRError('windows_admission_runtime_revoked')
+            session=getattr(self,'windows_admission',None)
+            if session is None:raise AXRError('windows_admission_runtime_required')
+            session.require()
+        except Exception:
+            with self.lock:
+                if not getattr(self,'admission_revoked',False):
+                    self.challenges.clear()
+                    self.security.revoke('kernel')
+                    self.admission_revoked=True
+            raise AXRError('windows_admission_session_invalid_restart_required') from None
+
+    def dispatch(self,peer,packet):
+        operation=packet.get('operation') if type(packet) is dict else None
+        payload=packet.get('payload',{}) if type(packet) is dict else None
+        phase=payload.get('phase') if type(payload) is dict else None
+        reducing=(operation=='Revoke' or operation in ('Access','Commit') and phase=='receipt' or
+            operation=='WeChatOwner' and type(payload) is dict and payload.get('method')=='stop')
+        if not reducing:self.require_admission()
+        return super().dispatch(peer,packet)
+
+    def access(self,*args,**kwargs):
+        self.require_admission()
+        return super().access(*args,**kwargs)
+
+    def _task(self,*args,**kwargs):
+        # The asynchronous reply controller calls _task from its existing
+        # cancellation poll, including while waiting for the native helper.
+        self.require_admission()
+        return super()._task(*args,**kwargs)
+
+    def preflight_commit(self,*args,**kwargs):
+        self.require_admission()
+        return super().preflight_commit(*args,**kwargs)
+
+    def observe(self,peer,proof,*,verified,evidence_digest):
+        if type(verified) is not bool:raise AXRError('native_receipt_invalid')
+        try:self.require_admission()
+        except AXRError:verified=False
+        return super().observe(peer,proof,verified=verified,evidence_digest=evidence_digest)
 
 def review_context(registration):
     """Public, offline import context; the service separately verifies its MAC pin."""

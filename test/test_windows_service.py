@@ -39,6 +39,19 @@ class WindowsService(unittest.TestCase):
     def approve(self,handle):
         review=self.service.review_pending(self.owner,handle);challenge=review['challenge']
         return self.service.approve_pending(self.owner,challenge['nonce'],self.signer.sign(canonical(challenge)).hex())
+    def test_runtime_admission_failure_stops_scope_pending_content_and_does_not_resume(self):
+        self.activate();job=self.call('wechat_read_messages',conversation_id='fixture-peer')
+        generation=self.service.generation
+        self.kernel.require_admission=Mock(side_effect=AXRError('windows_admission_session_invalid_restart_required'))
+        try:
+            with self.assertRaisesRegex(AXRError,'restart_required'):self.service.check()
+            self.assertIsNone(self.service.scope);self.assertGreater(self.service.generation,generation)
+            stored=self.service.jobs[job['job_id']]
+            self.assertEqual(stored['state'],'FailedSafe');self.assertNotIn('page',stored);self.assertNotIn('approval',stored)
+            generation=self.service.generation
+            with self.assertRaisesRegex(AXRError,'restart_required'):self.service.check()
+            self.assertEqual(self.service.generation,generation)
+        finally:del self.kernel.require_admission
     def test_rsa_hello_owner_activates_common_scope_and_scoped_child(self):
         from cryptography.hazmat.primitives.asymmetric import rsa,padding
         from cryptography.hazmat.primitives import hashes,serialization
@@ -344,16 +357,29 @@ class WindowsService(unittest.TestCase):
 
 class WindowsServiceFactory(unittest.TestCase):
     @unittest.skipUnless(sys.platform=='win32','Windows service factory')
+    def test_runtime_admission_failure_precedes_both_consumers_and_closes_kernel_store(self):
+        kernel=SimpleNamespace(close=Mock());store=SimpleNamespace(close=Mock())
+        admission=SimpleNamespace(require=lambda:None,runtime=Mock(side_effect=AXRError('synthetic_admission_expired')))
+        with patch.object(wechat,'release_gate',return_value=admission),patch.object(wechat,'OwnerStore',return_value=store),patch.object(
+            wechat.native,'HardwareSigningKey'),patch.object(wechat,'_kernel',return_value=(kernel,object())),patch(
+            'axr_applications.wechat_mcp.attach_windows_mcp') as attach,patch(
+            'axr_applications.wechat_windows_service.WindowsWeChatService') as service:
+            with self.assertRaisesRegex(AXRError,'admission_expired'):
+                wechat.create_authority({'state':'unused-fixture','owner_public_key':'fixture','endpoint':'fixture'})
+        attach.assert_not_called();service.assert_not_called();kernel.close.assert_called_once();store.close.assert_called_once()
+    @unittest.skipUnless(sys.platform=='win32','Windows service factory')
     def test_factory_attaches_both_apis_and_closes_service_before_server(self):
         kernel=SimpleNamespace(application_close=None,close=Mock());registry=object();events=[]
         store=SimpleNamespace(config=lambda:{'application':{'conversations':[]}},close=Mock())
         service=SimpleNamespace(start=lambda:events.append('start'),close=lambda:events.append('service.close'))
         server=SimpleNamespace(serve=lambda:events.append('serve'),close=lambda:events.append('server.close'))
-        with patch.object(wechat,'release_gate',return_value=SimpleNamespace(require=lambda:None)),patch.object(wechat,'OwnerStore',return_value=store),patch.object(
+        admission=SimpleNamespace(require=lambda:None,runtime=Mock(return_value=object()))
+        with patch.object(wechat,'release_gate',return_value=admission),patch.object(wechat,'OwnerStore',return_value=store),patch.object(
                 wechat.native,'HardwareSigningKey'),patch.object(wechat,'_kernel',return_value=(kernel,registry)),patch.object(
                 wechat,'AuthorityServer',return_value=server),patch('axr_applications.wechat_mcp.attach_windows_mcp') as attach,patch(
                 'axr_applications.wechat_windows_service.WindowsWeChatService',return_value=service):
             result=wechat.create_authority({'state':'unused-fixture','owner_public_key':'fixture','endpoint':'fixture'})
         attach.assert_called_once();self.assertIs(kernel.wechat_service,service)
+        self.assertIs(kernel.windows_admission,admission.runtime.return_value);admission.runtime.assert_called_once()
         result.serve();result.close()
         self.assertEqual(events,['start','serve','service.close','server.close'])

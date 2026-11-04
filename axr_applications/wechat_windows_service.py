@@ -61,6 +61,15 @@ class WindowsWeChatService(WeChatService):
             self.scope_clock=(wall,tick,max(0,expires-wall) if expires else None)
             return result
     def check(self,generation=None):
+        require=getattr(self.kernel,'require_admission',None)
+        if callable(require):
+            try:require()
+            except AXRError:
+                # Stop clears the standing scope and pending content once.
+                # Persisting terminal/Unknown records remains possible.
+                if not getattr(self,'admission_stopped',False):
+                    self.stop();self.admission_stopped=True
+                raise
         super().check(generation)
         if self.scope_clock:
             wall,tick,duration=self.scope_clock
