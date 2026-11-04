@@ -270,6 +270,7 @@ class InstalledContext(EvidenceFixture):
         keys,expected=admission.installed_context(self.anchor)
         self.assertEqual(keys,self.keys);self.assertEqual(expected['configuration'],digest(self.config))
         self.approved['application']['manual_approval_required']=False
+        self.approved['application']['approval_setting_generation']=7
         self.assertEqual(admission.installed_context(self.anchor)[1],expected)
     def test_wrong_host_owner_pin_build_or_pending_navigation_cannot_reach_a_valid_context(self):
         for changes in ({'user':'S-1-5-21-1-2-3-4'},{'app_container':True},{'image':'wrong.exe'}):

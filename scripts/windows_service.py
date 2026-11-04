@@ -6,7 +6,7 @@ from axr import _axr_native as native
 from axr.aet import AXRError
 from .install_authority_windows import administrator,SERVICE
 
-MODES={'serve':'--service','initialize':'--initialize-service','refresh':'--refresh-service','recover':'--recover-service','reconfigure':'--reconfigure-service'}
+MODES={'serve':'--service','initialize':'--initialize-service','refresh':'--refresh-service','recover':'--recover-service','reconfigure':'--reconfigure-service','qualify':'--qualify-service'}
 
 class ServiceController:
     def __init__(self):
@@ -56,7 +56,7 @@ class ServiceController:
         try:
             service=pair[1];self._check(service)
             if api.QueryServiceStatus(service)[1]!=api.SERVICE_STOPPED:raise AXRError('windows_service_must_be_stopped')
-            if mode=='serve':
+            if mode in ('serve','qualify'):
                 from axr.deployment_configuration import read
                 config=read(self.image.parent/'runtime')['deployment']
                 if not (Path(config['state'])/'policy.sealed.json').is_file():raise AXRError('owner_initialization_required')
@@ -91,7 +91,7 @@ class ServiceController:
         finally:self._close(pair)
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('operation',choices=('status','register','initialize','refresh','recover','reconfigure','start','stop'));a=p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('operation',choices=('status','register','initialize','refresh','recover','reconfigure','qualify','start','stop'));a=p.parse_args()
     controller=ServiceController();method={'start':lambda:controller.run(),**{mode:lambda mode=mode:controller.run(mode) for mode in MODES if mode!='serve'}}.get(a.operation)
     print(json.dumps(method() if method else getattr(controller,a.operation)()))
 if __name__=='__main__':main()

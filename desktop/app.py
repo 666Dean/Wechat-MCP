@@ -209,6 +209,24 @@ class Controller(QObject):
         from .windows_lifecycle import admission_request
         self.run('setup_admission_request',admission_request)
     @Slot()
+    def chooseWindowsQualification(self):
+        if self.fixture or sys.platform!='win32':return
+        path,_=QFileDialog.getOpenFileName(None,'选择审查者签署的一次性验收计划',filter='JSON (*.json)')
+        if not path:return
+        from axr_applications.windows_navigation import read_json
+        try:envelope=read_json(path,20000)
+        except Exception:
+            self._notice='验收计划文件无效。';self.noticeChanged.emit();return
+        self._setup_inputs['qualification']=envelope;self._setup_environment['qualification']=Path(path).name;self.setupChanged.emit()
+    @Slot()
+    def runWindowsQualification(self):
+        if self.fixture or sys.platform!='win32':return
+        envelope=self._setup_inputs.get('qualification')
+        if envelope is None:return
+        from .windows_lifecycle import qualify_once
+        self.agent_bridge.stop()
+        self.run('setup_qualification',lambda:qualify_once(envelope))
+    @Slot()
     def installBundledService(self):
         if self.fixture:return
         inputs=dict(self._setup_inputs);selected_package=self._setup_package
@@ -567,7 +585,7 @@ class Controller(QObject):
             return
         if name=='setup_environment':
             self._setup_environment={**value,'key_mode':self._setup_inputs.get('key_mode','file'),
-                **{k:self._setup_environment[k] for k in ('navigation','admission_trust','admission') if k in self._setup_environment},
+                **{k:self._setup_environment[k] for k in ('navigation','admission_trust','admission','qualification') if k in self._setup_environment},
                 'index':self._setup_inputs.get('index',False),
                 'credential':Path(self._setup_inputs['credential']).name if self._setup_inputs.get('credential') else ''}
             self.setupChanged.emit();return
@@ -589,6 +607,10 @@ class Controller(QObject):
         if name=='setup_admission_request':
             self._setup_environment['admission_request']=json.dumps(value,ensure_ascii=False,indent=2)
             self.setupChanged.emit();return
+        if name=='setup_qualification':
+            self._notice=('一次性验收已记录。' if value.get('state')=='Recorded' else '一次性验收结果不确定，不会重试。')+' 服务已停止，旧权限不会恢复；记录不代表正式准入。'
+            self._data.update(connected=False,status={'owner_authorized':False,'automatic_reply':False})
+            self.changed.emit();self.noticeChanged.emit();return
         if name in ('setup_install','setup_login','setup_connect_codex'):self.inspectSetupEnvironment()
         if name in ('setup_initialize','setup_connect_codex','setup_start'):
             if sys.platform=='win32':self.refresh()
@@ -663,7 +685,7 @@ class Controller(QObject):
         self.noticeChanged.emit()
     @Slot()
     def refresh(self):
-        if self.inflight & {'setup_update','setup_stop','setup_refresh_build','setup_correct_credential','setup_navigation','setup_admission'}:return
+        if self.inflight & {'setup_update','setup_stop','setup_refresh_build','setup_correct_credential','setup_navigation','setup_admission','setup_qualification'}:return
         if self.fixture:
             self._data={'connected':False,'status':{'audit_valid':True,'policy_version':1,'listener':{'listen':False,'wake_agent':False,'auto_execute':False},
                 'platform':{'mode':'synthetic_preview','send_available':False}},'jobs':[], 'drafts':[], 'grants':[],

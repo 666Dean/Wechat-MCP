@@ -108,7 +108,7 @@ def installed_context(value):
             raise AXRError('windows_admission_owner_changed')
         # Catalog is refreshed independently; every other approved setting must
         # equal the candidate reviewed by the owner. Pending imports cannot run.
-        strip=lambda app:{k:v for k,v in app.items() if k not in ('resources','conversations','manual_approval_required')}
+        strip=lambda app:{k:v for k,v in app.items() if k not in ('resources','conversations','manual_approval_required','approval_setting_generation')}
         if strip(approved['application'])!=strip(config['application']):raise AXRError('windows_admission_configuration_changed')
         provider=config['application']['codex_provider']
         from axr.rooted import RootedDirectory
@@ -153,6 +153,14 @@ class RuntimeAdmission:
     consumers retain their own actual image/hash and OS identity checks.
     A failed session stays failed even if a file or clock is restored.
     """
+    material_name='windows-admission.json'
+    material_maximum=16000
+
+    def validate_material(self,envelope,wall):
+        result=verify(envelope,self.keys,self.expected,clock=lambda:wall)
+        if not result['qualified']:raise AXRError('security_release_not_qualified')
+        return result
+
     def __init__(self,value,*,clock=time.time,monotonic=time.monotonic):
         self.lock=threading.RLock();self.failed=False
         self.clock,self.monotonic=clock,monotonic
@@ -164,13 +172,12 @@ class RuntimeAdmission:
         self.root=Path(native.windows_installation_root())
         with __import__('contextlib').closing(RootedDirectory(self.root/'runtime')) as directory:
             self.trust_digest=hashlib.sha256(directory.read('admission-trust.json',4096)).hexdigest()
-        self.material=Path(native.windows_data_root())/'windows-admission.json'
+        self.material=Path(native.windows_data_root())/self.material_name
         self.wall,self.tick=clock(),monotonic()
         if any(type(t) not in (int,float) or not math.isfinite(t) for t in (self.wall,self.tick)):
             raise AXRError('windows_admission_session_invalid_restart_required')
-        envelope=read_json(self.material,16000)
-        result=verify(envelope,self.keys,self.expected,clock=lambda:self.wall)
-        if not result['qualified']:raise AXRError('security_release_not_qualified')
+        envelope=read_json(self.material,self.material_maximum)
+        result=self.validate_material(envelope,self.wall)
         self.material_digest=digest(envelope)
         self.deadline=self.tick+result['expires']-self.wall
         # A concurrent import/update between installed_context and the file
@@ -195,9 +202,9 @@ class RuntimeAdmission:
                 with __import__('contextlib').closing(RootedDirectory(self.root/'runtime')) as directory:
                     raw=directory.read('admission-trust.json',4096)
                     if hashlib.sha256(raw).hexdigest()!=self.trust_digest or trust_keys(decode_json(raw))!=self.keys:raise ValueError()
-                envelope=read_json(self.material,16000)
-                if digest(envelope)!=self.material_digest or not verify(envelope,self.keys,self.expected,clock=lambda:wall)['qualified']:
-                    raise ValueError()
+                envelope=read_json(self.material,self.material_maximum)
+                if digest(envelope)!=self.material_digest:raise ValueError()
+                self.validate_material(envelope,wall)
                 self.wall,self.tick=wall,tick
             except Exception:
                 self.failed=True

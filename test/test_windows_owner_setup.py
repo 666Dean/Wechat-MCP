@@ -44,6 +44,20 @@ class OwnerSetup(unittest.TestCase):
     def native_exchange(self,sid,raw):
         self.assertEqual(sid,OWNER)
         return json.dumps({'response':self.response(json.loads(raw)),'identity':self.identity})
+    def test_qualification_source_review_binds_exact_content_before_local_owner_ui(self):
+        from axr_applications import windows_qualification
+        records=[{'reference':'synthetic','text':'Exact synthetic source','data_class':'personal'}]
+        permit={'body':{'plan':{'scenario':'source','target':'fixture-peer'}}}
+        challenge={**self.challenge,'kind':'wechat-owner-qualification-disclosure','expected_public_key':public(self.e.owner).hex(),
+            'build_digest':'b2'*32,'qualification_digest':digest(permit),'records':records,'content_digest':digest(records)}
+        with patch.object(windows_qualification,'installed_permit',return_value=permit),patch.object(native,'review_windows_owner',return_value=False) as ui:
+            with self.assertRaisesRegex(AXRError,'cancelled'):
+                enrollment.respond(self.root,io.BytesIO(canonical(challenge)+b'\n'),lambda _:None)
+            self.assertIn('Exact synthetic source',ui.call_args.args[0]);ui.reset_mock()
+            challenge['content_digest']='00'*32
+            with self.assertRaisesRegex(AXRError,'challenge_invalid'):
+                enrollment.respond(self.root,io.BytesIO(canonical(challenge)+b'\n'),lambda _:None)
+            ui.assert_not_called()
     def test_exchange_requires_real_proof_in_addition_to_native_birth_metadata(self):
         with patch.object(native,'exchange_windows_owner_setup',side_effect=self.native_exchange) as exchange:
             response,actual=enrollment.exchange(self.config,self.challenge,self.root)

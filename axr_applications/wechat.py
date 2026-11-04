@@ -411,7 +411,7 @@ def _resume_windows_owner_setup(config):
         any(p.name not in allowed or p.is_symlink() or p.is_junction() for p in directory.iterdir()))):
         raise AXRError('wechat_initialization_recovery_requires_review')
     with __import__('contextlib').closing(OwnerStore(directory,authority_service=True)) as store:
-        approved=store.config();strip=lambda app:{k:v for k,v in app.items() if k not in ('resources','conversations','manual_approval_required')}
+        approved=store.config();strip=lambda app:{k:v for k,v in app.items() if k not in ('resources','conversations','manual_approval_required','approval_setting_generation')}
         if (approved.get('version')!=2 or strip(approved.get('application',{}))!=strip(config['application']) or
             approved.get('owner_user')!=config['owner_user'] or re.fullmatch('[0-9a-f]{64}',approved.get('enrollment','')) is None or
             re.fullmatch('[0-9a-f]{588}',approved.get('owner_public_key','')) is None):raise AXRError('wechat_initialization_approval_changed')
@@ -451,7 +451,7 @@ def _refresh_windows_owner_build(value,bootstrap):
     if config['state']!=bootstrap.get('state') or config['endpoint']!=bootstrap.get('endpoint'):
         raise AXRError('wechat_build_update_configuration_changed')
     with __import__('contextlib').closing(OwnerStore(config['state'],authority_service=True)) as store:
-        approved=store.config();strip=lambda app:{k:v for k,v in app.items() if k not in ('resources','conversations')}
+        approved=store.config();strip=lambda app:{k:v for k,v in app.items() if k not in ('resources','conversations','manual_approval_required','approval_setting_generation')}
         old,new=strip(approved['application']),strip(config['application']);root=resources_root().parent
         from .windows_navigation import build_update,validate
         if (approved['owner_user']!=config.get('owner_user') or approved['owner_public_key']!=bootstrap.get('owner_public_key') or
@@ -484,7 +484,7 @@ def _refresh_windows_owner_build(value,bootstrap):
         finally:kernel.close()
 
 
-def _windows_kernel(store,signer,owner_public_key,*,initialize=False,enroll_current=True):
+def _windows_kernel(store,signer,owner_public_key,*,initialize=False,enroll_current=True,kernel_type=None):
     config=store.config();application=config['application'];deployment=OwnerDeployment(store.secrets,store.vault)
     registry=PeerRegistry(store,owner_user=config['owner_user'],owner_deployment=deployment)
     # LPAC clients can reach the pipe, but receive no handshake bytes until the
@@ -510,7 +510,7 @@ def _windows_kernel(store,signer,owner_public_key,*,initialize=False,enroll_curr
         return peer
     store.journal.db.execute('CREATE TABLE IF NOT EXISTS wechat_state(name TEXT PRIMARY KEY,payload BLOB)')
     from .windows_admission import WindowsAdmissionKernel
-    kernel=WindowsAdmissionKernel(security,signer,bytes.fromhex(owner_public_key),identity=identity,environment=environment,
+    kernel=(kernel_type or WindowsAdmissionKernel)(security,signer,bytes.fromhex(owner_public_key),identity=identity,environment=environment,
             handler_for=handler,initialize=initialize,recovery_verifier=lambda peer,scope:store.journal.verify_audit(),
             application_tables={'wechat_state':'name'})
     kernel.controller_peer=credential_peer
@@ -667,6 +667,11 @@ def owner_enroll(runtime_root):
     from .wechat_owner import main
     return main(runtime_root)
 
+
+def qualify_once(value):
+    from .windows_qualification import run
+    return run(value)
+
 def owner_control(runtime_root):
     from .windows_owner import main
     return main(runtime_root)
@@ -684,8 +689,11 @@ def validate_runtime():
     import sqlite3
     if os.name=='nt':
         import win32api,win32security,win32file,win32pipe,win32event,win32process,win32service,pywintypes
+        from axr.authority_qualify import main as qualification_entry
+        from .windows_qualification import run as qualification_run
     # No live file, credential lookup, service, GUI or model call is used.
-    return {'formal_native':native.security_release is True,
+    return {**({'windows_qualification_entries':callable(qualification_entry) and callable(qualification_run)} if os.name=='nt' else {}),
+        'formal_native':native.security_release is True,
         'utf8_runtime':__import__('sys').getfilesystemencoding()=='utf-8' and __import__('sys').stdout.encoding.lower().replace('-','')=='utf8',
         'no_fixture_key_constructor':not hasattr(_wechat_credentials,'fixture_consumer') and not hasattr(_wechat_credentials,'fixture_verify_owner_file'),
         'owner_credential_import':hasattr(_wechat_credentials,'import_owner_credentials'),

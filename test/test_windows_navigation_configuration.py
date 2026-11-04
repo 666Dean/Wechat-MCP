@@ -99,6 +99,7 @@ class ReviewedNavigationUpdate(unittest.TestCase):
             helper_sha=hashlib.sha256(Path(config['application']['navigation_helper']).read_bytes()).hexdigest(),endpoint=config['endpoint'])
         approved={**f.approved,'application':{**f.approved['application'],'resources':[
             {'conversation_id':cid} for cid in config['application']['reply_navigation']['profiles']]}}
+        approved['application'].update(manual_approval_required=False,approval_setting_generation=7)
         store=Mock();store.config.return_value=approved;store.close=lambda:None
         kernel=Mock();kernel.integrity.verify.return_value=True;kernel.db.execute.return_value.fetchone.return_value=None
         registry=SimpleNamespace(rows=['old'],path=f.f.root/'peers');store.vault.seal.return_value=b'fixture'
@@ -114,4 +115,5 @@ class ReviewedNavigationUpdate(unittest.TestCase):
             result=wechat.refresh_owner_build(config,{'state':config['state'],'endpoint':config['endpoint'],'owner_public_key':f.key})
         self.assertTrue(result['ledger_retained']);self.assertFalse(result['authority_restored']);self.assertEqual(registry.rows,[])
         sealed=store.seal_config.call_args.args[0];self.assertEqual(sealed['application']['reply_navigation'],config['application']['reply_navigation'])
+        self.assertFalse(sealed['application']['manual_approval_required']);self.assertEqual(sealed['application']['approval_setting_generation'],7)
         self.assertEqual(sealed['owner_public_key'],approved['owner_public_key'])

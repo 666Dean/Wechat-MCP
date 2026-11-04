@@ -127,7 +127,17 @@ def enrollment_key(runtime_root,configuration,challenge):
             if challenge['kind']!='wechat-owner-recovery':raise AXRError('wechat_owner_enrolled_key_pin_required') from None
         else:
             if enrolled_public_key(runtime_root)!=expected:raise AXRError('wechat_owner_public_key_pin_changed')
-        review=('微信代理初始化恢复' if challenge['kind']=='wechat-owner-recovery' else '微信代理构建更新')+'\r\n'+ \
+        if challenge['kind'] in ('wechat-owner-qualification','wechat-owner-qualification-disclosure'):
+            from .windows_qualification import installed_permit
+            permit=installed_permit(runtime_root,configuration)
+            if digest(permit)!=challenge['qualification_digest']:raise AXRError('windows_qualification_changed')
+            if challenge['kind']=='wechat-owner-qualification-disclosure':
+                if (permit['body']['plan']['scenario']!='source' or digest(challenge['records'])!=challenge['content_digest']):raise AXRError('windows_qualification_changed')
+                review='一次性来源模型披露审查\r\n以下精确内容将交给固定隔离模型。取消不会披露，不会重试。\r\n'+json.dumps(
+                    {'target':permit['body']['plan']['target'],'challenge':challenge},ensure_ascii=False,indent=2)
+            else:review='微信代理一次性设备验收\r\n只执行下面精确计划；可能读取私聊、披露给模型或发送一条消息。取消也消耗本次许可，结果不明绝不重试。\r\n'+json.dumps(
+                    {'configuration':configuration,'qualification_plan':permit['body'],'challenge':challenge},ensure_ascii=False,indent=2)
+        else:review=('微信代理初始化恢复' if challenge['kind']=='wechat-owner-recovery' else '微信代理构建更新')+'\r\n'+ \
             '确认本次固定配置与构建。旧任务、授权与发送不会恢复，也不会创建或替换密钥。\r\n'+ \
             json.dumps({'configuration':configuration,'challenge':challenge},ensure_ascii=False,indent=2)
         if len(review.encode('utf-8'))>65536:raise AXRError('owner_enrollment_review_budget')
@@ -149,14 +159,30 @@ def enrollment_key(runtime_root,configuration,challenge):
     return enrolled_key(runtime_root)
 
 
+def sha_records(records,expected):
+    if type(records) is not list or not 1<=len(records)<=6 or len(canonical(records))>24000:return False
+    for row in records:
+        if (type(row) is not dict or not {'reference','text','data_class'}<=set(row) or
+            set(row)-{'reference','text','data_class','context_only','direction'} or row['data_class']!='personal' or
+            type(row['text']) is not str or len(row['text'].encode())>4000 or
+            type(row['reference']) is not str or not 1<=len(row['reference'])<=512 or
+            'context_only' in row and row['context_only'] is not True or
+            'direction' in row and row['direction']!='outgoing-context'):return False
+    return digest(records)==expected
+
+
 def respond(runtime_root,source,emit,*,clock=time.time):
     challenge=frame(source);now=clock()
     try:
         initial=challenge.get('kind')=='wechat-owner-enrollment'
         orphan=challenge.get('kind')=='wechat-owner-orphan-recovery'
-        reviewed=challenge.get('kind') in ('wechat-owner-recovery','wechat-owner-build-update')
+        disclosure=challenge.get('kind')=='wechat-owner-qualification-disclosure'
+        qualification=disclosure or challenge.get('kind')=='wechat-owner-qualification'
+        reviewed=qualification or challenge.get('kind') in ('wechat-owner-recovery','wechat-owner-build-update')
         fields={'version','kind','configuration_digest','nonce','expires'}
         if reviewed:fields|={'expected_public_key','build_digest'}
+        if qualification:fields.add('qualification_digest')
+        if disclosure:fields|={'content_digest','records'}
         if orphan or initial and 'build_digest' in challenge:fields.add('build_digest')
         if (not (initial or orphan or reviewed) or set(challenge)!=fields or
                 type(challenge['version']) is not int or challenge['version']!=2 or
@@ -164,6 +190,8 @@ def respond(runtime_root,source,emit,*,clock=time.time):
                 len(hex_bytes(challenge['configuration_digest'],32))!=32 or
                 type(challenge['expires']) not in (int,float) or not now<challenge['expires']<=now+180):raise ValueError()
         if reviewed and (len(hex_bytes(challenge['expected_public_key'],294))!=294 or len(hex_bytes(challenge['build_digest'],32))!=32):raise ValueError()
+        if qualification and len(hex_bytes(challenge['qualification_digest'],32))!=32:raise ValueError()
+        if disclosure and (not sha_records(challenge['records'],challenge['content_digest'])):raise ValueError()
         if 'build_digest' in challenge and len(hex_bytes(challenge['build_digest'],32))!=32:raise ValueError()
         from axr.deployment_configuration import read
         registration=read(runtime_root)

@@ -92,6 +92,11 @@ Dialog {
                             GlassButton { objectName: "importWindowsAdmission"; text: "验证并导入"; enabled: !!setup.environment.admission && !setup.controller.data.loading; onClicked: admissionConfirm.open() }
                         }
                         Detail { visible: setup.environment.installed===true; Layout.fillWidth: true; text: setup.environment.admission || "尚未选择签名材料"; elide: Text.ElideMiddle }
+                        Detail { visible: setup.environment.installed===true; Layout.fillWidth: true; text: "软件审计完成后，可用独立签署的有限计划开展一次性验收。它可能读取、披露或发送；仍需本人核对精确计划，不开启正式服务。" }
+                        RowLayout { visible: setup.environment.installed===true; Layout.fillWidth: true
+                            GlassButton { objectName: "chooseWindowsQualification"; text: "选择验收计划"; onClicked: setup.controller.chooseWindowsQualification() }
+                            GlassButton { objectName: "runWindowsQualification"; text: "审查并执行一次"; enabled: !!setup.environment.qualification && !setup.controller.data.loading; onClicked: qualificationConfirm.open() }
+                        }
                         TextArea { visible: !!setup.environment.admission_request; Layout.fillWidth: true; readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; textFormat: TextEdit.PlainText; text: setup.environment.admission_request || ""; color: Theme.ink; font.pixelSize: 11 }
                     }
                     Card { Layout.fillWidth: true
@@ -279,6 +284,18 @@ Dialog {
             RowLayout { Layout.alignment: Qt.AlignRight
                 GlassButton { text: "取消"; onClicked: sourceConfirm.close() }
                 GlassButton { text: "核对并更正"; primary: true; onClicked: {sourceConfirm.close();setup.controller.correctWindowsCredential()} }
+            }
+        }
+    }
+    Dialog {
+        id: qualificationConfirm; objectName: "windowsQualificationConfirmation"; anchors.centerIn: parent; modal: true; header: null; padding: 24; width: Math.min(440,setup.width-32)
+        background: Rectangle { radius: 22; color: Theme.dark ? "#2B332E" : "#FFFFFF" }
+        contentItem: ColumnLayout { spacing: 18
+            Copy { text: "执行一次性设备验收？"; font.pixelSize: 20; font.weight: Font.DemiBold }
+            Detail { Layout.fillWidth: true; text: "服务须先停止。计划必须由可信审查者签署并确认软件审计完成；随后由本人核对目标、正文、读取或模型披露，再通过既有身份签名。本次不开放普通 MCP 或自动回复；取消也消耗许可，Unknown 不重试，结束后不恢复授权。" }
+            RowLayout { Layout.alignment: Qt.AlignRight
+                GlassButton { text: "取消"; onClicked: qualificationConfirm.close() }
+                GlassButton { text: "继续本人审查"; primary: true; onClicked: {qualificationConfirm.close();setup.controller.runWindowsQualification()} }
             }
         }
     }

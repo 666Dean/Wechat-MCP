@@ -24,13 +24,19 @@ bool Hex64(const Json& value){return value.is_string()&&value.get_ref<const std:
 void ValidateChallenge(const Json& value){
     bool initial=value.is_object()&&value.value("kind",Json{})=="wechat-owner-enrollment";
     bool orphan=value.is_object()&&value.value("kind",Json{})=="wechat-owner-orphan-recovery";
-    bool reviewed=value.is_object()&&(value.value("kind",Json{})=="wechat-owner-recovery"||value.value("kind",Json{})=="wechat-owner-build-update");
+    bool disclosure=value.is_object()&&value.value("kind",Json{})=="wechat-owner-qualification-disclosure";
+    bool qualification=disclosure||(value.is_object()&&value.value("kind",Json{})=="wechat-owner-qualification");
+    bool reviewed=qualification||(value.is_object()&&(value.value("kind",Json{})=="wechat-owner-recovery"||value.value("kind",Json{})=="wechat-owner-build-update"));
     bool build=orphan||reviewed||(initial&&value.contains("build_digest"));
-    if((!initial&&!orphan&&!reviewed)||value.size()!=(reviewed?7:build?6:5)||!value.contains("version")||!value.at("version").is_number_integer()||value.at("version")!=2||
+    if((!initial&&!orphan&&!reviewed)||value.size()!=(disclosure?10:qualification?8:reviewed?7:build?6:5)||!value.contains("version")||!value.at("version").is_number_integer()||value.at("version")!=2||
        !value.contains("nonce")||!Hex64(value.at("nonce"))||
        !value.contains("configuration_digest")||!Hex64(value.at("configuration_digest"))||!value.contains("expires")||
        !value.at("expires").is_number()||!std::isfinite(value.at("expires").get<double>())||
        value.at("expires").get<double>()<=Now()||value.at("expires").get<double>()>Now()+180)
+        throw std::runtime_error("windows_owner_setup_challenge_invalid");
+    if(qualification&&(!value.contains("qualification_digest")||!Hex64(value.at("qualification_digest"))))throw std::runtime_error("windows_owner_setup_challenge_invalid");
+    if(disclosure&&(!value.contains("content_digest")||!Hex64(value.at("content_digest"))||!value.contains("records")||
+        !value.at("records").is_array()||value.at("records").empty()||value.at("records").size()>6||value.at("records").dump().size()>24000))
         throw std::runtime_error("windows_owner_setup_challenge_invalid");
     if(build&&(!value.contains("build_digest")||!Hex64(value.at("build_digest"))))throw std::runtime_error("windows_owner_setup_challenge_invalid");
     if(reviewed&&(!value.contains("expected_public_key")||

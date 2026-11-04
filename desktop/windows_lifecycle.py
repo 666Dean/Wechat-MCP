@@ -34,6 +34,17 @@ def admission_request():
     registration=installed_configuration();_,expected=review_context(registration)
     return request(expected)
 
+
+def qualify_once(envelope):
+    from axr_applications.windows_admission import review_context
+    from axr_applications.windows_qualification import verify
+    path=Path(native.windows_deployment_configuration());directory=RootedDirectory(path.parent)
+    try:raw=directory.read(path.name,32768)
+    finally:directory.close()
+    registration=json.loads(raw);keys,expected=review_context(registration);verify(envelope,keys,expected)
+    return invoke('qualify',{'envelope':envelope,'owner':registration['deployment']['owner_user'],
+        'expected_configuration':hashlib.sha256(raw).hexdigest()},timeout=720)
+
 def installed_configuration():
     path=Path(native.windows_deployment_configuration());directory=RootedDirectory(path.parent)
     try:config=json.loads(directory.read(path.name,32768))

@@ -80,6 +80,19 @@ class WindowsServiceDesktop(unittest.TestCase):
             self.fixture.visual(w,'prepareWindowsAdmission').clicked.emit();value=run.call_args.args[1]();prepare.assert_called_once()
             c.accept({'name':'setup_admission_request','error':None,'value':value})
         self.assertIn('false',c.setupEnvironment['admission_request'])
+    def test_qualification_button_defaults_to_cancel_and_uses_only_fixed_one_shot_route(self):
+        from PySide6.QtCore import QObject
+        c,w=self.controller,self.window
+        c._setup_environment={'platform':'windows','installed':True,'qualification':'synthetic-plan.json'}
+        c._setup_inputs={'qualification':{'synthetic':'signed-plan'}};c.setupChanged.emit()
+        setup=w.findChild(QObject,'setupDialog');setup.open();setup.setProperty('step',1);QTest.qWait(40);c.fixture=False
+        with patch.object(c,'run') as run,patch('desktop.windows_lifecycle.qualify_once',return_value={}) as qualify:
+            button=self.fixture.visual(w,'runWindowsQualification');self.assertTrue(button.isEnabled());button.clicked.emit();QTest.qWait(20)
+            dialog=w.findChild(QObject,'windowsQualificationConfirmation');self.assertTrue(dialog.property('visible'))
+            dialog.close();run.assert_not_called();qualify.assert_not_called()
+            c.runWindowsQualification();run.call_args.args[1]();qualify.assert_called_once_with(c._setup_inputs['qualification'])
+        c.accept({'name':'setup_qualification','error':None,'value':{'state':'Unknown'}})
+        self.assertFalse(c.data['connected']);self.assertIn('不确定',c.notice)
     def test_explicit_stop_and_review_buttons_use_separate_fixed_service_actions(self):
         from PySide6.QtCore import QObject
         c,w=self.controller,self.window;c._setup_environment={'platform':'windows','installed':True};c.setupChanged.emit()

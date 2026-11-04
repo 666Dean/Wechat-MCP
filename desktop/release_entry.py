@@ -33,8 +33,11 @@ def main():
             from scripts.import_windows_admission import import_material
             from axr_applications.windows_navigation import prepare
             from axr_applications.windows_admission import verify
+            from axr_applications.windows_qualification import run as qualify_run
+            from scripts.run_windows_qualification import run as qualify_stage
+            from desktop.windows_lifecycle import qualify_once
             value['windows_metadata_entries']=all(callable(f) for f in (
-                configure_navigation,admission_request,import_admission,configure,import_material,prepare,verify))
+                configure_navigation,admission_request,import_admission,configure,import_material,prepare,verify,qualify_run,qualify_stage,qualify_once))
         output=sys.argv[sys.argv.index('--check-output')+1] if '--check-output' in sys.argv else None
         if output:Path(output).write_text(json.dumps(value),encoding='utf-8')
         elif sys.stdout:print(json.dumps(value))
