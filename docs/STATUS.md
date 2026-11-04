@@ -1,5 +1,13 @@
 # 功能状态、未完成部分与未知事项
 
+## Windows GitHub 研究与 MSAA 子树（2026-11-04）
+
+新增手动 MSAA 数字角色遍历及合成测试，参考/正式根 CTest 各 6/6；完整 Python 912/871/41（116.613 秒），19 个既有 GC 退出警告保留。实际微信返回 47 节点/0 文本角色，无未知角色、重复对象或预算触达。本人另批一次正确标准读屏参数对照，开启回读成功，RawView 仍 4/0，随后原值 false 已恢复确认。没有重启、注册表/进程内存改动、正文、输入或发送。`fff2714` 的 [CI 41844017148](https://github.com/666Dean/Wechat-MCP/actions/runs/41844017148) 三项已全部成功；本轮新提交的 CI 单独核对。
+
+已按本人要求核对 GitHub 同版本项目，详见[来源、常量纠正和证据边界](WINDOWS_ACCESSIBILITY_RESEARCH.md)。参考的主要恢复方式涉及微信运行内存写入，未执行；静态 DLL/根类相符只提供待验证线索。现有导航假设固定搜索 Edit 已展开且有 ValuePattern，参考项目还报告该版本搜索入口收起/Invoke 无效，安全展开与实际动作模式尚未适配验证。旧软件收尾不等于当前版本兼容，不能概括为只缺部署。普通 gate 仍关闭，安装、初始化、导航绑定和可信签名材料继续缺失。
+
+此次没有产品 Python/QML/运行时修改或新候选；`desktop-device-tree-completeness` 仍为干净 `fff2714` 的 2,395 文件版本，服务仍为 `4372e20`。新原生诊断不加入分发；只有纯合成 COM 用例加入 CTest，绝不自动扫描真实微信。
+
 ## Windows 控件完整性与 RawView（2026-11-04）
 
 干净实现 `fff2714` 的新桌面候选已独立冻结检查：2,395 文件全部哈希、解析器归档字节码与源码、QML、正式 SDK、隔离 EXE 实际启动/中文合成渲染和 1,362 归档项隐私检查通过；实际冻结诊断 Blocked、结构 NotRequested。候选在既有交付根目录的 `desktop-device-tree-completeness`，旧候选保留；服务仍为 `4372e20`，RawView 手动目标不进入分发。新实现 [CI 41844017148](https://github.com/666Dean/Wechat-MCP/actions/runs/41844017148) 最近核对 Mac/native-fuzz 成功、Windows 运行中，不能写成通过。

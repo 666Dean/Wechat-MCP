@@ -4,6 +4,8 @@
 
 ## 导航元数据
 
+当前版本条件补充（2026-11-04）：下述固定路径不负责展开收起的搜索入口，要求搜索 Edit 已存在且支持可读/可写 ValuePattern。GitHub 对同版本报告入口为按钮且 Invoke 无效，这仍需独立适配/设备验证，不能仅补一个路径就当作解决。当前树未暴露输入，禁止导入猜测索引、坐标回退或通过诊断自动激活；详见[研究记录](WINDOWS_ACCESSIBILITY_RESEARCH.md)。
+
 桌面首次设置的“设备导航配置”选择本地 JSON；Windows 安装按钮要求已选配置。文件必须恰好包含 `version=2`、`account_id`、`profiles`、`attribution_prefix`、`attribution_required`。本人从其独立保存的控件元数据准备该文件；本入口不会抓取当前 UI、正文、草稿或搜索记录，也不自动猜测路径。
 
 可参考[完整无账号示例](../examples/windows-navigation.example.json)。其中的 ID、标题、路径和全零程序哈希均为合成占位，不对应任何真实设备；不能据此开始导航或认定微信版本兼容。

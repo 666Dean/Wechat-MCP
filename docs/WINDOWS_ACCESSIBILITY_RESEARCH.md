@@ -1,0 +1,45 @@
+# Windows 微信控件暴露研究
+
+2026-11-04，本人要求必要时寻找 GitHub 项目作为突破口。本记录区分外部源码、当前设备观察和未验证条件，不把其他项目的成功声明作为本项目验收。未安装、导入或执行第三方自动化包；没有复制其实现到产品。
+
+## 已审查的参考
+
+| 来源与固定版本 | 与当前问题有关的实现 | 本项目处理 |
+| --- | --- | --- |
+| [wechatauto-replica / accessibility.py](https://github.com/fanyuantaier/wechatauto-replica/blob/bc2e6f2461330eb1a53996d2f2afc18416376b52/wechatauto/accessibility.py)，`bc2e6f2` | 版本表包含 4.1.15.13；主要恢复路径通过运行进程的内存写入改变 Qt 无障碍标志，再检查 mmui 树 | 仅作待验证机制线索，不执行内存读写、地址扫描或其系统设置回退；该快照有 Apache-2.0 LICENSE，本项目未复制代码 |
+| [同项目 / uia_driver.py](https://github.com/fanyuantaier/wechatauto-replica/blob/bc2e6f2461330eb1a53996d2f2afc18416376b52/wechatauto/uia_driver.py#L869)，同一提交 | 搜索入口可先是按钮，展开后才有 Edit；实现说明该入口 Invoke 无效，使用实际点击，并含坐标回退 | 确认为额外兼容条件。现有固定 ValuePattern 搜索路径没有安全展开分支；不移入坐标点击或模糊选框 |
+| [wechat-notify / wechat_monitor.py](https://github.com/CueBeiXing/wechat-notify/blob/2605806b01b9c226030b4c0a7e4ad6254931c6e1/src/core/wechat_monitor.py#L49)，`2605806` | 设置标准读屏参数，同时修改 Narrator 注册表并建议其他环境修改 | 不运行其初始化/采集器，不接受其持久化组合为本机修复。只在本人另外批准后独立对照标准参数；此树未列 LICENSE，不引入实现 |
+| [cluic/wxauto4](https://github.com/cluic/wxauto4/blob/d0ae14d3e435807b4dead393af9d014529bbac78/README.md)，`d0ae14d` | 当前 README 仅为停止更新说明 | 不用旧版本名称或历史宣传推定当前 4.1.15.13 可用；[wxauto 自身文档](https://docs.wxauto.org/docs/install.html)标注免费版兼容上限 4.1.8.107 |
+
+外部的渲染后端解释也不作为本机根因：此前仅传入临时软件渲染环境，未验证实际后端。完整树出现后，账号/会话身份、草稿/搜索见证、动作模式及签名准入仍需独立验证；不能由参考控件类名直接生成生效导航配置。
+
+## API 常量核验和本机只读对照
+
+上述 replica 快照把读屏 GET/SET 定义成 `0x1046/0x1047`，并在注释中错误解释了另一组常量。按 [Microsoft SystemParametersInfoW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-systemparametersinfow) 和本机 Windows SDK `winuser.h`：
+
+- `SPI_GETSCREENREADER=0x0046`，GET 用 BOOL 指针。
+- `SPI_SETSCREENREADER=0x0047`，开关放在 `uiParam`。
+- `SPI_GETKEYBOARDPREF/SETKEYBOARDPREF=0x0044/0x0045`。不能将 `0x1046` 查询结果当成读屏状态或键盘偏好。
+
+本次前两份私有只读草稿对照的 SPI 字段标注有误，已保留并由 `github-accessibility-verified-constants-20261104.json` 明确替代；不把早期返回成功当作语义正确。没有调用错误 SET 常量。微软还明确说明 [Narrator 不设置此参数](https://learn.microsoft.com/en-us/windows/win32/winauto/screen-reader-parameter)，所以读屏参数为 false 不能推定 Narrator 未运行。
+
+当前精确微信映像仍为 4.1.15.13；Win32 根类为 `Qt51514QWindowIcon`。同安装目录 DLL 版本一致、大小 201,552,944 字节，存在 Qt accessibility 日志标记；参考版本表给出的候选位置落在单个可写 PE 段。这些是只读磁盘/窗口元数据，未打开进程内存，未观察运行标志值、确认代码引用或证明最终根因。私有记录保留二进制完整哈希，公开记录不包含用户/窗口 ID、路径或聊天。
+
+另核对了 [Qt 上游 5.15.2 的 Windows UIA 源码](https://github.com/qt/qtbase/blob/v5.15.2/src/plugins/platforms/windows/uiautomation/qwindowsuiaaccessibility.cpp)：其 WM_GETOBJECT 处理会主动设置 accessibility active。它只是公开上游设计，不是已安装微信二进制的对应源码，不能证明微信执行了该分支或直接将其修改编入微信。当前 DLL 的有限磁盘字符串检查未发现 `QT_ACCESSIBILITY` 或 `--force-renderer-accessibility` 标记，也不能仅凭缺少字符串证明不支持参数；没有因此安排另一次未经验证的参数重启。
+
+## 独立的有限设备实验
+
+1. 新增仅手动运行的 `wechat-msaa-tree-probe <明确选定窗口>`，沿 [AccessibleChildren](https://learn.microsoft.com/en-us/windows/win32/api/oleacc/nf-oleacc-accessiblechildren) 检查数字角色/文本角色状态，不读名称、值、描述、焦点或动作。500 节点/16 层，重复对象、未知角色及截断不作完整结果；严格 COM 失败/不一致拒绝。探针不加入 CTest，不进入正式分发；CTest 只运行独立合成对象。
+2. 先用纯合成 COM 完成 21 项边界检查，再用本测试进程的 Win32 窗口验证真实 MSAA API 能识别 1 个文本角色。8 组无效参数拒绝。参考/正式构建和根 CTest 各 6/6；完整 Python 912 发现、871 执行通过、41 条件跳过（116.613 秒），19 个既有 GC 退出警告保留，导入原生扩展与参考构建哈希一致。
+3. 当前微信精确选窗、用户、PID/birth 及映像前后复核后，MSAA 实际得到 47 个节点（17 个对象、30 个子元素），**0 个文本角色**。数字角色均已知，无重复对象或预算触达。这里只是返回子树的完整有界遍历，不证明它涵盖应用内部控件；26 个按钮角色不证明存在可用搜索/发送动作。
+4. 本人随后单独批准一次临时标准读屏参数实验。私有脚本先通过 25 项合成检查，覆盖成功/原值已开/失败/超时/恢复失败及无初始状态时不操作。实际由 false 开到 true 并回读核对，只调用一次 12 秒期限的既有 RawView 探针；仍为 **4 节点/0 Edit**，无预算触达。随后恢复 false 并回读确认。没有 `SPIF_UPDATEINIFILE`、注册表修改、重启、内存读写、正文、输入或发送；这次明确许可已经使用，不自动重做或扩为其他实验。
+
+新增私有记录为 `msaa-tree-device-20261104.json`、`msaa-tree-synthetic-20261104.json`、`msaa-metadata-full-tests.txt`、`github-accessibility-verified-constants-20261104.json` 和 `screenreader-parameter-device-20261104.json`，保留在既有交付根目录的 verification。测试脚本不作为产品设备计划、签名许可或正式入口分发。
+
+## 当前边界与后续缺口
+
+当前可验证结论是：ControlView、RawView、MSAA 子树及运行中的标准读屏参数切换，均未在已观察条件下暴露可用输入控件。不能认定客户端永久不兼容，也不把其他项目的进程内存写入结果当作本机根因证明。
+
+参考项目提供的同版本机制线索，比继续重复前台/权限/遍历负结果更具体，但其有效路径仍越过当前“不以内存修改/坐标回退伪装通过”的边界。本轮没有执行该路径、修改永久系统设置或再次重启；若改变实验边界，须单独限定并确认具体动作，不能继承这次读屏参数许可。
+
+即使日后恢复 provider，现有适配器仍要求已展开、具有可读/可写 ValuePattern 的固定搜索控件；收起入口的安全展开方式、实际输入与选择模式、账号及稳定私聊身份尚须适配/验证。[历史软件审计](WINDOWS_SOFTWARE_AUDIT.md)不是当前版本兼容证明，不能将这些条件概括为只缺安装。受保护部署、本人初始化、导航绑定、可信审查者与有限签名计划仍未完成，正式 gate 关闭，Unknown 不重发。

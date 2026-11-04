@@ -1,5 +1,9 @@
 # Windows 更新与 AXR 人工回信
 
+## MSAA 子树与 GitHub 参考（2026-11-04）
+
+新增无名称/值/动作的有界 MSAA 角色诊断，当前微信 47 节点/0 文本角色。参考/正式 CTest 各 6/6、完整 Python 912/871/41（116.613 秒）；旧实现 `fff2714` CI 三项已全部成功。按本人要求检查 GitHub 同版本源码，复核 SPI 常量并修正早期只读标注；本人单独批准一次正确标准读屏参数开关对照，RawView 仍为 4/0，原值已恢复确认。无内存写入、持久化设置或重启；当前 provider 与收起搜索入口仍需解决，不能把外部内存补丁/坐标方案当本项目验收。详见[研究及本机证据](WINDOWS_ACCESSIBILITY_RESEARCH.md)。本轮不改产品运行时、不重打候选，正式 gate 仍关闭。
+
 ## 控件树完整性和 RawView（2026-11-04）
 
 修复诊断解析器未标记深度截断的问题，新增严格拓扑核对；有 Edit 的残缺树仍阻塞，中文提示区分节点与层级预算。独立手动 `--raw-view` 统计按 [Microsoft 视图定义](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-treeoverview)核对 ControlView 是否遗漏操作控件；当前实机 RawView 为 4 节点/0 Edit，没有恢复输入。保持原 ControlView 导航/安全边界和已登录状态，不重复已有设备对照。完整 912/871/41、参考/正式 CTest 各 5/5；冻结与设备证据继续分开记录，详见[设备测试](WINDOWS_DEVICE_TEST.md#树完整性与-rawview-检查)。
