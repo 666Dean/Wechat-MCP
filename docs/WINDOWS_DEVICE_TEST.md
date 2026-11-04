@@ -71,3 +71,9 @@ python -m scripts.windows_device_test qualify --permit "<本机对应的已签�
 新增 4 项 Python 回归，定向 13 项通过；完整回归 **912 发现、871 执行通过、41 条件跳过，125.762 秒**，19 个既有 GC 警告保留。参考/正式探针编译通过，根 CTest 各 5/5，125%/150% Qt 各 26 项通过，实际加载原生扩展与参考构建 SHA-256 一致。已有服务包只作未改动夹具，新桌面解析器的独立冻结另记。私有验证目录新增 `uia-raw-device-20261104.json`、`uia-raw-synthetic-20261104.json` 和 `device-tree-completeness-full-tests.txt`，没有覆盖旧结果。
 
 设备链路仍为 Blocked：当前可用输入控件未暴露，且受保护组件/服务、本人配置/初始化、真实导航绑定、独立可信审查者材料及对应有限签名验收计划未完成。诊断不能生成这些签名或替代本人原生审查。下一次敏感设备步骤必须先具备实际部署材料，并由本人完成产品原生认证；本轮没有安装、Hello/TPM、凭据迁移、正文/搜索/草稿读取、输入/发送或联网模型。
+
+### 修复后的桌面候选
+
+实现 `fff271429667aaebdd190fc725170b9cef8a648c` 推送并核对远端后，已从干净工作区构建新的 `desktop-device-tree-completeness` 桌面候选，保存在既有交付根目录；旧 `desktop-device-interface` 保留。2,395 文件全部重算哈希通过，设备解析器的冻结字节码与修复源码一致，QML 与正式 SDK 一致。隔离 EXE 实际启动、中文合成界面、1,362 个 Python 归档项及文件隐私检查通过，已查看合成截图。
+
+已实际调用该新 EXE 的默认诊断，返回 `Blocked`、`structure.state=NotRequested`，没有为验证新包重复 UIA 控件检查。服务组件仍复用未改动的 `4372e20` 包，手动 RawView 探针不分发；不宣称新服务构建、受保护安装或设备验收通过。新增 `device-tree-frozen-preflight.json`、`device-tree-freeze-summary.json` 与独立构建日志，未覆盖已有候选/结果。新实现 CI `41844017148` 最近核对 Mac/native-fuzz 成功、Windows 运行中；交接提交 `2b2f994` 的 `41841446662` 三项均已成功，两个提交的证据不混用。
