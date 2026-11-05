@@ -12,6 +12,7 @@
 #include <map>
 #include <wtsapi32.h>
 #include "SendPolicy.hpp"
+#include "UiaTree.hpp"
 #include "axr/Core.hpp"
 #include "axr/Commit.h"
 #include "axr/WindowsNavigation.hpp"
@@ -25,9 +26,8 @@ static std::string Id(IUIAutomationElement* e){BSTR b=nullptr;if(FAILED(e->get_C
 static std::string Draft(IUIAutomationValuePattern* p){BSTR b=nullptr;if(FAILED(p->get_CurrentValue(&b)))throw std::runtime_error("draft_value_unavailable");auto text=Utf8(b?std::wstring(b,SysStringLen(b)):L"");SysFreeString(b);return text;}
 static std::string Birth(HANDLE process){FILETIME created,exited,kernel,user;if(!GetProcessTimes(process,&created,&exited,&kernel,&user))throw std::runtime_error("wechat_process_birth_unavailable");ULARGE_INTEGER value;value.LowPart=created.dwLowDateTime;value.HighPart=created.dwHighDateTime;return std::to_string(value.QuadPart);}
 static void SetValue(IUIAutomationValuePattern* input,const std::string& text){auto wide=Wide(text);BSTR prepared=SysAllocStringLen(wide.data(),UINT(wide.size()));if(!prepared)throw std::runtime_error("draft_allocation_failed");auto changed=input->SetValue(prepared);SysFreeString(prepared);if(FAILED(changed))throw std::runtime_error("input_prepare_failed");}
-static std::string Role(IUIAutomationElement* e){CONTROLTYPEID t=0;e->get_CurrentControlType(&t);switch(t){case UIA_TextControlTypeId:return "Text";case UIA_EditControlTypeId:return "Edit";case UIA_ListControlTypeId:return "List";case UIA_ButtonControlTypeId:return "Button";default:return "Other";}}
-static std::vector<ComPtr<IUIAutomationElement>> Children(IUIAutomationTreeWalker* walker,IUIAutomationElement* e){std::vector<ComPtr<IUIAutomationElement>> v;ComPtr<IUIAutomationElement> child;walker->GetFirstChildElement(e,&child);while(child&&v.size()<500){v.push_back(child);ComPtr<IUIAutomationElement> next;walker->GetNextSiblingElement(child.Get(),&next);child=next;}return v;}
-static ComPtr<IUIAutomationElement> Path(IUIAutomationTreeWalker* walker,ComPtr<IUIAutomationElement> root,const Json& parts){for(const auto& n:parts){auto children=Children(walker,root.Get());int index=n.get<int>();if(index<0||std::size_t(index)>=children.size())throw std::runtime_error("selector_changed");root=children[index];}return root;}
+static std::string Role(IUIAutomationElement* e){CONTROLTYPEID t=0;if(FAILED(e->get_CurrentControlType(&t)))throw std::runtime_error("uia_role_unavailable");switch(t){case UIA_TextControlTypeId:return "Text";case UIA_EditControlTypeId:return "Edit";case UIA_ListControlTypeId:return "List";case UIA_ButtonControlTypeId:return "Button";default:return "Other";}}
+static ComPtr<IUIAutomationElement> Path(WeChat::UiaTree& tree,ComPtr<IUIAutomationElement> root,const Json& parts){for(const auto& n:parts){auto children=tree.Children(root);int index=n.get<int>();if(index<0||std::size_t(index)>=children.size())throw std::runtime_error("selector_changed");root=children[index];}return root;}
 struct Candidate{std::vector<HWND> windows;};
 static BOOL CALLBACK Enum(HWND window,LPARAM param){DWORD pid=0;GetWindowThreadProcessId(window,&pid);HANDLE p=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);if(!p)return TRUE;wchar_t path[32768];DWORD len=32768;bool ok=QueryFullProcessImageNameW(p,0,path,&len);CloseHandle(p);if(ok&&IsWindowVisible(window)){auto file=std::filesystem::path(std::wstring(path,len)).filename().wstring();if(file==L"WeChat.exe"||file==L"Weixin.exe")reinterpret_cast<Candidate*>(param)->windows.push_back(window);}return TRUE;}
 static bool authorityClaimed=false,sendInvoked=false;
@@ -84,10 +84,11 @@ static Json Main(const Json& req,const Json* authority=nullptr){
     if(!root||!walker)throw std::runtime_error("uia_tree_unavailable");
     // Pre-consent metadata only: no names, values, tree walk, focus or input.
     if(op=="readiness")return {{"running",true},{"ambiguous_process",false},{"accessibility",true}};
+    WeChat::UiaTree tree(automation.Get(),walker.Get());
     Json nodes=Json::array();std::size_t remaining=64000;
     std::function<void(ComPtr<IUIAutomationElement>,Json,unsigned,bool)> walk;
     walk=[&](ComPtr<IUIAutomationElement> node,Json path,unsigned depth,bool read){
-        if(depth>16||nodes.size()>=500)return;auto children=Children(walker.Get(),node.Get());
+        if(depth>16||nodes.size()>=500)return;auto children=tree.Children(node);
         Json item{{"path",path},{"role",Role(node.Get())},{"identifier",Id(node.Get())},{"children",children.size()}};
         if(read){
             auto name=Name(node.Get());
@@ -101,7 +102,7 @@ static Json Main(const Json& req,const Json* authority=nullptr){
     if(op=="structure"){walk(root,Json::array(),0,false);return {{"nodes",nodes},{"pid",pid},{"text_redacted",true}};}
     if(authority&&op=="binding"){
         Authority(*authority);
-        if(Value(Path(walker.Get(),root,req.at("account_path")).Get())!=req.at("expected_account").get<std::string>())throw std::runtime_error("runtime_account_witness_changed");
+        if(Value(Path(tree,root,req.at("account_path")).Get())!=req.at("expected_account").get<std::string>())throw std::runtime_error("runtime_account_witness_changed");
         Authority(*authority,true);
         auto binding=authority->at("visual_binding");
         binding["expected_pid"]=pid;binding["window_id"]=reinterpret_cast<std::uintptr_t>(window);binding["process_birth"]=birth;
@@ -124,15 +125,15 @@ static Json Main(const Json& req,const Json* authority=nullptr){
                     {"operations",op=="send_text"?Json::array({"messages.send"}):Json::array({"messages.read","messages.search"})}};
         if(op=="send_text")scope["text"]=req.at("text");
         if(!axr_check_scoped_commit(control.at("store").get<std::string>().c_str(),control.at("proof").get<std::string>().c_str(),scope.dump().c_str()))throw std::runtime_error("authority_or_requested_scope_changed");}
-        if(op!="navigate"&&Value(Path(walker.Get(),root,req.at("header_path")).Get())!=req.at("expected_title").get<std::string>())throw std::runtime_error("target_identity_changed");
+        if(op!="navigate"&&Value(Path(tree,root,req.at("header_path")).Get())!=req.at("expected_title").get<std::string>())throw std::runtime_error("target_identity_changed");
         DWORD current=0;GetWindowThreadProcessId(window,&current);if(current!=pid)throw std::runtime_error("application_epoch_changed");
         if(authority){HANDLE currentProcess=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);if(!currentProcess)throw std::runtime_error("application_epoch_changed");std::string currentBirth;try{currentBirth=Birth(currentProcess);}catch(...){CloseHandle(currentProcess);throw;}CloseHandle(currentProcess);if(currentBirth!=birth)throw std::runtime_error("application_epoch_changed");}
-        if(boundTarget){BOOL same=FALSE;auto fresh=Path(walker.Get(),root,req.at("path"));if(FAILED(automation->CompareElements(boundTarget.Get(),fresh.Get(),&same))||!same)throw std::runtime_error("control_epoch_changed");}
+        if(boundTarget){BOOL same=FALSE;auto fresh=Path(tree,root,req.at("path"));if(FAILED(automation->CompareElements(boundTarget.Get(),fresh.Get(),&same))||!same)throw std::runtime_error("control_epoch_changed");}
         if(op=="send_text"||op=="read"||authority){
             for(auto pair:{std::pair{"account_path","expected_account"},std::pair{"identity_path","expected_identity"}}){
                 if(op=="navigate"&&std::string(pair.first)=="identity_path")continue;
                 auto expected=req.at(pair.second).get<std::string>();
-                if(expected.empty()||Value(Path(walker.Get(),root,req.at(pair.first)).Get())!=expected)throw std::runtime_error("stable_identity_witness_changed");
+                if(expected.empty()||Value(Path(tree,root,req.at(pair.first)).Get())!=expected)throw std::runtime_error("stable_identity_witness_changed");
             }
         }
         if(authority){
@@ -152,26 +153,26 @@ static Json Main(const Json& req,const Json* authority=nullptr){
     };
     verify();
     if(authority&&op=="navigate"){
-        auto search=Path(walker.Get(),root,req.at("search_path"));ComPtr<IUIAutomationValuePattern> input;
+        auto search=Path(tree,root,req.at("search_path"));ComPtr<IUIAutomationValuePattern> input;
         if(FAILED(search->GetCurrentPatternAs(UIA_ValuePatternId,IID_PPV_ARGS(&input))))throw std::runtime_error("search_input_unavailable");
         // Preserve the user's unfinished search as well as their chat draft.
         if(!Draft(input.Get()).empty())throw std::runtime_error("existing_search_never_overwrite");
         verify();Authority(*authority,true);auto query=req.at("text").get<std::string>();currentForeground();SetValue(input.Get(),query);
         if(Draft(input.Get())!=query)throw std::runtime_error("search_query_echo_changed");
-        verify();auto selected=Path(walker.Get(),root,req.at("search_result_path"));
+        verify();auto selected=Path(tree,root,req.at("search_result_path"));
         if(Value(selected.Get())!=req.at("search_result_title").get<std::string>())throw std::runtime_error("search_result_label_changed");
         ComPtr<IUIAutomationSelectionItemPattern> selection;ComPtr<IUIAutomationInvokePattern> invoke;
         bool select=SUCCEEDED(selected->GetCurrentPatternAs(UIA_SelectionItemPatternId,IID_PPV_ARGS(&selection)));
         if(!select&&FAILED(selected->GetCurrentPatternAs(UIA_InvokePatternId,IID_PPV_ARGS(&invoke))))throw std::runtime_error("search_result_action_unavailable");
-        verify();BOOL same=FALSE;auto fresh=Path(walker.Get(),root,req.at("search_result_path"));
+        verify();BOOL same=FALSE;auto fresh=Path(tree,root,req.at("search_result_path"));
         if(FAILED(automation->CompareElements(selected.Get(),fresh.Get(),&same))||!same||Draft(input.Get())!=query)throw std::runtime_error("search_result_epoch_changed");
         currentForeground();auto status=select?selection->Select():invoke->Invoke();if(FAILED(status))throw std::runtime_error("search_selection_unknown");
         verify();
-        if(Value(Path(walker.Get(),root,req.at("header_path")).Get())!=req.at("expected_title").get<std::string>()||
-           Value(Path(walker.Get(),root,req.at("identity_path")).Get())!=req.at("expected_identity").get<std::string>())throw std::runtime_error("selected_conversation_witness_changed");
+        if(Value(Path(tree,root,req.at("header_path")).Get())!=req.at("expected_title").get<std::string>()||
+           Value(Path(tree,root,req.at("identity_path")).Get())!=req.at("expected_identity").get<std::string>())throw std::runtime_error("selected_conversation_witness_changed");
         return {{"navigation_invoked",true},{"query_echo_match",true},{"main_window_verified",true},{"send_invoked",false},{"content_disclosed",false}};
     }
-    auto target=Path(walker.Get(),root,req.at("path"));boundTarget=target;verify();
+    auto target=Path(tree,root,req.at("path"));boundTarget=target;verify();
     if(authority){
         auto text=req.at("text").get<std::string>();
         ComPtr<IUIAutomationValuePattern> input;
@@ -196,9 +197,9 @@ static Json Main(const Json& req,const Json* authority=nullptr){
         }
         if(op=="commit_draft"){
             if(Draft(input.Get())!=text)throw std::runtime_error("exact_draft_required");
-            auto send=Path(walker.Get(),root,req.at("send_path"));ComPtr<IUIAutomationInvokePattern> invoke;
+            auto send=Path(tree,root,req.at("send_path"));ComPtr<IUIAutomationInvokePattern> invoke;
             if(FAILED(send->GetCurrentPatternAs(UIA_InvokePatternId,IID_PPV_ARGS(&invoke))))throw std::runtime_error("send_action_unavailable");
-            verify();BOOL same=FALSE;auto current=Path(walker.Get(),root,req.at("send_path"));
+            verify();BOOL same=FALSE;auto current=Path(tree,root,req.at("send_path"));
             if(FAILED(automation->CompareElements(send.Get(),current.Get(),&same))||!same||Draft(input.Get())!=text)
                 throw std::runtime_error("draft_or_send_control_changed");
             // Claim only after both exact-input comparisons, immediately before
@@ -216,20 +217,20 @@ static Json Main(const Json& req,const Json* authority=nullptr){
         if(FAILED(target->GetCurrentPatternAs(UIA_ValuePatternId,IID_PPV_ARGS(&input)))||!Draft(input.Get()).empty())throw std::runtime_error("input_unavailable_or_existing_draft");
         std::function<unsigned(ComPtr<IUIAutomationElement>,unsigned)> matches;
         unsigned visited=0;
-        matches=[&](ComPtr<IUIAutomationElement> node,unsigned depth){if(depth>12||++visited>1500)throw std::runtime_error("message_witness_budget_exceeded");unsigned count=Value(node.Get())==text?1:0;for(auto& child:Children(walker.Get(),node.Get()))count+=matches(child,depth+1);return count;};
-        auto before=matches(Path(walker.Get(),root,req.at("messages_path")),0);verify();
+        matches=[&](ComPtr<IUIAutomationElement> node,unsigned depth){if(depth>12||++visited>1500)throw std::runtime_error("message_witness_budget_exceeded");unsigned count=Value(node.Get())==text?1:0;for(auto& child:tree.Children(node))count+=matches(child,depth+1);return count;};
+        auto before=matches(Path(tree,root,req.at("messages_path")),0);verify();
         auto wide=Wide(text);BSTR prepared=SysAllocStringLen(wide.data(),UINT(wide.size()));
         if(!prepared)throw std::runtime_error("draft_allocation_failed");
         HRESULT changed=input->SetValue(prepared);SysFreeString(prepared);
         if(FAILED(changed)||Draft(input.Get())!=text)throw std::runtime_error("draft_prepare_failed");
-        verify();auto send=Path(walker.Get(),root,req.at("send_path"));ComPtr<IUIAutomationInvokePattern> invoke;
+        verify();auto send=Path(tree,root,req.at("send_path"));ComPtr<IUIAutomationInvokePattern> invoke;
         if(FAILED(send->GetCurrentPatternAs(UIA_InvokePatternId,IID_PPV_ARGS(&invoke))))throw std::runtime_error("send_action_unavailable");
-        verify();BOOL same=FALSE;auto freshSend=Path(walker.Get(),root,req.at("send_path"));
+        verify();BOOL same=FALSE;auto freshSend=Path(tree,root,req.at("send_path"));
         if(FAILED(automation->CompareElements(send.Get(),freshSend.Get(),&same))||!same)throw std::runtime_error("send_control_epoch_changed");
         if(Draft(input.Get())!=text)throw std::runtime_error("draft_changed_before_commit");
         if(FAILED(invoke->Invoke()))throw std::runtime_error("send_action_unavailable");
         auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(2);
-        while(std::chrono::steady_clock::now()<deadline){verify();visited=0;if(Draft(input.Get()).empty()&&matches(Path(walker.Get(),root,req.at("messages_path")),0)>before)
+        while(std::chrono::steady_clock::now()<deadline){verify();visited=0;if(Draft(input.Get()).empty()&&matches(Path(tree,root,req.at("messages_path")),0)>before)
             return {{"verified",true},{"witness","new_client_bubble_and_empty_draft"},{"delivery_confirmed",false}};
             std::this_thread::sleep_for(std::chrono::milliseconds(50));}
         return {{"verified",false},{"invoked",true},{"delivery_confirmed",false}};
