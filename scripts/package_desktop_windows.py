@@ -99,11 +99,20 @@ def build(output,components,qt):
     datas=[(str(p),'desktop') for p in (ROOT/'desktop').iterdir() if p.suffix in ('.qml','.svg') or p.name=='qmldir']
     datas += [(str(components),'authority-components'),(str(inputs/'licenses'),'licenses')]
     binaries=[(str(p),'.') for p in components.iterdir() if p.suffix.lower()=='.dll']
+    formal_native={}
+    for package,pattern in (('axr','_axr_native*.pyd'),('axr_applications','_wechat_credentials*.pyd')):
+        matches=list((runtime/package).glob(pattern))
+        if len(matches)!=1:raise ValueError('windows_desktop_formal_native_required')
+        formal_native[package+'/'+matches[0].name]=str(matches[0])
     spec=inputs/'windows.spec'
     spec.write_text(f'''a=Analysis([{str(ROOT/'desktop/release_entry.py')!r}],pathex={[str(runtime),str(ROOT)]!r},binaries={binaries!r},datas={datas!r},
  hiddenimports=['PySide6.QtQuick','PySide6.QtQuickControls2','PySide6.QtSvg','PySide6.QtNetwork','PySide6.QtOpenGL','win32com.shell.shell','win32timezone','scripts.install_authority_windows','scripts.windows_service','scripts.configure_windows_navigation','scripts.import_windows_admission','desktop.windows_setup','desktop.windows_provisioning','desktop.windows_lifecycle','axr_applications.windows_navigation','axr_applications.windows_admission','mcp.client.stdio'],
  excludes=['pytest','numpy','scipy','torch','pandas','matplotlib','tkinter','PyQt5','PyQt6','wx','wxauto4','apsw'])
 a.datas=[e for e in a.datas if not e[0].replace(chr(92),'/').endswith('.dist-info/direct_url.json')]
+# Module graph package discovery can still prefer the repository for desktop
+# imports. Pin the two collected extension sources to the reviewed package.
+formal_native={formal_native!r}
+a.binaries=[(e[0],formal_native.get(e[0].replace(chr(92),'/'),e[1]),e[2]) for e in a.binaries]
 # Qt uses the Windows OS unversioned ICU API. A vcpkg icuuc.dll on the
 # builder PATH has version-suffixed exports and breaks Qt import. Never
 # redistribute or shadow this OS component with that unrelated ICU runtime.
