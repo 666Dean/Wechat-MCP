@@ -35,6 +35,14 @@ class NativeContent(unittest.TestCase):
     def test_actual_native_hash_cache_rechecks_same_size_and_reset_mtime(self):
         self.verify();before=self.code.stat();self.code.write_bytes(b'modified fixture code');os.utime(self.code,ns=(before.st_atime_ns,before.st_mtime_ns))
         with self.assertRaisesRegex(RuntimeError,'build_changed'):self.verify()
+    def test_repeated_fast_updates_never_reuse_a_metadata_only_digest(self):
+        # Windows ChangeTime is not a unique content generation. Fast writes can
+        # share the complete old timestamp tuple; every check must see bytes.
+        for attempt in range(32):
+            with self.subTest(attempt=attempt):
+                self.code.write_bytes(b'original fixture code');self.verify();before=self.code.stat()
+                self.code.write_bytes(b'modified fixture code');os.utime(self.code,ns=(before.st_atime_ns,before.st_mtime_ns))
+                with self.assertRaisesRegex(RuntimeError,'build_changed'):self.verify()
     def test_no_unreviewed_code_links_or_parent_escape_is_accepted(self):
         self.verify();extra=self.root/'extra.dll';extra.write_bytes(b'new fixture code')
         with self.assertRaisesRegex(RuntimeError,'unreviewed_file'):self.verify()

@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 #include "axr/WindowsInstallation.hpp"
 #include "axr/Security.hpp"
-#include <map>
-#include <mutex>
 #include <set>
 #include <array>
 #include <fstream>
@@ -32,15 +30,13 @@ namespace {
 std::string FileDigest(const std::filesystem::path& path){
     using WindowsInteractiveHost::Handle;
     Handle file(CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,nullptr));
-    BY_HANDLE_FILE_INFORMATION info{};FILE_BASIC_INFO basic{};
-    if(file.value==INVALID_HANDLE_VALUE||!GetFileInformationByHandle(file.value,&info)||!GetFileInformationByHandleEx(file.value,FileBasicInfo,&basic,sizeof(basic))||
+    BY_HANDLE_FILE_INFORMATION info{};
+    if(file.value==INVALID_HANDLE_VALUE||!GetFileInformationByHandle(file.value,&info)||
         info.nNumberOfLinks!=1||(info.dwFileAttributes&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||info.nFileSizeHigh||info.nFileSizeLow>512u*1024*1024)
         throw std::runtime_error("authority_installation_file_invalid");
-    std::vector<uint64_t> stamp={info.dwVolumeSerialNumber,info.nFileIndexHigh,info.nFileIndexLow,info.nFileSizeLow,
-        uint64_t(basic.CreationTime.QuadPart),uint64_t(basic.ChangeTime.QuadPart),uint64_t(basic.LastWriteTime.QuadPart)};
-    static std::mutex mutex;static std::map<std::filesystem::path,std::pair<std::vector<uint64_t>,std::string>> cache;
-    std::lock_guard lock(mutex);auto previous=cache.find(path);
-    if(previous!=cache.end()&&previous->second.first==stamp)return previous->second.second;
+    // Windows timestamps can be identical across same-size content changes.
+    // Metadata is not a content version: always hash this held read-only file,
+    // whose share mode excludes ordinary concurrent writers/deleters.
     auto context=EVP_MD_CTX_new();if(!context)throw std::runtime_error("authority_installation_hash_failed");
     struct Release{EVP_MD_CTX* value;~Release(){EVP_MD_CTX_free(value);}} release{context};
     if(EVP_DigestInit_ex(context,EVP_sha256(),nullptr)!=1)throw std::runtime_error("authority_installation_hash_failed");
@@ -50,7 +46,7 @@ std::string FileDigest(const std::filesystem::path& path){
     unsigned char hash[32];unsigned length=0;
     if(total!=info.nFileSizeLow||EVP_DigestFinal_ex(context,hash,&length)!=1||length!=32)throw std::runtime_error("authority_installation_hash_failed");
     const char* digits="0123456789abcdef";std::string value;for(auto byte:hash){value+=digits[byte>>4];value+=digits[byte&15];}
-    if(cache.size()>20000)cache.clear();cache[path]={std::move(stamp),value};return value;
+    return value;
 }
 void Protected(const std::filesystem::path& path,bool ancestor){
     auto attributes=GetFileAttributesW(path.c_str());
