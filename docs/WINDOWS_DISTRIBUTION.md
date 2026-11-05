@@ -40,6 +40,16 @@
 
 停止后的更新保留原状态目录和精确 Hello 公钥固定，不复制旧连接身份或恢复授权。旧代码保留为受保护备份；新构建需要固定 owner 窗口审查和既有 Hello 签名。更新在审查前撤销旧权限；取消也不会恢复。安装和更新都不修改 Codex 全局配置。
 
+## ProgramData 祖先目录兼容性
+
+2026-11-06：本人授权通过现有 API 部署。正式安装入口已完成受保护组件与旁置配置安装；后续配置校验在本机 `ProgramData` 的 Users `0x116` ACE 上拒绝。该 ACE 含创建文件/目录、写扩展属性与写属性，没有删除子项、删除目录、改 ACL 或所有者权限。先前对所有祖先沿用应用对象的属性写拒绝，造成安装完成却无法继续初始化。未修改系统目录 ACL。
+
+Windows 原生 ACL 校验现独立为可测试策略。仅对保护对象的祖先排除四个具体权限位 `FILE_ADD_FILE`、`FILE_ADD_SUBDIRECTORY`、`FILE_WRITE_EA`、`FILE_WRITE_ATTRIBUTES`；`FILE_DELETE_CHILD`、`DELETE`、`WRITE_DAC`、`WRITE_OWNER`、`GENERIC_WRITE`、`GENERIC_ALL` 继续拒绝非受信主体。应用代码根、应用数据根、配置文件和全部代码内容仍使用完整写拒绝；应用数据根此次显式作为保护对象，不能套用祖先规则。所有者信任、未知 ACE、重解析点、链接与逐文件内容核对保持原规则。
+
+微软分别定义了[目录与文件的具体访问权限](https://learn.microsoft.com/en-us/windows/win32/fileio/file-access-rights-constants)；创建旁置项和修改祖先元数据不等于对已保护子项的访问权。这里的祖先含有不可由普通用户删除/替换的保护子项，因此不能被清空；[FSCTL_SET_REPARSE_POINT](https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/fsctl-set-reparse-point) 对非空目录拒绝设置重解析点。路径本身仍逐级检查重解析点，不接受已有重定向。
+
+新增 46 项由 Windows 解析真实 SDDL 的合成判断，覆盖本机 ACE、保护对象拒绝、六类危险权限及组合、受信/非受信所有者、NULL DACL 与仅继承 ACE。参考/正式全目标构建与根 CTest 各 8/8 通过；配置完整原生夹具后的 Python 全量 913/872/41（117.095 秒），19 个既有 GC 警告保留。新正式 SDK 在独立进程只读验证实际安装、部署路径和原配置一致；未运行本人初始化、凭据原生导入、模型或微信业务。新包更新和后续设备结果单独记录，不能用旧安装器成功或本次 ACL 修复宣称服务/设备通过。
+
 ## 原生凭据迁移
 
 Windows 已实现 `import_owner_credentials`。文件格式可以是 64 位 hex 原始页密钥、`{"keys": {"<salt hex>": "<key hex>"}}`，或显式带 `version: 1`、`key_mode: "raw"/"password"` 的盐映射。向导也可显式指定纯 hex 文件解释方式，不改写或在 Python 中解析原文件；与 JSON 内声明冲突时拒绝。口令模式按每个 salt 做 PBKDF2-HMAC-SHA512/256000；不猜测模式。原生层核对文件哈希、类型、单链接、预算及所有分库的实际解密，先验证所有目标及既有凭据冲突，再写入 System 原生凭据库。OS 写入中断可以留下相同的部分项，重跑不得替换冲突项。没有原始 key 返回 Python/MCP。

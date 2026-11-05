@@ -13,6 +13,7 @@
 #include <shlobj.h>
 #include <wincred.h>
 #include "WindowsInteractiveHost.hpp"
+#include "WindowsInstallationAcl.hpp"
 #endif
 namespace Stellaria::AXR {
 std::filesystem::path WindowsInstallationRoot(){
@@ -56,25 +57,8 @@ void Protected(const std::filesystem::path& path,bool ancestor){
     auto status=GetNamedSecurityInfoW(path.c_str(),SE_FILE_OBJECT,OWNER_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION,
         &owner,nullptr,&acl,nullptr,&descriptor);
     struct Release {PSECURITY_DESCRIPTOR value;~Release(){if(value)LocalFree(value);}} release{descriptor};
-    struct InstallerSid {PSID value=nullptr;
-        InstallerSid(){if(!ConvertStringSidToSidW(L"S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",&value))
-            throw std::runtime_error("authority_installation_acl_unavailable");}
-        ~InstallerSid(){if(value)LocalFree(value);}};
-    static const InstallerSid installer;
-    auto trusted=[&](PSID sid){return sid&&(IsWellKnownSid(sid,WinLocalSystemSid)||IsWellKnownSid(sid,WinBuiltinAdministratorsSid)||EqualSid(sid,installer.value));};
     if(status!=ERROR_SUCCESS||!acl)throw std::runtime_error("authority_installation_acl_unavailable");
-    if(!trusted(owner))throw std::runtime_error("authority_installation_not_protected");
-    for(DWORD i=0;i<acl->AceCount;++i){void* raw=nullptr;
-        if(!GetAce(acl,i,&raw))throw std::runtime_error("authority_installation_not_protected");
-        auto header=static_cast<ACE_HEADER*>(raw);
-        if((header->AceFlags&INHERIT_ONLY_ACE)||header->AceType==ACCESS_DENIED_ACE_TYPE)continue;
-        if(header->AceType!=ACCESS_ALLOWED_ACE_TYPE)throw std::runtime_error("authority_installation_not_protected");
-        auto ace=static_cast<ACCESS_ALLOWED_ACE*>(raw);
-        DWORD writes=FILE_WRITE_DATA|FILE_APPEND_DATA|FILE_WRITE_EA|FILE_WRITE_ATTRIBUTES|FILE_DELETE_CHILD|
-            DELETE|WRITE_DAC|WRITE_OWNER|GENERIC_WRITE|GENERIC_ALL;
-        if(ancestor)writes&=~(FILE_WRITE_DATA|FILE_APPEND_DATA); // Creating a sibling does not replace this protected directory.
-        if((ace->Mask&writes)&&!trusted(&ace->SidStart))throw std::runtime_error("authority_installation_not_protected");
-    }
+    WindowsInstallationAcl::Verify(owner,acl,ancestor);
 }
 }
 #endif
@@ -141,9 +125,11 @@ std::filesystem::path WindowsDataRoot(){
 }
 std::filesystem::path WindowsDeploymentConfiguration(){
 #if defined(_WIN32)
-    auto path=WindowsDataRoot()/L"deployment.json";
+    auto root=WindowsDataRoot();auto path=root/L"deployment.json";
     for(auto node=path;!node.empty();node=node.parent_path()){
-        Protected(node,node!=path);if(node==node.root_path())break;
+        // The application-owned data directory remains a protected target;
+        // only its OS-managed ancestors receive the ancestor ACL policy.
+        Protected(node,node!=path&&node!=root);if(node==node.root_path())break;
     }
     if(!std::filesystem::is_regular_file(path)||std::filesystem::file_size(path)>32768)
         throw std::runtime_error("authority_deployment_configuration_invalid");
