@@ -12,6 +12,8 @@
 
 ## 公开运行时
 
+2026-11-06 桌面打包补充：桌面 Python 搜索路径原先只固定正式 SDK；源码目录存在参考原生消费者时，PyInstaller 可能将其收集为桌面模块。首个 ACL 桌面候选经独立哈希核对被拒绝且未安装。打包现在同时固定服务包的 `axr` 与 `axr_applications`，对两个输出原生扩展检查唯一性和哈希；运行检查确认凭据模块没有合成夹具入口。该检查只验证分发来源，不访问凭据或授予运行资格，修正后的新候选独立生成验证。
+
 `python -m scripts.package_authority_windows` 从正式 Release 构建生成新的暂存目录。必需参数为 `--build`、`--dependencies`、`--output`、`--vc-runtime` 和 `--vc-notice`。输出目录必须不存在；VC 参数指向本人构建工具的 x64 CRT 目录和发行说明。
 
 打包前独立加载正式 SDK/消费者，验证普通宿主不能取得凭据、来源执行或修改身份查询 ACL。包包含固定 authority/owner/frontend/验证宿主、UIA、隔离 Python 3.12、应用源码、pywin32、Zstandard、SQLCipher 及所需运行库和许可证。静态解析 AMD64 PE 的普通/延迟导入，只从显式构建/依赖目录解析非系统 DLL；不使用调用者 PATH，也不把缺失依赖视为成功。同名 SQLite 固定为一份 vcpkg 运行库，并通过真实嵌入式 Python 检查。

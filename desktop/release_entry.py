@@ -43,11 +43,14 @@ def main():
             from scripts.windows_device_test import main as device_main
             value['windows_metadata_entries']=all(callable(f) for f in (
                 configure_navigation,admission_request,import_admission,configure,import_material,prepare,verify,qualify_run,qualify_stage,qualify_once,inspect_device,device_main))
+            from axr_applications import _wechat_credentials as consumer
+            value['windows_formal_consumer']=(callable(getattr(consumer,'import_owner_credentials',None))
+                and not hasattr(consumer,'fixture_consumer') and not hasattr(consumer,'fixture_verify_owner_file'))
         output=sys.argv[sys.argv.index('--check-output')+1] if '--check-output' in sys.argv else None
         if output:Path(output).write_text(json.dumps(value),encoding='utf-8')
         elif sys.stdout:print(json.dumps(value))
         required=('security_release','qml','icon','canonical','components','chinese_glyphs')+(
-            ('windows_metadata_entries',) if sys.platform=='win32' else ())
+            ('windows_metadata_entries','windows_formal_consumer') if sys.platform=='win32' else ())
         return 0 if all(value[k] is True for k in required) else 2
     from desktop.app import main as desktop_main
     desktop_main()

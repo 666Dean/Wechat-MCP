@@ -89,8 +89,10 @@ def build(output,components,qt):
     reviewed=review(components)
     inputs=output/'inputs';inputs.mkdir(parents=True)
     runtime=inputs/'runtime';runtime.mkdir()
-    # SDK Python and native extension must both come from the formal build.
-    shutil.copytree(components/'runtime/packages/axr',runtime/'axr')
+    # Both native modules must come from the reviewed formal package. Ignored
+    # in-tree extensions can belong to the reference build used by tests.
+    for package in ('axr','axr_applications'):
+        shutil.copytree(components/'runtime/packages'/package,runtime/package)
     notices(inputs/'licenses',components,qt)
     from desktop.app_icon import windows_icon
     icon=windows_icon(ROOT/'desktop/icon.svg',inputs/'WeChatMCP.ico')
@@ -114,9 +116,11 @@ coll=COLLECT(exe,a.binaries,a.datas,strip=False,upx=False,name='WeChatMCP')
         check=True,cwd=ROOT,env={**os.environ,'PYTHONHASHSEED':'0'})
     app=output/'dist/WeChatMCP';executable=app/'WeChatMCP.exe'
     # PyInstaller hooks must not silently replace our formal native SDK.
-    expected=next((runtime/'axr').glob('_axr_native*.pyd'))
-    actual=next((app/'_internal/axr').glob('_axr_native*.pyd'))
-    if hashlib.sha256(expected.read_bytes()).digest()!=hashlib.sha256(actual.read_bytes()).digest():raise ValueError('windows_desktop_sdk_mismatch')
+    for package,pattern in (('axr','_axr_native*.pyd'),('axr_applications','_wechat_credentials*.pyd')):
+        expected=list((runtime/package).glob(pattern));actual=list((app/'_internal'/package).glob(pattern))
+        if (len(expected)!=1 or len(actual)!=1 or
+                hashlib.sha256(expected[0].read_bytes()).digest()!=hashlib.sha256(actual[0].read_bytes()).digest()):
+            raise ValueError('windows_desktop_formal_native_mismatch')
     checks={**check_runtime(app,output),'privacy':inspect_privacy(app)}
     revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
     dirty=bool(subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True))
