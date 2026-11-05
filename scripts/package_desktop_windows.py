@@ -113,7 +113,8 @@ exe=EXE(pyz,a.scripts,[],exclude_binaries=True,name='WeChatMCP',debug=False,stri
 coll=COLLECT(exe,a.binaries,a.datas,strip=False,upx=False,name='WeChatMCP')
 ''',encoding='utf8')
     subprocess.run([sys.executable,'-m','PyInstaller','--noconfirm','--distpath',str(output/'dist'),'--workpath',str(output/'work'),str(spec)],
-        check=True,cwd=ROOT,env={**os.environ,'PYTHONHASHSEED':'0'})
+        check=True,cwd=ROOT,env={**os.environ,'PYTHONHASHSEED':'0',
+            'PYTHONPATH':os.pathsep.join((str(runtime),str(ROOT)))})
     app=output/'dist/WeChatMCP';executable=app/'WeChatMCP.exe'
     # PyInstaller hooks must not silently replace our formal native SDK.
     for package,pattern in (('axr','_axr_native*.pyd'),('axr_applications','_wechat_credentials*.pyd')):
