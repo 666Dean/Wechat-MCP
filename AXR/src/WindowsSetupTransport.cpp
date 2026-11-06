@@ -43,7 +43,7 @@ void Send(HANDLE pipe,const Json& value,const Deadline& deadline,bool serverPeer
 Json Receive(HANDLE pipe,size_t maximum,const Deadline& deadline,bool serverPeer,const Json& expected){
     if(maximum>MaximumFrameBytes)Denied();Stable(pipe,serverPeer,expected);std::string raw(maximum+1,'\0');
     auto size=Transfer(pipe,raw.data(),DWORD(raw.size()),false,deadline);if(size>maximum)Denied();raw.resize(size);
-    auto value=ParseBounded(raw);if(value.dump()!=raw)Denied();Stable(pipe,serverPeer,expected);return value;
+    auto value=ParseBounded(raw);if(value.dump()!=raw)Denied("windows_owner_setup_noncanonical_frame");Stable(pipe,serverPeer,expected);return value;
 }
 }
 #endif

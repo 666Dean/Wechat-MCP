@@ -5,7 +5,6 @@
 // Callers must first verify their protected host and installed fixed executable.
 // A lifetime JobObject provides cleanup, not agent isolation or authority.
 #include "WindowsSetupTransport.hpp"
-#include "WindowsChildDiagnostics.hpp"
 #include "axr/Security.hpp"
 #include <sddl.h>
 #include <wtsapi32.h>
@@ -65,11 +64,10 @@ inline std::vector<wchar_t> Environment(HANDLE token,const std::filesystem::path
 }
 struct Child {
     Handle process,thread,job;DWORD pid=0;Json identity;
-    std::unique_ptr<WindowsChildDiagnostics::Capture> diagnostics;
     ~Child(){if(process.value){if(WaitForSingleObject(process.value,0)!=WAIT_OBJECT_0)TerminateProcess(process.value,1);
         job.Reset();WaitForSingleObject(process.value,5000);}}
 };
-inline void Launch(Child& child,const Sid& owner,const std::filesystem::path& root,const std::filesystem::path& executable,std::wstring arguments,const Deadline& deadline,std::string_view expectedSha={},bool diagnosticStderr=false){
+inline void Launch(Child& child,const Sid& owner,const std::filesystem::path& root,const std::filesystem::path& executable,std::wstring arguments,const Deadline& deadline,std::string_view expectedSha={}){
     deadline.Remaining();
     Privilege tcb(L"SeTcbPrivilege"),assign(L"SeAssignPrimaryTokenPrivilege"),quota(L"SeIncreaseQuotaPrivilege");
     auto token=UserToken(owner);auto environment=Environment(token.value,root);
@@ -77,12 +75,10 @@ inline void Launch(Child& child,const Sid& owner,const std::filesystem::path& ro
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};limits.BasicLimitInformation.LimitFlags=JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     if(!SetInformationJobObject(child.job.value,JobObjectExtendedLimitInformation,&limits,sizeof(limits)))HostDenied();
     auto command=L"\""+executable.wstring()+L"\" "+arguments;
-    std::wstring desktop=L"winsta0\\default";STARTUPINFOEXW startup{};startup.StartupInfo.cb=sizeof(STARTUPINFOW);startup.StartupInfo.lpDesktop=desktop.data();PROCESS_INFORMATION info{};
-    if(diagnosticStderr){child.diagnostics=std::make_unique<WindowsChildDiagnostics::Capture>();child.diagnostics->Configure(startup);}
+    std::wstring desktop=L"winsta0\\default";STARTUPINFOW startup{};startup.cb=sizeof(startup);startup.lpDesktop=desktop.data();PROCESS_INFORMATION info{};
     deadline.Remaining();
-    if(!CreateProcessAsUserW(token.value,executable.c_str(),command.data(),nullptr,nullptr,diagnosticStderr,
-            CREATE_SUSPENDED|CREATE_NO_WINDOW|CREATE_UNICODE_ENVIRONMENT|(diagnosticStderr?EXTENDED_STARTUPINFO_PRESENT:0),environment.data(),root.c_str(),&startup.StartupInfo,&info))HostDenied();
-    if(child.diagnostics)child.diagnostics->ParentStarted();
+    if(!CreateProcessAsUserW(token.value,executable.c_str(),command.data(),nullptr,nullptr,FALSE,
+            CREATE_SUSPENDED|CREATE_NO_WINDOW|CREATE_UNICODE_ENVIRONMENT,environment.data(),root.c_str(),&startup,&info))HostDenied();
     child.process=Handle(info.hProcess);child.thread=Handle(info.hThread);child.pid=info.dwProcessId;
     if(!AssignProcessToJobObject(child.job.value,child.process.value))HostDenied();
     child.identity=ProcessIdentity(child.pid);if(Utf8Path(child.identity.at("image").get<std::string>())!=executable)HostDenied();

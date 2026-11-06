@@ -18,4 +18,8 @@ inline Json Record(int action,std::string_view failure,double finished,unsigned 
         {"result",failure.empty()?"Completed":"Failed"},
         {"error_code",failure.empty()?Json(nullptr):Json(ErrorCode(failure))},{"finished",finished},{"pid",pid}};
 }
+inline Json OwnerRecord(std::string_view failure,double finished,unsigned long pid){
+    auto record=Record(-1,failure.empty()?"authority_operation_failed":failure,finished,pid);
+    record["operation"]="owner-bootstrap";return record;
+}
 }

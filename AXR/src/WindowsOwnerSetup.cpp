@@ -99,8 +99,7 @@ Json ExchangeWindowsOwnerSetup(std::string ownerSid,const Json& challenge){
     auto pipe=Pipe(Utf8Path(endpoint).wstring(),ownerSid);
     descriptor.Write({{"version",2},{"kind","windows-owner-setup"},{"endpoint",endpoint},{"nonce",nonce},
         {"expires",challenge.at("expires")},{"server",server},{"owner_user",ownerSid},{"configuration_digest",challenge.at("configuration_digest")}});
-    Child child;Launch(child,sid,root,root/L"axr-owner.exe",L"--owner-enroll",deadline,{},true);if(child.identity.at("user")!=ownerSid)Denied("windows_owner_setup_owner_identity_mismatch");
-    try{
+    Child child;Launch(child,sid,root,root/L"axr-owner.exe",L"--owner-enroll",deadline);if(child.identity.at("user")!=ownerSid)Denied("windows_owner_setup_owner_identity_mismatch");
     Connect(pipe.value,deadline);Stable(pipe.value,false,child.identity);
     if(Receive(pipe.value,32768,deadline,false,child.identity)!=Json{{"version",2},{"kind","owner-setup.open"},{"nonce",nonce}})Denied("windows_owner_setup_open_frame_invalid");
     Send(pipe.value,{{"version",2},{"kind","owner-setup.challenge"},{"nonce",nonce},{"challenge",challenge}},deadline,false,child.identity);
@@ -108,12 +107,6 @@ Json ExchangeWindowsOwnerSetup(std::string ownerSid,const Json& challenge){
     if(!packet.is_object()||packet.size()!=4||packet.at("version")!=2||packet.at("kind")!="owner-setup.response"||packet.at("nonce")!=nonce)Denied("windows_owner_setup_response_frame_invalid");
     Send(pipe.value,{{"version",2},{"kind","owner-setup.received"},{"nonce",nonce},{"authority_restored",false}},deadline,false,child.identity);
     return {{"response",packet.at("response")},{"identity",child.identity}};
-    }catch(...){
-        // Interpret only a failed fixed child's bounded machine-code stderr.
-        // Authentication and the failed exchange remain authoritative.
-        if(child.diagnostics){auto code=child.diagnostics->Failure(child.process.value);if(!code.empty())throw std::runtime_error(code);}
-        throw;
-    }
 #else
     throw std::runtime_error("windows_owner_setup_required");
 #endif
@@ -128,21 +121,21 @@ WindowsOwnerSetupClient::WindowsOwnerSetupClient():impl_(std::make_unique<Impl>(
 #if defined(_WIN32)
     auto owner=Host(false);auto value=ParseBounded(Read(InstalledRoot()/L"runtime"/L"owner-bootstrap.json",8192));
     if(!value.is_object()||value.size()!=8||value.at("version")!=2||value.at("kind")!="windows-owner-setup"||
-       value.at("owner_user")!=owner.at("user")||!Hex64(value.at("nonce"))||!Hex64(value.at("configuration_digest")))Denied();
+       value.at("owner_user")!=owner.at("user")||!Hex64(value.at("nonce"))||!Hex64(value.at("configuration_digest")))Denied("windows_owner_setup_descriptor_invalid");
     auto endpoint=value.at("endpoint").get<std::string>();constexpr std::string_view prefix="\\\\.\\pipe\\Stellaria.AXR.Setup.";
-    if(endpoint.rfind(prefix,0)!=0||endpoint.size()!=prefix.size()+32||endpoint.substr(prefix.size()).find_first_not_of("0123456789abcdef")!=std::string::npos)Denied();
-    auto expires=value.at("expires").get<double>();if(!std::isfinite(expires)||expires<=Now()||expires>Now()+180)Denied();
+    if(endpoint.rfind(prefix,0)!=0||endpoint.size()!=prefix.size()+32||endpoint.substr(prefix.size()).find_first_not_of("0123456789abcdef")!=std::string::npos)Denied("windows_owner_setup_endpoint_invalid");
+    auto expires=value.at("expires").get<double>();if(!std::isfinite(expires)||expires<=Now()||expires>Now()+180)Denied("windows_owner_setup_descriptor_expired");
     impl_->deadline=std::make_unique<Deadline>(expires);impl_->server=value.at("server");impl_->nonce=value.at("nonce");
-    if(impl_->server.at("user")!="S-1-5-18"||Utf8Path(impl_->server.at("image").get<std::string>())!=InstalledRoot()/L"axr-authority.exe")Denied();
+    if(impl_->server.at("user")!="S-1-5-18"||Utf8Path(impl_->server.at("image").get<std::string>())!=InstalledRoot()/L"axr-authority.exe")Denied("windows_owner_setup_authority_descriptor_invalid");
     impl_->pipe=Handle(CreateFileW(Utf8Path(endpoint).c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,
         FILE_FLAG_OVERLAPPED|SECURITY_SQOS_PRESENT|SECURITY_ANONYMOUS,nullptr));
-    if(impl_->pipe.value==INVALID_HANDLE_VALUE)Denied();DWORD mode=PIPE_READMODE_MESSAGE;
-    if(!SetNamedPipeHandleState(impl_->pipe.value,&mode,nullptr,nullptr))Denied();Stable(impl_->pipe.value,true,impl_->server);
+    if(impl_->pipe.value==INVALID_HANDLE_VALUE)throw std::runtime_error("windows_owner_setup_open_os_"+std::to_string(GetLastError()));DWORD mode=PIPE_READMODE_MESSAGE;
+    if(!SetNamedPipeHandleState(impl_->pipe.value,&mode,nullptr,nullptr))throw std::runtime_error("windows_owner_setup_mode_os_"+std::to_string(GetLastError()));Stable(impl_->pipe.value,true,impl_->server);
     Send(impl_->pipe.value,{{"version",2},{"kind","owner-setup.open"},{"nonce",impl_->nonce}},*impl_->deadline,true,impl_->server);
     auto packet=Receive(impl_->pipe.value,32768,*impl_->deadline,true,impl_->server);
-    if(packet.size()!=4||packet.at("version")!=2||packet.at("kind")!="owner-setup.challenge"||packet.at("nonce")!=impl_->nonce)Denied();
+    if(packet.size()!=4||packet.at("version")!=2||packet.at("kind")!="owner-setup.challenge"||packet.at("nonce")!=impl_->nonce)Denied("windows_owner_setup_challenge_frame_invalid");
     impl_->challenge=packet.at("challenge");ValidateChallenge(impl_->challenge);
-    if(impl_->challenge.at("expires")!=value.at("expires")||impl_->challenge.at("configuration_digest")!=value.at("configuration_digest"))Denied();
+    if(impl_->challenge.at("expires")!=value.at("expires")||impl_->challenge.at("configuration_digest")!=value.at("configuration_digest"))Denied("windows_owner_setup_challenge_descriptor_mismatch");
 #else
     throw std::runtime_error("windows_owner_setup_required");
 #endif
@@ -156,9 +149,9 @@ void WindowsOwnerSetupClient::Close(){
 Json WindowsOwnerSetupClient::Challenge()const{return impl_->challenge;}
 void WindowsOwnerSetupClient::Respond(const Json& response){
 #if defined(_WIN32)
-    if(impl_->responded)Denied();impl_->responded=true;
+    if(impl_->responded)Denied("windows_owner_setup_response_already_finished");impl_->responded=true;
     Send(impl_->pipe.value,{{"version",2},{"kind","owner-setup.response"},{"nonce",impl_->nonce},{"response",response}},*impl_->deadline,true,impl_->server);
-    if(Receive(impl_->pipe.value,32768,*impl_->deadline,true,impl_->server)!=Json{{"version",2},{"kind","owner-setup.received"},{"nonce",impl_->nonce},{"authority_restored",false}})Denied();
+    if(Receive(impl_->pipe.value,32768,*impl_->deadline,true,impl_->server)!=Json{{"version",2},{"kind","owner-setup.received"},{"nonce",impl_->nonce},{"authority_restored",false}})Denied("windows_owner_setup_acknowledgement_invalid");
 #else
     (void)response;throw std::runtime_error("windows_owner_setup_required");
 #endif

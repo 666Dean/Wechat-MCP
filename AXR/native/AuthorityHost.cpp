@@ -259,6 +259,17 @@ int main(int argc,char** argv){
     }catch(const std::exception& e){
 #if defined(_WIN32)
         auto error=WindowsServiceResult::ErrorCode(e.what());
+#ifdef AXR_OWNER_HOST
+        // Session 0 cannot inherit handles into an interactive session. Keep
+        // the launch handle-free; publish only bounded failure metadata via
+        // the OS Application log. This never changes the failed exit status.
+        try{
+            auto record=WindowsServiceResult::OwnerRecord(lastErrorCode.empty()?error:lastErrorCode,Now(),GetCurrentProcessId()).dump();
+            std::wstring text(record.begin(),record.end());LPCWSTR strings[]={text.c_str()};
+            auto event=RegisterEventSourceW(nullptr,L"StellariaAXROwner");
+            if(event){ReportEventW(event,EVENTLOG_ERROR_TYPE,0,1,nullptr,1,0,strings,nullptr);DeregisterEventSource(event);}
+        }catch(...){/* Optional diagnostics cannot replace the failed result. */}
+#endif
 #else
         auto error=std::string(e.what());
 #endif

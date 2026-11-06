@@ -21,5 +21,10 @@ int main(){
     assert(success.at("result")=="Completed"&&success.at("error_code").is_null());
     assert(Record(5,"owner_hardware_enrollment_required",1,1).at("operation")=="qualify");
     assert(Record(-1,"native_error",1,1).at("operation")=="unknown");
+    auto owner=OwnerRecord("identity_token_unavailable",1234.5,42);
+    assert(owner.size()==6&&owner.at("operation")=="owner-bootstrap"&&owner.at("result")=="Failed");
+    assert(owner.at("error_code")=="identity_token_unavailable"&&owner.at("pid")==42&&owner.at("finished")==1234.5);
+    for(auto raw:{"", "C:\\private\\credential.key", "private message", "wxid_private_account"})
+        assert(OwnerRecord(raw,1,1).at("error_code")=="authority_operation_failed");
     std::cout<<"bounded service machine codes, privacy rejection and advisory outcomes passed; no service started\n";
 }
