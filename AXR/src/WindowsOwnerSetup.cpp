@@ -99,7 +99,8 @@ Json ExchangeWindowsOwnerSetup(std::string ownerSid,const Json& challenge){
     auto pipe=Pipe(Utf8Path(endpoint).wstring(),ownerSid);
     descriptor.Write({{"version",2},{"kind","windows-owner-setup"},{"endpoint",endpoint},{"nonce",nonce},
         {"expires",challenge.at("expires")},{"server",server},{"owner_user",ownerSid},{"configuration_digest",challenge.at("configuration_digest")}});
-    Child child;Launch(child,sid,root,root/L"axr-owner.exe",L"--owner-enroll",deadline);if(child.identity.at("user")!=ownerSid)Denied("windows_owner_setup_owner_identity_mismatch");
+    Child child;Launch(child,sid,root,root/L"axr-owner.exe",L"--owner-enroll",deadline,{},true);if(child.identity.at("user")!=ownerSid)Denied("windows_owner_setup_owner_identity_mismatch");
+    try{
     Connect(pipe.value,deadline);Stable(pipe.value,false,child.identity);
     if(Receive(pipe.value,32768,deadline,false,child.identity)!=Json{{"version",2},{"kind","owner-setup.open"},{"nonce",nonce}})Denied("windows_owner_setup_open_frame_invalid");
     Send(pipe.value,{{"version",2},{"kind","owner-setup.challenge"},{"nonce",nonce},{"challenge",challenge}},deadline,false,child.identity);
@@ -107,6 +108,12 @@ Json ExchangeWindowsOwnerSetup(std::string ownerSid,const Json& challenge){
     if(!packet.is_object()||packet.size()!=4||packet.at("version")!=2||packet.at("kind")!="owner-setup.response"||packet.at("nonce")!=nonce)Denied("windows_owner_setup_response_frame_invalid");
     Send(pipe.value,{{"version",2},{"kind","owner-setup.received"},{"nonce",nonce},{"authority_restored",false}},deadline,false,child.identity);
     return {{"response",packet.at("response")},{"identity",child.identity}};
+    }catch(...){
+        // Interpret only a failed fixed child's bounded machine-code stderr.
+        // Authentication and the failed exchange remain authoritative.
+        if(child.diagnostics){auto code=child.diagnostics->Failure(child.process.value);if(!code.empty())throw std::runtime_error(code);}
+        throw;
+    }
 #else
     throw std::runtime_error("windows_owner_setup_required");
 #endif

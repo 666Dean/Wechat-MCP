@@ -256,5 +256,11 @@ int main(int argc,char** argv){
         if(argc!=2||std::string_view(argv[1])!="--serve")throw std::runtime_error("authority_fixed_entrypoint_required");
         return Serve();
 #endif
-    }catch(const std::exception& e){std::cerr<<Json{{"error",e.what()},{"authority_started",false}}.dump()<<'\n';return 1;}
+    }catch(const std::exception& e){
+#if defined(_WIN32)
+        auto error=WindowsServiceResult::ErrorCode(e.what());
+#else
+        auto error=std::string(e.what());
+#endif
+        std::cerr<<Json{{"error",error},{"authority_started",false}}.dump()<<'\n';return 1;}
 }

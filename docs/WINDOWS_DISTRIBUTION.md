@@ -70,6 +70,8 @@ Windows 原生 ACL 校验现独立为可测试策略。仅对保护对象的祖�
 
 ## 原生凭据迁移
 
+2026-11-06 初始化排障补充：`c8ca4f0` 已实际更新，随后一次登记仍为 FailedSafe/`windows_owner_setup_io_os_109`，没有凭据迁移成功证据。为避免管道关闭遮蔽 owner 错误，setup 子程序现在使用显式句柄列表，只继承私有 stderr 和 NUL；只在握手已失败且其非零退出后解释最多 4096 字节、最多两条严格 JSON 的筛选机器码。兼容 Windows CRT 的 CRLF，不接受原文、路径、额外字段、成功或仍运行状态。该通道仅解释既有失败，不代替对端身份、Hello、签名、成功或授权判定。
+
 Windows 已实现 `import_owner_credentials`。文件格式可以是 64 位 hex 原始页密钥、`{"keys": {"<salt hex>": "<key hex>"}}`，或显式带 `version: 1`、`key_mode: "raw"/"password"` 的盐映射。向导也可显式指定纯 hex 文件解释方式，不改写或在 Python 中解析原文件；与 JSON 内声明冲突时拒绝。口令模式按每个 salt 做 PBKDF2-HMAC-SHA512/256000；不猜测模式。原生层核对文件哈希、类型、单链接、预算及所有分库的实际解密，先验证所有目标及既有凭据冲突，再写入 System 原生凭据库。OS 写入中断可以留下相同的部分项，重跑不得替换冲突项。没有原始 key 返回 Python/MCP。
 
 旧 keyring 迁移明确绑定登记 owner SID 的唯一活动会话，用该登录 token 进行局部原生 `CredReadW`，只接受对应名称及有效 base64 格式，返回前恢复线程身份。没有 Python 回调在模拟身份下执行；缺少该会话/凭据时不回退 System 或其他用户。实现依据 [WTSQueryUserToken](https://learn.microsoft.com/en-us/windows/win32/api/wtsapi32/nf-wtsapi32-wtsqueryusertoken) 和 [CredReadW 的登录会话语义](https://learn.microsoft.com/windows/win32/api/wincred/nf-wincred-credreadw)。本轮未获取 token 或读取真实 keyring；正向证据目前限于原生文件导入的加密合成库，跨用户迁移须随后独立验收。
