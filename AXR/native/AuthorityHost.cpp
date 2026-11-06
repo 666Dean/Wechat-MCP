@@ -176,9 +176,12 @@ int Serve(bool initialize=false,bool ownerControl=false,bool refresh=false,bool 
         auto text=value?PyObject_Str(value):nullptr;auto raw=text?PyUnicode_AsUTF8(text):nullptr;
         std::string code=raw?raw:"authority_operation_failed";
         if(code.empty()||code.size()>100||code.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")!=std::string::npos)code="authority_operation_failed";
-        lastErrorCode=code;
         std::string kind=type&&PyType_Check(type)?reinterpret_cast<PyTypeObject*>(type)->tp_name:"RuntimeError";
         if(kind.size()>80||kind.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.")!=std::string::npos)kind="RuntimeError";
+#if defined(_WIN32) && defined(AXR_OWNER_HOST)
+        code=WindowsServiceResult::OwnerPythonCode(code,kind);
+#endif
+        lastErrorCode=code;
         std::cerr<<Json{{"error_code",code},{"exception_type",kind}}.dump()<<'\n';
         Py_XDECREF(text);Py_XDECREF(type);Py_XDECREF(value);Py_XDECREF(trace);
 #ifdef AXR_VALIDATION_HOST

@@ -17,6 +17,12 @@ int main(){
     assert(ErrorCode("hardware_signing_failed")=="hardware_signing_failed");
     assert(ErrorCode("identity_token_unavailable")=="identity_token_unavailable");
     assert(ErrorCode("ipc_peer_unavailable")=="ipc_peer_unavailable");
+    assert(ErrorCode("hello_provider_unavailable")=="hello_provider_unavailable");
+    assert(OwnerRecord("hello_enrollment_failed_or_unavailable",1,1).at("error_code")=="hello_enrollment_failed_or_unavailable");
+    assert(OwnerPythonCode("hello_provider_unavailable","RuntimeError")=="hello_provider_unavailable");
+    assert(OwnerPythonCode("C:\\private\\credential.key","PermissionError")=="owner_bootstrap_permission_error");
+    assert(OwnerPythonCode("'private field'","KeyError")=="owner_bootstrap_key_error");
+    assert(OwnerPythonCode("private message","private_type")=="authority_operation_failed");
     auto success=Record(1,"",1,1);
     assert(success.at("result")=="Completed"&&success.at("error_code").is_null());
     assert(Record(5,"owner_hardware_enrollment_required",1,1).at("operation")=="qualify");

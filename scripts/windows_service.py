@@ -63,7 +63,7 @@ class ServiceController:
                 type(value['pid']) is not int or not 0<value['pid']<2**32 or type(value['finished']) not in (int,float) or
                 not math.isfinite(value['finished']) or not started<=value['finished']<=time.time() or
                 type(value['error_code']) is not str or len(value['error_code'])>100 or
-                re.fullmatch(r'(authority|windows|wechat|wcdb|owner|rooted|setup|source|native|task|protected|credential|hardware|integrity|identity|ipc)_[a-z0-9_]+',value['error_code']) is None):return None
+                re.fullmatch(r'(authority|windows|wechat|wcdb|owner|rooted|setup|source|native|task|protected|credential|hardware|integrity|identity|ipc|hello)_[a-z0-9_]+',value['error_code']) is None):return None
             return value['error_code']
         except Exception:return None
     def run(self,mode='serve',*,timeout=240):

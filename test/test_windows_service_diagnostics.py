@@ -34,7 +34,7 @@ class ServiceDiagnostics(unittest.TestCase):
         self.assertEqual(self.read(), 'windows_owner_setup_launch_failed')
         for code in ('protected_store_access_denied', 'credential_import_failed',
                 'hardware_signing_failed', 'integrity_check_failed',
-                'identity_token_unavailable', 'ipc_peer_unavailable'):
+                'identity_token_unavailable', 'ipc_peer_unavailable', 'hello_provider_unavailable'):
             with self.subTest(code=code):
                 self.assertEqual(self.read(error_code=code), code)
 

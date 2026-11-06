@@ -56,6 +56,8 @@ Windows 原生 ACL 校验现独立为可测试策略。仅对保护对象的祖�
 
 ## 服务错误回执
 
+2026-11-06 后续：事件版服务已实际更新，真正初始化仍失败，已在 OS Application 日志采集到 owner-bootstrap 失败元数据。先前白名单遗漏原生现有 `hello_` 码族，通道因此仍可能只显示通用码；现补齐该族，并仅把无法保留原文的常见 Python 异常映射为固定类别。已知机器码保留，未知类名、路径及字段名不导出；不改变实际失败或认证/准入。新包的具体 owner 错误另行采集。
+
 2026-11-06：本人继续后已实际完成修复版更新，服务登记为按需启动、当前停止；但首次初始化在本人审查/Hello 窗口出现前退出，SCM 只提供 1066/1。服务进程没有可用的调用者 stderr，因此原先无法据此区分具体失败原因。更新后的 MCP stdio 启动仍为 `0xC0000022`，没有取得初始化或业务响应。
 
 原生固定宿主退出时生成有界、仅元数据的回执：操作、Completed/Failed、筛选机器码、结束时间与进程号。异常路径、换行、任意消息、账号样式及纯 hex 值不导出；非已知前缀或超预算异常变成固定通用码，不记录 stdout、审查正文、凭据或 traceback。回执仅写固定保护数据目录的 `service-last-result.json`，同时用 [RegisterEventSourceW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-registereventsourcew) / [ReportEventW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-reporteventw) 向本机 Application 日志写同一份筛选后的元数据，没有更改事件源注册表或系统 ACL。日志写入失败不改变实际终态。
