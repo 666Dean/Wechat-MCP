@@ -54,6 +54,14 @@ Windows 原生 ACL 校验现独立为可测试策略。仅对保护对象的祖�
 
 新增 46 项由 Windows 解析真实 SDDL 的合成判断，覆盖本机 ACE、保护对象拒绝、六类危险权限及组合、受信/非受信所有者、NULL DACL 与仅继承 ACE。参考/正式全目标构建与根 CTest 各 8/8 通过；配置完整原生夹具后的 Python 全量 913/872/41（117.095 秒），19 个既有 GC 警告保留。新正式 SDK 在独立进程只读验证实际安装、部署路径和原配置一致；未运行本人初始化、凭据原生导入、模型或微信业务。新包更新和后续设备结果单独记录，不能用旧安装器成功或本次 ACL 修复宣称服务/设备通过。
 
+## 服务错误回执
+
+2026-11-06：本人继续后已实际完成修复版更新，服务登记为按需启动、当前停止；但首次初始化在本人审查/Hello 窗口出现前退出，SCM 只提供 1066/1。服务进程没有可用的调用者 stderr，因此原先无法据此区分具体失败原因。更新后的 MCP stdio 启动仍为 `0xC0000022`，没有取得初始化或业务响应。
+
+原生固定宿主退出时生成有界、仅元数据的回执：操作、Completed/Failed、筛选机器码、结束时间与进程号。异常路径、换行、任意消息、账号样式及纯 hex 值不导出；非已知前缀或超预算异常变成固定通用码，不记录 stdout、审查正文、凭据或 traceback。回执仅写固定保护数据目录的 `service-last-result.json`，同时用 [RegisterEventSourceW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-registereventsourcew) / [ReportEventW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-reporteventw) 向本机 Application 日志写同一份筛选后的元数据，没有更改事件源注册表或系统 ACL。日志写入失败不改变实际终态。
+
+控制器仅在 SCM 已报告失败时，才允许使用严格字段、4096 字节预算、同一模式及本次开始/当前时间范围内的失败回执解释错误。缺失、损坏、过期、未来、其他模式、额外字段或伪造成功记录均退回原通用失败；该文件不参与身份认证、签名、权限、准入或成功判定。合成检查不启动真实服务、不改变系统日志或认证状态。两套根 CTest 各 9/9、相关 Python 14 项以及最终完整 917/876/41（117.446 秒）通过；首次全量的既有异步用例超时保留在私有验证记录，复测未放宽断言。真实错误原因仍须新包部署后单独采集。
+
 ## 原生凭据迁移
 
 Windows 已实现 `import_owner_credentials`。文件格式可以是 64 位 hex 原始页密钥、`{"keys": {"<salt hex>": "<key hex>"}}`，或显式带 `version: 1`、`key_mode: "raw"/"password"` 的盐映射。向导也可显式指定纯 hex 文件解释方式，不改写或在 Python 中解析原文件；与 JSON 内声明冲突时拒绝。口令模式按每个 salt 做 PBKDF2-HMAC-SHA512/256000；不猜测模式。原生层核对文件哈希、类型、单链接、预算及所有分库的实际解密，先验证所有目标及既有凭据冲突，再写入 System 原生凭据库。OS 写入中断可以留下相同的部分项，重跑不得替换冲突项。没有原始 key 返回 Python/MCP。

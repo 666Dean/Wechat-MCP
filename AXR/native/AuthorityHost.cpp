@@ -18,6 +18,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include <aclapi.h>
+#include "../src/WindowsServiceResult.hpp"
 #endif
 using namespace Stellaria::AXR;
 namespace {
@@ -195,9 +196,28 @@ void WINAPI Control(DWORD code){if(code==SERVICE_CONTROL_STOP){serviceStatus.dwC
 void WINAPI ServiceMain(DWORD,LPWSTR*){
     serviceHandle=RegisterServiceCtrlHandlerW(L"StellariaAXRAuthority",Control);if(!serviceHandle)return;
     serviceStatus.dwServiceType=SERVICE_WIN32_OWN_PROCESS;serviceStatus.dwControlsAccepted=SERVICE_ACCEPT_STOP;serviceStatus.dwCurrentState=SERVICE_RUNNING;SetServiceStatus(serviceHandle,&serviceStatus);
-    try{Serve(serviceAction==1||serviceAction==3||serviceAction==4,false,serviceAction==2,serviceAction==3,serviceAction==4,serviceAction==5);}catch(...){
-        if(!(serviceAction==1&&lastErrorCode=="authority_already_initialized")){
-            serviceStatus.dwWin32ExitCode=ERROR_SERVICE_SPECIFIC_ERROR;serviceStatus.dwServiceSpecificExitCode=1;}}
+    std::string failure;
+    try{Serve(serviceAction==1||serviceAction==3||serviceAction==4,false,serviceAction==2,serviceAction==3,serviceAction==4,serviceAction==5);}
+    catch(const std::exception& error){
+        if(!(serviceAction==1&&lastErrorCode=="authority_already_initialized"))
+            failure=lastErrorCode.empty()?error.what():lastErrorCode;
+    }catch(...){failure="authority_operation_failed";}
+    if(!failure.empty()){
+        serviceStatus.dwWin32ExitCode=ERROR_SERVICE_SPECIFIC_ERROR;serviceStatus.dwServiceSpecificExitCode=1;}
+    // SCM services have no usable caller stderr. Publish bounded machine codes
+    // only in the already protected data directory, never stdout/review text or
+    // exception details. This advisory result cannot make a failed SCM run pass.
+    try{
+        auto record=WindowsServiceResult::Record(serviceAction,failure,Now(),GetCurrentProcessId()).dump();
+        // The Application event provides the same bounded metadata if the
+        // optional local-file publication fails. No event source/ACL is added.
+        auto event=RegisterEventSourceW(nullptr,L"StellariaAXRAuthority");
+        if(event){std::wstring text(record.begin(),record.end());LPCWSTR strings[]={text.c_str()};
+            ReportEventW(event,failure.empty()?EVENTLOG_INFORMATION_TYPE:EVENTLOG_ERROR_TYPE,0,1,nullptr,1,0,strings,nullptr);
+            DeregisterEventSource(event);}
+        auto path=WindowsDeploymentConfiguration().parent_path()/L"service-last-result.json";
+        DurableWrite(path,record);
+    }catch(...){/* Diagnostics do not alter the operation's terminal status. */}
     serviceStatus.dwCurrentState=SERVICE_STOPPED;SetServiceStatus(serviceHandle,&serviceStatus);
 }
 #endif
