@@ -33,7 +33,8 @@ class ServiceDiagnostics(unittest.TestCase):
     def test_current_failed_mode_returns_only_the_bounded_machine_code(self):
         self.assertEqual(self.read(), 'windows_owner_setup_launch_failed')
         for code in ('protected_store_access_denied', 'credential_import_failed',
-                'hardware_signing_failed', 'integrity_check_failed'):
+                'hardware_signing_failed', 'integrity_check_failed',
+                'identity_token_unavailable', 'ipc_peer_unavailable'):
             with self.subTest(code=code):
                 self.assertEqual(self.read(error_code=code), code)
 

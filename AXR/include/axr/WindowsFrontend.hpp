@@ -10,4 +10,7 @@ int RunWindowsFrontend();
 // Only public OS identity queries, never token duplication/impersonation. The
 // formal entry requires the fixed protected System authority.
 void ExposeWindowsAuthorityIdentity(const std::string& ownerSid);
+// Bootstrap owner must authenticate the System pipe peer before enrollment.
+// Query-only metadata for the pinned owner; does not grant LPAC access.
+void ExposeWindowsOwnerSetupIdentity(const std::string& ownerSid);
 }

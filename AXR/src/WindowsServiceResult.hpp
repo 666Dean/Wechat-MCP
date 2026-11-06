@@ -5,8 +5,8 @@
 
 namespace Stellaria::AXR::WindowsServiceResult {
 inline std::string ErrorCode(std::string_view raw){
-    constexpr std::array<std::string_view,14> prefixes={"authority_","windows_","wechat_","wcdb_","owner_",
-        "rooted_","setup_","source_","native_","task_","protected_","credential_","hardware_","integrity_"};
+    constexpr std::array<std::string_view,16> prefixes={"authority_","windows_","wechat_","wcdb_","owner_",
+        "rooted_","setup_","source_","native_","task_","protected_","credential_","hardware_","integrity_","identity_","ipc_"};
     if(raw.empty()||raw.size()>100||raw.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_")!=std::string_view::npos)
         return "authority_operation_failed";
     for(auto prefix:prefixes)if(raw.starts_with(prefix)&&raw.size()>prefix.size())return std::string(raw);

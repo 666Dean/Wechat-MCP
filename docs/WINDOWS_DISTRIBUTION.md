@@ -60,7 +60,13 @@ Windows 原生 ACL 校验现独立为可测试策略。仅对保护对象的祖�
 
 原生固定宿主退出时生成有界、仅元数据的回执：操作、Completed/Failed、筛选机器码、结束时间与进程号。异常路径、换行、任意消息、账号样式及纯 hex 值不导出；非已知前缀或超预算异常变成固定通用码，不记录 stdout、审查正文、凭据或 traceback。回执仅写固定保护数据目录的 `service-last-result.json`，同时用 [RegisterEventSourceW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-registereventsourcew) / [ReportEventW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-reporteventw) 向本机 Application 日志写同一份筛选后的元数据，没有更改事件源注册表或系统 ACL。日志写入失败不改变实际终态。
 
-控制器仅在 SCM 已报告失败时，才允许使用严格字段、4096 字节预算、同一模式及本次开始/当前时间范围内的失败回执解释错误。缺失、损坏、过期、未来、其他模式、额外字段或伪造成功记录均退回原通用失败；该文件不参与身份认证、签名、权限、准入或成功判定。合成检查不启动真实服务、不改变系统日志或认证状态。两套根 CTest 各 9/9、相关 Python 14 项以及最终完整 917/876/41（117.446 秒）通过；首次全量的既有异步用例超时保留在私有验证记录，复测未放宽断言。真实错误原因仍须新包部署后单独采集。
+控制器仅在 SCM 已报告失败时，才允许使用严格字段、4096 字节预算、同一模式及本次开始/当前时间范围内的失败回执解释错误。缺失、损坏、过期、未来、其他模式、额外字段或伪造成功记录均退回原通用失败；该文件不参与身份认证、签名、权限、准入或成功判定。合成检查不启动真实服务、不改变系统日志或认证状态。两套根 CTest 各 9/9、相关 Python 14 项以及最终完整 917/876/41（117.446 秒）通过；首次全量的既有异步用例超时保留在私有验证记录，复测未放宽断言。诊断服务包另经 14 项分发检查并实际更新，随后初始化失败文件回执为 `windows_owner_setup_denied`；Application 事件未独立确认，不把未出现窗口或这一通用码当成唯一原因证明。
+
+## 初始化身份查询
+
+2026-11-06：原生 owner 必须在显示配置审查和 Hello 之前，核对 System 管道对端的映像、签名、用户及 token 身份。代码中原先仅在初始化后的 `create_authority` 给 owner 开放查询权限，形成首次登记次序缺口。现在在 bootstrap 创建描述符及启动 owner 之前，仅给固定登记用户 `PROCESS_QUERY_LIMITED_INFORMATION` 和 `TOKEN_QUERY`。正式入口仍核对固定保护 System authority 和整个安装；该步骤没有 LPAC ACE、token 复制/模拟身份、内存访问或任务权限，不跳过 owner 审查、Hello、响应验签或准入。
+
+同一变更新增有界传输阶段与 Win32 数字错误码，失败仍按原协议结束，不自动重试。合成测试核对 owner 精确权限、LPAC ACE 不变和正式构建拒绝普通宿主；参考/正式根 CTest 各 9/9，完整 Python 917/876/41（120.460 秒）通过，既有 GC 警告保留。此顺序修复尚待新包实机验证，不能据此宣称登记或凭据迁移成功，也不解决另存的 MCP `0xC0000022`。
 
 ## 原生凭据迁移
 

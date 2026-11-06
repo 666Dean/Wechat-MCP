@@ -91,7 +91,8 @@ int RunWindowsFrontend(){
     Denied("windows_frontend_platform_required");
 #endif
 }
-void ExposeWindowsAuthorityIdentity(const std::string& ownerSid){
+namespace {
+void ExposeIdentityMetadata(const std::string& ownerSid,bool packageAccess){
 #if defined(_WIN32)
     auto actual=ProcessIdentity(GetCurrentProcessId());
 #ifdef AXR_SECURITY_RELEASE
@@ -106,7 +107,7 @@ void ExposeWindowsAuthorityIdentity(const std::string& ownerSid){
         EXPLICIT_ACCESSW entries[2]{};PSID sids[]={owner.value,packages.value};
         for(unsigned i=0;i<2;++i){entries[i].grfAccessPermissions=rights;entries[i].grfAccessMode=GRANT_ACCESS;entries[i].grfInheritance=NO_INHERITANCE;
             entries[i].Trustee.TrusteeForm=TRUSTEE_IS_SID;entries[i].Trustee.ptstrName=static_cast<LPWSTR>(sids[i]);}
-        auto code=SetEntriesInAclW(2,entries,previous,&next);bool ok=code==ERROR_SUCCESS&&SetSecurityInfo(object,SE_KERNEL_OBJECT,DACL_SECURITY_INFORMATION,nullptr,nullptr,next,nullptr)==ERROR_SUCCESS;
+        auto code=SetEntriesInAclW(packageAccess?2:1,entries,previous,&next);bool ok=code==ERROR_SUCCESS&&SetSecurityInfo(object,SE_KERNEL_OBJECT,DACL_SECURITY_INFORMATION,nullptr,nullptr,next,nullptr)==ERROR_SUCCESS;
         if(next)LocalFree(next);if(descriptor)LocalFree(descriptor);if(!ok)Denied("windows_frontend_identity_query_acl_failed");
     };
     grant(GetCurrentProcess(),PROCESS_QUERY_LIMITED_INFORMATION);
@@ -115,4 +116,7 @@ void ExposeWindowsAuthorityIdentity(const std::string& ownerSid){
     (void)ownerSid;Denied("windows_frontend_platform_required");
 #endif
 }
+}
+void ExposeWindowsAuthorityIdentity(const std::string& ownerSid){ExposeIdentityMetadata(ownerSid,true);}
+void ExposeWindowsOwnerSetupIdentity(const std::string& ownerSid){ExposeIdentityMetadata(ownerSid,false);}
 }

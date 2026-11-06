@@ -15,6 +15,8 @@ int main(){
     assert(ErrorCode(std::string(101,'a'))=="authority_operation_failed");
     assert(ErrorCode("protected_store_access_denied")=="protected_store_access_denied");
     assert(ErrorCode("hardware_signing_failed")=="hardware_signing_failed");
+    assert(ErrorCode("identity_token_unavailable")=="identity_token_unavailable");
+    assert(ErrorCode("ipc_peer_unavailable")=="ipc_peer_unavailable");
     auto success=Record(1,"",1,1);
     assert(success.at("result")=="Completed"&&success.at("error_code").is_null());
     assert(Record(5,"owner_hardware_enrollment_required",1,1).at("operation")=="qualify");

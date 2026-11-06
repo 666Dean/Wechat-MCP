@@ -3,6 +3,7 @@
 // child lifetime; it is not an agent sandbox or authorization mechanism.
 #include "axr/WindowsOwnerSetup.hpp"
 #include "axr/WindowsInstallation.hpp"
+#include "axr/WindowsFrontend.hpp"
 #include "axr/Security.hpp"
 #include <algorithm>
 #include <cmath>
@@ -50,9 +51,9 @@ using WindowsInteractiveHost::Sid;
 using WindowsInteractiveHost::Child;
 using WindowsInteractiveHost::Launch;
 using WindowsInteractiveHost::Pipe;
-[[noreturn]] void Denied(){throw std::runtime_error("windows_owner_setup_denied");}
+[[noreturn]] void Denied(const char* code="windows_owner_setup_denied"){throw std::runtime_error(code);}
 std::filesystem::path InstalledRoot(){PWSTR path=nullptr;
-    if(FAILED(SHGetKnownFolderPath(FOLDERID_ProgramFiles,KF_FLAG_DEFAULT,nullptr,&path)))Denied();
+    if(FAILED(SHGetKnownFolderPath(FOLDERID_ProgramFiles,KF_FLAG_DEFAULT,nullptr,&path)))Denied("windows_owner_setup_installation_unavailable");
     auto root=std::filesystem::path(path)/L"Stellaria AXR";CoTaskMemFree(path);return root;
 }
 Json Host(bool server){
@@ -63,14 +64,14 @@ Json Host(bool server){
     if(server){if(actual.at("user")!="S-1-5-18")throw std::runtime_error("windows_owner_setup_system_required");}
     else if(actual.at("user")=="S-1-5-18"||!ProcessIdToSessionId(GetCurrentProcessId(),&session)||!session)
         throw std::runtime_error("windows_owner_setup_interactive_owner_required");
-    if(image.parent_path()!=InstalledRoot())Denied();
+    if(image.parent_path()!=InstalledRoot())Denied("windows_owner_setup_host_path_mismatch");
     VerifyWindowsInstallation(image.parent_path());return actual;
 }
 using namespace WindowsSetupTransport;
 std::string Read(const std::filesystem::path& path,size_t maximum){
-    std::ifstream stream(path,std::ios::binary);if(!stream)Denied();std::string raw(maximum+1,'\0');
+    std::ifstream stream(path,std::ios::binary);if(!stream)Denied("windows_owner_setup_descriptor_unavailable");std::string raw(maximum+1,'\0');
     stream.read(raw.data(),std::streamsize(raw.size()));auto count=stream.gcount();
-    if(count>std::streamsize(maximum)||stream.bad())Denied();raw.resize(size_t(count));return raw;
+    if(count>std::streamsize(maximum)||stream.bad())Denied("windows_owner_setup_descriptor_budget");raw.resize(size_t(count));return raw;
 }
 struct Descriptor {
     Handle lock;std::filesystem::path path;std::string raw;
@@ -88,17 +89,22 @@ Json ExchangeWindowsOwnerSetup(std::string ownerSid,const Json& challenge){
     if(ownerSid.empty()||ownerSid.size()>184||ownerSid.find_first_not_of("S-0123456789")!=std::string::npos||ownerSid.rfind("S-1-5-21-",0)!=0)
         throw std::runtime_error("windows_owner_setup_owner_sid_invalid");
 #if defined(_WIN32)
-    auto server=Host(true);auto root=InstalledRoot();Sid sid(ownerSid);Deadline deadline(challenge.at("expires"));Descriptor descriptor(root);
+    auto server=Host(true);auto root=InstalledRoot();Sid sid(ownerSid);
+    // The interactive owner must query the real System pipe peer before any
+    // owner review/signature. No token duplication, impersonation or task
+    // authority is granted; LPAC query access remains a runtime-only action.
+    ExposeWindowsOwnerSetupIdentity(ownerSid);
+    Deadline deadline(challenge.at("expires"));Descriptor descriptor(root);
     auto nonce=Digest(RandomId()+RandomId()),endpoint=std::string("\\\\.\\pipe\\Stellaria.AXR.Setup.")+RandomId();
     auto pipe=Pipe(Utf8Path(endpoint).wstring(),ownerSid);
     descriptor.Write({{"version",2},{"kind","windows-owner-setup"},{"endpoint",endpoint},{"nonce",nonce},
         {"expires",challenge.at("expires")},{"server",server},{"owner_user",ownerSid},{"configuration_digest",challenge.at("configuration_digest")}});
-    Child child;Launch(child,sid,root,root/L"axr-owner.exe",L"--owner-enroll",deadline);if(child.identity.at("user")!=ownerSid)Denied();
+    Child child;Launch(child,sid,root,root/L"axr-owner.exe",L"--owner-enroll",deadline);if(child.identity.at("user")!=ownerSid)Denied("windows_owner_setup_owner_identity_mismatch");
     Connect(pipe.value,deadline);Stable(pipe.value,false,child.identity);
-    if(Receive(pipe.value,32768,deadline,false,child.identity)!=Json{{"version",2},{"kind","owner-setup.open"},{"nonce",nonce}})Denied();
+    if(Receive(pipe.value,32768,deadline,false,child.identity)!=Json{{"version",2},{"kind","owner-setup.open"},{"nonce",nonce}})Denied("windows_owner_setup_open_frame_invalid");
     Send(pipe.value,{{"version",2},{"kind","owner-setup.challenge"},{"nonce",nonce},{"challenge",challenge}},deadline,false,child.identity);
     auto packet=Receive(pipe.value,300000,deadline,false,child.identity);
-    if(!packet.is_object()||packet.size()!=4||packet.at("version")!=2||packet.at("kind")!="owner-setup.response"||packet.at("nonce")!=nonce)Denied();
+    if(!packet.is_object()||packet.size()!=4||packet.at("version")!=2||packet.at("kind")!="owner-setup.response"||packet.at("nonce")!=nonce)Denied("windows_owner_setup_response_frame_invalid");
     Send(pipe.value,{{"version",2},{"kind","owner-setup.received"},{"nonce",nonce},{"authority_restored",false}},deadline,false,child.identity);
     return {{"response",packet.at("response")},{"identity",child.identity}};
 #else

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Stellaria-Commercial-1.0
 #include "../src/WindowsSetupTransport.hpp"
 #include "axr/Security.hpp"
+#include "axr/WindowsFrontend.hpp"
+#include <aclapi.h>
+#include <sddl.h>
 #include <cassert>
 #include <iostream>
 #include <thread>
@@ -18,6 +21,17 @@ struct Pair {
         DWORD mode=PIPE_READMODE_MESSAGE;assert(SetNamedPipeHandleState(client,&mode,nullptr,nullptr));}
     ~Pair(){if(client!=INVALID_HANDLE_VALUE)CloseHandle(client);if(server!=INVALID_HANDLE_VALUE)CloseHandle(server);}
 };
+DWORD Allowed(HANDLE object,const wchar_t* text){
+    PSID sid=nullptr;assert(ConvertStringSidToSidW(text,&sid));
+    PACL acl=nullptr;PSECURITY_DESCRIPTOR descriptor=nullptr;
+    assert(GetSecurityInfo(object,SE_KERNEL_OBJECT,DACL_SECURITY_INFORMATION,nullptr,nullptr,&acl,nullptr,&descriptor)==ERROR_SUCCESS);
+    DWORD rights=0;
+    for(DWORD i=0;acl&&i<acl->AceCount;++i){void* raw=nullptr;assert(GetAce(acl,i,&raw));
+        auto header=static_cast<ACE_HEADER*>(raw);
+        if(header->AceType==ACCESS_ALLOWED_ACE_TYPE){auto ace=static_cast<ACCESS_ALLOWED_ACE*>(raw);
+            if(EqualSid(&ace->SidStart,sid))rights|=ace->Mask;}}
+    LocalFree(sid);LocalFree(descriptor);return rights;
+}
 }
 int main(){
     auto actual=ProcessIdentity(GetCurrentProcessId());
@@ -42,5 +56,20 @@ int main(){
     {Pair pair;pair.Open();Deadline budget(Now()+2);Connect(pair.server,budget);std::string raw(256,'x');
      assert(Transfer(pair.client,raw.data(),DWORD(raw.size()),true,budget)==raw.size());bool denied=false;
      try{Receive(pair.server,100,budget,false,actual);}catch(...){denied=true;}assert(denied);}
-    std::cout<<"native setup message roundtrip, identity, bounds and cancellation passed; no service or owner launch\n";
+    {const char* fake="S-1-5-21-111111111-222222222-333333333-4444";
+     const wchar_t* wide=L"S-1-5-21-111111111-222222222-333333333-4444";
+     HANDLE token=nullptr;assert(OpenProcessToken(GetCurrentProcess(),TOKEN_QUERY|READ_CONTROL,&token));
+     auto before=Allowed(GetCurrentProcess(),L"S-1-15-2-2"),tokenBefore=Allowed(token,L"S-1-15-2-2");
+#ifdef AXR_SECURITY_RELEASE
+     bool denied=false;try{ExposeWindowsOwnerSetupIdentity(fake);}catch(const std::exception& e){denied=std::string(e.what())=="windows_frontend_authority_required";}
+     assert(denied&&Allowed(GetCurrentProcess(),wide)==0&&Allowed(token,wide)==0);
+#else
+     assert(Allowed(GetCurrentProcess(),wide)==0&&Allowed(token,wide)==0);
+     ExposeWindowsOwnerSetupIdentity(fake);
+     assert(Allowed(GetCurrentProcess(),wide)==PROCESS_QUERY_LIMITED_INFORMATION);
+     assert(Allowed(token,wide)==TOKEN_QUERY);
+#endif
+     assert(Allowed(GetCurrentProcess(),L"S-1-15-2-2")==before&&Allowed(token,L"S-1-15-2-2")==tokenBefore);
+     CloseHandle(token);}
+    std::cout<<"native setup roundtrip, identity, bounds, cancellation and owner-only metadata ACL passed; no service or owner launch\n";
 }
